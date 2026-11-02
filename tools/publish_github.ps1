@@ -105,7 +105,7 @@ Push-Location $pg
 git init --quiet
 git checkout --quiet -b gh-pages
 git add -A
-git -c user.name="$Owner" -c user.email="$email" commit --quiet -m "OpenPocket $Tag: the web installer"
+git -c user.name="$Owner" -c user.email="$email" commit --quiet -m "OpenPocket ${Tag}: the web installer"
 git push --force "https://github.com/$full.git" gh-pages
 $ok = $LASTEXITCODE -eq 0
 Pop-Location
