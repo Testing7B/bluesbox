@@ -77,6 +77,7 @@ static int16_t a_res[A_FR];
 static volatile float a_gain = 0.64f;                  /* volume MASTER (knob), appliqué en sortie */
 static volatile uint32_t a_load, a_peak, a_blocks;     /* charge DSP en % */
 static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boot, safe mode) */
+static volatile uint8_t a_mute;                      /* output zeros (a flash write is coming) */
 static volatile uint8_t a_nan;                         /* le moteur a sorti un NaN/Inf : à réinitialiser */
 static volatile uint32_t a_nan_count;
 static int a_running;
@@ -99,6 +100,7 @@ static void dsp_block(void)
         if (v != v || v > 1.0e6f || v < -1.0e6f) { a_nan = 1; break; }
     }
     if (a_nan) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+    if (a_mute) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     float g = a_gain * 32767.0f;
     for (uint32_t i = 0; i < A_FR; i++) {
         float v = a_out[i] * g;

@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * OpenPocket — the user's presets in flash.
+ *
+ * 42 slots of 96 bytes (px_preset_t, 91 B, + a "saved" mark), kept in RAM (st_slot) and written as one whole copy
+ * on each save, alternately to copy A [0xF0000, 0xF2000) and copy B [0xF2000, 0xF4000), each two 4 KiB sectors:
+ *   sector 0: header (16 B) + slots 0..37        sector 1: slots 38..41
+ * The header goes last, with a sequence number and a CRC16 of every slot: at boot the valid copy with the highest
+ * sequence wins, so a power cut during a save leaves the previous copy. Bytes 0xF00..0xF7F of each sector stay
+ * erased: the update loader treats a valid record there as an update record (loader/ldr_core.c).
+ * The update loader writes only the app area [0x4000, 0xA3000): presets survive firmware updates.
+ * During a write the audio is muted (the output buffers are zeros), the audio IRQ held and the second core idle
+ * (its loop runs from RAM): the flash cannot be read through XIP while it is being written.
+ */
+#pragma once
+
+#define ST_A       0xF0000u
+#define ST_B       0xF2000u
+#define ST_NSLOT   42u
+#define ST_SLOT    96u
+#define ST_S0N     38u                          /* slots in sector 0: 16 + 38 * 96 = 0xE50 < 0xF00 */
+#define ST_MAGIC   0x5350504Fu                  /* "OPPS" */
+#define ST_MARK    0x5Au                        /* slot holds a saved preset (else: the factory one) */
+#ifndef ST_IRQ_OFF
+#define ST_IRQ_OFF() __asm__ volatile("cli" ::: "memory")
+#endif
+
+typedef struct { uint32_t magic, seq; uint16_t crc; uint8_t ver, nslot, last, pad[3]; } st_hdr_t;   /* 16 B */
+static uint8_t st_slot[ST_NSLOT][ST_SLOT] __attribute__((aligned(4)));
+static uint32_t st_seq, st_cur;                 /* sequence of the copy in use, its base (0: none yet) */
+static uint8_t st_ok;                           /* the store can be written (the flash is the expected part) */
+static uint8_t st_last;                         /* the slot to start on (the last one saved) */
+
+static uint32_t st_slot_off(uint32_t base, uint32_t k)
+{
+    return k < ST_S0N ? base + 16u + k * ST_SLOT : base + 0x1000u + (k - ST_S0N) * ST_SLOT;
+}
+static uint32_t st_crc(void)
+{
+    uint32_t k, c = 0;
+    for (k = 0; k < ST_NSLOT; k++)
+        c = ota_crc16(st_slot[k], ST_SLOT, c);
+    return c;
+}
+
+/* boot: the newest valid copy into st_slot (call with the flash readable; it may turn interrupts on) */
+static void st_load(void)
+{
+    static const uint32_t BASE[2] = {ST_A, ST_B};
+    uint32_t i, k, best = 0, bseq = 0;
+    st_hdr_t h;
+    memset(st_slot, 0xFF, sizeof st_slot);
+    for (i = 0; i < 2u; i++) {
+        if (ota_fread(BASE[i], &h, sizeof h) || h.magic != ST_MAGIC || h.nslot != ST_NSLOT || h.ver != 1u)
+            continue;
+        for (k = 0; k < ST_NSLOT; k++)
+            if (ota_fread(st_slot_off(BASE[i], k), st_slot[k], ST_SLOT))
+                break;
+        if (k == ST_NSLOT && st_crc() == h.crc && (!best || (int32_t)(h.seq - bseq) > 0)) {
+            best = BASE[i];
+            bseq = h.seq;
+            st_last = h.last;
+        }
+    }
+    if (best) {                                   /* read the winner again (the loop left the other in st_slot) */
+        for (k = 0; k < ST_NSLOT; k++)
+            ota_fread(st_slot_off(best, k), st_slot[k], ST_SLOT);
+        st_cur = best;
+        st_seq = bseq;
+    } else {
+        memset(st_slot, 0xFF, sizeof st_slot);
+        st_last = 0;
+    }
+    if (st_last >= ST_NSLOT) st_last = 0;
+}
+
+static int st_saved(uint32_t k) { return k < ST_NSLOT && st_slot[k][sizeof(px_preset_t)] == ST_MARK; }
+
+/* the preset in slot k: the saved one, else the factory one */
+static void st_get(uint32_t k, px_preset_t *p)
+{
+    if (st_saved(k)) memcpy(p, st_slot[k], sizeof *p);
+    else px_preset_factory(p, (int)k);
+}
+
+/* audio off the flash: muted output, IRQ held, the second core between jobs */
+static void st_audio_hold(int on)
+{
+    if (on) {
+        a_mute = 1;
+        for (int i = 0; i < 12; i++) { fm1_wdt_feed(); fm1_delay_ms(1); }   /* > 2 blocks: the DMA plays zeros */
+        fm1_irq_mask(FM1_IRQ_ALNK0);
+        a_collect();
+    } else {
+        fm1_irq_unmask(FM1_IRQ_ALNK0);
+        a_mute = 0;
+    }
+}
+
+/* write the whole store as a new copy (the one not in use); 0 = ok */
+static int st_commit(void)
+{
+    static uint8_t buf[16 + ST_S0N * ST_SLOT] __attribute__((aligned(4)));
+    uint32_t base = st_cur == ST_A ? ST_B : ST_A, k;
+    st_hdr_t h;
+    int rc = 0;
+    if (!st_ok) return -1;
+    memset(&h, 0, sizeof h);
+    h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = 1u; h.nslot = ST_NSLOT; h.last = st_last;
+    st_audio_hold(1);
+    if (fl_erase4k(base, &k) || fl_erase4k(base + 0x1000u, &k)) rc = -2;
+    for (k = 0; !rc && k < ST_NSLOT; k++) {
+        if (k < ST_S0N) memcpy(buf + 16u + k * ST_SLOT, st_slot[k], ST_SLOT);
+        else if (fl_write(st_slot_off(base, k), st_slot[k], ST_SLOT)) rc = -3;
+    }
+    if (!rc && fl_write(base + 16u, buf + 16u, ST_S0N * ST_SLOT)) rc = -3;
+    if (!rc) { memcpy(buf, &h, sizeof h); if (fl_write(base, buf, sizeof h)) rc = -4; }   /* header last */
+    if (!rc) {                                    /* read back */
+        st_hdr_t r;
+        static uint8_t chk[ST_SLOT];
+        if (ota_fread(base, &r, sizeof r) || memcmp(&r, &h, sizeof h)) rc = -5;
+        for (k = 0; !rc && k < ST_NSLOT; k++)
+            if (ota_fread(st_slot_off(base, k), chk, ST_SLOT) || memcmp(chk, st_slot[k], ST_SLOT)) rc = -5;
+    }
+    st_audio_hold(0);
+    if (!rc) { st_cur = base; st_seq = h.seq; }
+    return rc;
+}
+
+/* save p to slot k (becomes the start slot) */
+static int st_save(uint32_t k, const px_preset_t *p)
+{
+    if (k >= ST_NSLOT) return -1;
+    memset(st_slot[k], 0xFF, ST_SLOT);
+    memcpy(st_slot[k], p, sizeof *p);
+    st_slot[k][sizeof *p] = ST_MARK;
+    st_last = (uint8_t)k;
+    return st_commit();
+}
+
+/* slot k back to its factory preset */
+static int st_reset(uint32_t k)
+{
+    if (k >= ST_NSLOT) return -1;
+    memset(st_slot[k], 0xFF, ST_SLOT);
+    return st_commit();
+}
+
+/* boot, after px_usb_start (interrupts off until audio_start) */
+static void px_store_boot(void)
+{
+    st_ok = px_flash_ok;
+    if (st_ok) st_load();
+    ST_IRQ_OFF();                                 /* (ota_fread turned them on) */
+    cur_preset = st_last;
+    load_preset(cur_preset);
+}

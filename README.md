@@ -19,7 +19,10 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   HM-2, Metal Zone, Precision Drive, B7K)
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,
   ring modulator, bitcrusher, slicer, square-wave synth, 4 compressors, 3 EQs
-- **42 factory presets** (one per style), a flicker-free colour UI, a chromatic tuner
+- **42 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 42 factory presets
+  (one per style), a flicker-free colour UI, a chromatic tuner
+- **Detailed cabinets** (cone breakup, off-axis mic comb, open-back reflection) and **tube stages with bias shift**
+  (the note compresses on a hard attack and blooms back)
 - **USB update**: the pedal shows up as a USB-MIDI device and takes updates from the [web installer](docs/index.html)
 
 Full list of models and controls (French): [docs/SONS-ET-COMMANDES.md](docs/SONS-ET-COMMANDES.md).
@@ -30,7 +33,8 @@ Open the installer page (GitHub Pages of this repository) in **Chrome or Edge** 
 USB, press **Connect**, then **Install**. The page also takes the pedal back to the official firmware: pick the
 official `.fwsc` from the maker, it is checked in the browser.
 
-The first install over the official firmware is **experimental**: the official firmware's update entry has not yet
+Updating OpenPocket → a newer OpenPocket from the page works on a real Pocket X (tested 2026-11-02); your saved
+presets are kept. The first install over the official firmware is still **experimental**: the official firmware's update entry has not yet
 been tried with this installer on a real Pocket X / BlackBox (it is the same JieLi update system as the M-VAVE FM-1,
 where this method is used by Felucca, CLIPPER and SLOOP). Keep a backup and the SD-card recovery at hand
 (`flash/`: fm1buddy on an ESP32-S3, `makeimage.bat`).
@@ -51,6 +55,7 @@ Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
 
 `tests/run_tests.sh [PocketX_016.fwsc]` checks, on the PC:
 
+- the preset store on a simulated flash, with a power cut at every step of a save;
 - the sound engine with the pedal's own math library: every block × model × extreme setting, no NaN, nothing runs away;
 - the package builder: it rebuilds the official PocketX 016 app area **byte for byte** (with the official file);
 - the installer against a **simulated pedal** that runs the pedal's real update code (`ota.c`, then the loader's
@@ -81,10 +86,12 @@ See [NOTICE.md](NOTICE.md). Not affiliated with Donner or M-VAVE. Install at you
 
 **OpenPocket** est un firmware multi-effets guitare open source pour la **Donner Pocket X** et la **M-VAVE BlackBox** :
 11 blocs, 118 modèles (29 amplis, 15 baffles, 27 drives/fuzz/boosts, 11 modulations, 8 delays, 8 reverbs, effets de
-hauteur et effets spéciaux), 42 presets, interface couleur sans clignotement, accordeur.
+hauteur et effets spéciaux), 42 emplacements de presets enregistrables (appui long sur PUSH = SAVE, gardés après une
+mise à jour), interface couleur sans clignotement, accordeur.
 
 - **Installer** : ouvre la page d'installation dans Chrome ou Edge, branche la pédale en USB, **Connecter**, puis
   **Installer**. Retour au firmware officiel : choisis le fichier `.fwsc` officiel, il est vérifié dans le navigateur.
+  La mise à jour OpenPocket → OpenPocket par la page fonctionne sur une vraie Pocket X (testée le 2026-11-02).
   La première installation par-dessus le firmware officiel est **expérimentale** : garde la récupération par carte SD.
 - **Compiler** : `build.bat` (WSL + toolchain JieLi, installé une fois par `firmware/setup.sh`).
 - **Publier** : `PUBLISH-GITHUB.bat` (code source, release avec les paquets, page d'installation sur GitHub Pages).

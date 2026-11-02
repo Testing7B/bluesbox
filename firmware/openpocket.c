@@ -307,7 +307,8 @@ static void lcd_text(uint32_t x, uint32_t y, const char *str, uint16_t fg, uint1
 static px_preset_t PRESET;
 static uint32_t cur_preset = 0;
 static uint32_t master_vol = 80;        /* 0..100, suit le knob MASTER (ADC canal 2) */
-static void load_preset(uint32_t i) { px_preset_factory(&PRESET, (int)i); }
+static void st_get(uint32_t k, px_preset_t *p);   /* px_store.h: the saved preset of slot k, else the factory one */
+static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 
 #if AUDIO_PROBE
 void fm1_timer5_irq(void) { }
@@ -352,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "24"
+#define OP_VERSION_NUM "25"
 #define OP_VERSION "v" OP_VERSION_NUM   /* affiché au démarrage : change à chaque build livré */
 #define PROBE 0            /* 1 = diagnostic GPIO : affiche en bas les broches qui changent */
 #define ADC_PROBE 0        /* 1 = diagnostic ADC : affiche en bas les canaux qui bougent (C2:512) */
@@ -546,6 +547,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #if !AUDIO_PROBE
 #include "ui.h"
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
+#include "px_store.h"       /* the user's presets in flash */
 #endif
 
 static void app_main(void)
@@ -557,10 +559,11 @@ static void app_main(void)
     dbn_t btn[NBTN] = {{0,0,0}};
     dbn_t bhome = {0,0,0};
     uint32_t adc_tick = 0, home_t = 0, t_knob = 0, t_tuner = 0;
-    int home_down = 0, home_long = 0;
+    int home_down = 0, home_long = 0, push_down = 0, push_long = 0;
+    uint32_t push_t = 0;
     int32_t master_raw = -100;
 #if DSP_CPU1
-    fm1_cpu1_bar_build(26u);             /* un nouveau build redonne sa chance au 2e cœur */
+    fm1_cpu1_bar_build(27u);             /* un nouveau build redonne sa chance au 2e cœur */
     fm1_cpu1_start();                    /* au démarrage, avant l'audio et les interruptions (Felucca) */
 #endif
     lcd_init();
@@ -623,6 +626,7 @@ static void app_main(void)
 #else
     a_hold = 1;                          /* DSP bypassed until the UI is up and 1.5 s have passed */
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
+    px_store_boot();                     /* the saved presets; start on the last one saved */
     audio_start();                       /* guitare -> moteur DSP -> sortie, ampli activé */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
@@ -677,11 +681,20 @@ static void app_main(void)
             enc_last = s;
             int dd = 0;
             if (accum >= 4) { accum -= 4; dd = 1; } else if (accum <= -4) { accum += 4; dd = -1; }
-            if (dd) { int fast = (now - t_knob) < 45u; t_knob = now; if (ui_mode != M_TUNER) ui_knob(dd, fast); any = 1; }
+            if (dd) {
+                int fast = (now - t_knob) < 45u; t_knob = now;
+                if (ui_mode == M_SAVE) save_knob(dd); else if (ui_mode != M_TUNER) ui_knob(dd, fast);
+                any = 1;
+            }
         }
         /* --- boutons (appuyé = différent de l'état au repos) --- */
         uint32_t pa = (PA_IN & 0xFFFFu) ^ base_pa, ph = (PH_IN & 0xFFFFu) ^ base_ph;
-        int p_push = dbn_press(&btn[B_PUSH], (ph & PH_PUSH) != 0);
+        /* PUSH : appui court = action habituelle (au relâchement), appui long (0,8 s) = SAVE */
+        dbn_press(&btn[B_PUSH], (ph & PH_PUSH) != 0);
+        int push_now = btn[B_PUSH].stab != 0, p_push = 0, p_save = 0;
+        if (push_now && !push_down) { push_down = 1; push_long = 0; push_t = now; }
+        if (push_now && push_down && !push_long && now - push_t >= 800u) { push_long = 1; p_save = 1; }
+        if (!push_now && push_down) { push_down = 0; if (!push_long) p_push = 1; }
         int p_up = dbn_press(&btn[B_FSUP], (pa & PA_FS_UP) != 0);
         int p_dn = dbn_press(&btn[B_FSDN], (pa & PA_FS_DN) != 0);
         int p_fx = dbn_press(&btn[B_FX], (pa & PA_FX) != 0);
@@ -705,8 +718,13 @@ static void app_main(void)
             mv = adc_read2(ADC_CH_MASTER);
         }
 #if !AUDIO_PROBE
-        if (ui_mode == M_TUNER) {
-            if (p_push || p_up || p_dn || p_fx || p_mod || p_amp || p_cab || p_dly || p_rev || p_home) tuner_close();
+        if (ui_mode == M_SAVE) {
+            if (p_push) save_confirm();
+            else if (p_home) save_close();
+        } else if (ui_mode == M_TUNER) {
+            if (p_push || p_save || p_up || p_dn || p_fx || p_mod || p_amp || p_cab || p_dly || p_rev || p_home) tuner_close();
+        } else if (p_save) {
+            save_open();
         } else {
             if (p_tuner) tuner_open();
             else {

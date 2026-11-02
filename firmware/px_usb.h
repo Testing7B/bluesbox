@@ -17,8 +17,8 @@
 #define FELUCCA_USB_PRODUCT "OpenPocket"
 #define FELUCCA_USB_MANUFACTURER "OpenPocket"
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
-/* the app may only write the OTA staging area (its loader + update record) */
-#define FL_RANGE_OK(off, n) FL_IN(off, n, FL_OTA_LO, FL_OTA_HI)
+/* the app may only write the OTA staging area (its loader + update record) and the preset store (px_store.h) */
+#define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || FL_IN(off, n, 0xF0000u, 0xF4000u))
 
 /* the package identity, patched by pxpkg.py ("OP-PRODUCT:" + identity, 32 bytes, exactly once in the app) */
 static const volatile char OP_PRODUCT[32] __attribute__((used, aligned(4))) = "OP-PRODUCT:PocketX_9" OP_VERSION_NUM;

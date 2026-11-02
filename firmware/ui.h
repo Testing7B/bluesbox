@@ -18,11 +18,17 @@
  *
  * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to the chain (long press = tuner);
  * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = jump to that block (press again = on/off);
- * FX = cycles DRV, SFX, PIT, CMP, GT, EQ.
+ * FX = cycles DRV, SFX, PIT, CMP, GT, EQ. Hold PUSH = SAVE (the preset into one of the 42 slots, kept in flash).
  */
 #pragma once
 
-enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER };
+enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE };
+static uint32_t st_gen;                 /* bumped on each save: the header's "*" reference reloads */
+static void st_get(uint32_t k, px_preset_t *p);
+static int st_save(uint32_t k, const px_preset_t *p);
+static int st_reset(uint32_t k);
+static int st_saved(uint32_t k);
+static void save_draw(void);
 static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 
 #define C_OFF  0x2124
@@ -71,7 +77,7 @@ static struct {
     uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK];
     int blk, type, np, item, mode, on;
     uint8_t val[PX_NPAR];
-    int hint;
+    int hint, dirty;
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
 
@@ -87,8 +93,15 @@ static void draw_header(int force)
     int nchg = force;
     for (int i = 0; i < 14; i++) if (uc.name[i] != PRESET.name[i]) nchg = 1;
     if (nchg) {
-        ft_box(34, H_Y, 156, PRESET.name, &FT_MD, UI_TXT, UI_BG, 0);
+        ft_box(34, H_Y, 144, PRESET.name, &FT_MD, UI_TXT, UI_BG, 0);
         for (int i = 0; i < 14; i++) uc.name[i] = PRESET.name[i];
+    }
+    {   /* "*": the preset differs from what its slot holds (hold PUSH to save) */
+        static px_preset_t ref;
+        static uint32_t ref_slot = ~0u, ref_gen = ~0u;
+        if (ref_slot != cur_preset || ref_gen != st_gen) { st_get(cur_preset, &ref); ref_slot = cur_preset; ref_gen = st_gen; }
+        int d = memcmp(&ref, &PRESET, sizeof ref) != 0;
+        if (force || d != uc.dirty) { ft_box(178, H_Y, 12, d ? "*" : "", &FT_MD, UI_ACC, UI_BG, 0); uc.dirty = d; }
     }
     if (force || uc.vol != master_vol) {
         char b[10] = "VOL "; num3(b + 4, master_vol);
@@ -209,6 +222,7 @@ static void draw_hint(int force)
 static void ui_render(void)
 {
     if (ui_mode == M_TUNER) return;
+    if (ui_mode == M_SAVE) { save_draw(); return; }
     int f = uc.full;
     if (f) {                                                     /* changement de page : fond posé une seule fois */
         lcd_rect(0, 0, 240, H_Y, UI_BG); lcd_rect(0, H_Y + 23u, 240, 3, UI_BG);
@@ -264,6 +278,68 @@ static void ui_push(void)
     } else ui_mode = M_BLOCK;
 }
 static void ui_home(void) { ui_mode = M_CHAIN; ui_item = 0; }
+
+/* ===================================================== save page ======== */
+/* hold PUSH: SAVE. KNOB picks the slot (01..42, then "FACTORY": this slot back to its factory preset), PUSH saves,
+ * HOME cancels. Saving to another slot copies the sound there and moves to it. */
+#define SV_FACTORY 42u
+static uint32_t sv_dest, sv_shown = ~0u;
+static void save_open(void)
+{
+    ui_mode = M_SAVE; sv_dest = cur_preset; sv_shown = ~0u;
+    lcd_rect(0, 0, 240, 240, UI_BG);
+    ft_box(0, 14, 240, "SAVE PRESET", &FT_MD, UI_ACC, UI_BG, 1);
+    ft_box(0, 46, 240, PRESET.name, &FT_SM, UI_DIM, UI_BG, 1);
+    lcd_rect(20, 76, 200, 1, C_LINE);
+    ft_box(0, 196, 240, "KNOB: SLOT   PUSH: SAVE", &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(0, 214, 240, "HOME: CANCEL", &FT_SM, UI_DIM, UI_BG, 1);
+}
+static void save_draw(void)
+{
+    if (sv_shown == sv_dest) return;
+    sv_shown = sv_dest;
+    char b[20];
+    if (sv_dest == SV_FACTORY) {
+        ft_box(0, 92, 240, "RESTORE FACTORY", &FT_MD, UI_TXT, UI_PANEL, 1);
+        b[0] = 'S'; b[1] = 'L'; b[2] = 'O'; b[3] = 'T'; b[4] = ' ';
+        b[5] = (char)('0' + (cur_preset + 1u) / 10u); b[6] = (char)('0' + (cur_preset + 1u) % 10u); b[7] = 0;
+        ft_box(0, 124, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
+        ft_box(0, 146, 240, st_saved(cur_preset) ? "BACK TO ITS FACTORY SOUND" : "(ALREADY THE FACTORY SOUND)", &FT_SM, UI_DIM, UI_BG, 1);
+        return;
+    }
+    px_preset_t d;
+    st_get(sv_dest, &d);
+    b[0] = 'T'; b[1] = 'O'; b[2] = ' '; b[3] = (char)('0' + (sv_dest + 1u) / 10u); b[4] = (char)('0' + (sv_dest + 1u) % 10u); b[5] = 0;
+    ft_box(0, 92, 240, b, &FT_MD, UI_TXT, UI_PANEL, 1);
+    ft_box(0, 124, 240, sv_dest == cur_preset ? "(THIS SLOT)" : "REPLACES:", &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(0, 146, 240, sv_dest == cur_preset ? "" : d.name, &FT_SM, UI_TXT, UI_BG, 1);
+}
+static void save_close(void)
+{
+    ui_mode = M_CHAIN; ui_item = 0;
+    lcd_rect(0, 0, 240, 240, UI_BG); lcd_rect(0, 224, 240, 16, UI_PANEL);
+    ui_invalidate();
+}
+static void save_knob(int dd)
+{
+    sv_dest = (sv_dest + SV_FACTORY + 1u + (uint32_t)(dd > 0 ? 1 : SV_FACTORY)) % (SV_FACTORY + 1u);
+}
+static void save_confirm(void)
+{
+    int rc;
+    ft_box(0, 168, 240, "SAVING...", &FT_SM, UI_ACC, UI_BG, 1);
+    if (sv_dest == SV_FACTORY) { rc = st_reset(cur_preset); }
+    else { rc = st_save(sv_dest, &PRESET); if (!rc) cur_preset = sv_dest; }
+    st_gen++;
+    if (!rc) load_preset(cur_preset);
+    {
+        char b[16] = "ERROR -";
+        if (rc) { b[7] = (char)('0' + (uint32_t)(-rc) % 10u); b[8] = 0; }
+        ft_box(0, 168, 240, rc ? b : "SAVED", &FT_MD, rc ? RED : GRN, UI_BG, 1);
+    }
+    for (int i = 0; i < 7; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
+    save_close();
+}
 static void ui_preset_step(int dd)
 {
     int n = px_preset_count();

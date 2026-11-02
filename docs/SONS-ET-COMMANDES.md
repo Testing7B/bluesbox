@@ -1,4 +1,4 @@
-# OpenPocket — sons et commandes (v23)
+# OpenPocket — sons et commandes (v25)
 
 ![Interface v23](ui-v23.png)
 
@@ -30,6 +30,9 @@ Chaque ampli = 0 à 4 étages de préampli (gain, asymétrie, filtres RC par ét
 d'entrée (serrage), condensateur « bright » qui s'efface quand le gain monte, tone stack à ses propres fréquences
 (creux de médiums à midi : −6 dB Fender, −3 dB Marshall, −6 dB Mesa…), présence, résonance, saturation de l'étage
 de puissance et affaissement de l'alimentation (sag). Les 29 amplis sont calibrés au même volume (±0,1 dB).
+Depuis la v25 : courbe de triode asymétrique (l'alternance positive sature plus tôt : harmonique 2 de −35 à −24 dB sur
+le Plexi, de −33 à −18 dB sur le 5150), décalage de polarisation qui suit le jeu (le son se « comprime » sur une
+attaque forte puis s'épanouit, environ 100 ms) et affaissement de l'alimentation qui atteint aussi le préampli.
 
 ### CAB — 15 baffles (BODY, BRIGHT, MIC)
 1x10 OPEN · 1x12 US OPEN (Jensen C12N) · 2x10 VIBRO · 2x12 BLUE (Alnico Blue) · 2x12 BRIT (G12H) ·
@@ -37,6 +40,10 @@ de puissance et affaissement de l'alimentation (sag). Les 29 amplis sont calibr�
 1x15 OPEN (JBL D130) · 8x10 BASS (SVT) · 4x10 HORN (basse + tweeter) · DI (NO CAB).
 Résonance du HP, creux et pics de présence relevés sur les courbes des fabricants. **MIC** déplace le micro du
 bord (sombre) vers le centre (brillant).
+Depuis la v25, une couche de détail (filtre FIR de 128 points, 2,9 ms) s'ajoute à chaque baffle : les résonances de
+la membrane entre 1,2 et 6 kHz (propres à chaque modèle : deux baffles ne sonnent plus pareil dans les aigus), le
+filtrage en peigne du micro hors axe (MIC 0 = bord du cône : creux vers 6 kHz ; MIC 100 = centre : hors de la bande
+audio) et la réflexion arrière des baffles ouverts (1x10, 1x12 US, 2x10, 2x12 BLUE, 4x10 TWEED, 1x15).
 
 ### DRV — 27 drives, fuzz et boosts
 | Famille | Modèles | Réglages |
@@ -79,11 +86,22 @@ FDBK ≈ 90**, comme les vrais : baisser FDBK pour arrêter.
 |---|---|
 | KNOB (PARA) | chaîne : choisir le bloc · page : choisir la ligne · réglage : changer la valeur (tourner vite = pas de 5) |
 | PUSH (knob) | chaîne → ouvrir le bloc · ligne type/réglage → régler · ligne ON/OFF → basculer · en réglage → valider |
+| PUSH **appui long (0,8 s)** | **SAVE** : enregistrer le son actuel (voir plus bas) |
 | HOME | retour à la chaîne · **appui long (0,7 s) = accordeur** |
 | Footswitch droit / gauche | preset suivant / précédent |
 | AMP, CAB, DLY, REV, MOD | aller directement au bloc ; 2e appui = allumer/éteindre |
 | FX | parcourt DRV → SFX → PIT → CMP → GT → EQ |
 | MASTER | volume de sortie |
+
+## Enregistrer ses sons (v25)
+- Un `*` en haut de l'écran signale que le son a été modifié depuis le preset.
+- **Appui long sur PUSH** : page SAVE. Le knob choisit l'emplacement (1 à 42, le preset en cours est proposé ; l'écran
+  montre le nom du son qui sera remplacé), PUSH enregistre, HOME annule.
+- Tout au bout de la liste : **RESTORE FACTORY** remet l'emplacement en cours à son preset d'usine.
+- La pédale redémarre sur le dernier emplacement enregistré.
+- Les sons sont gardés en flash (0xF0000–0xF4000, deux copies) : une coupure de courant pendant l'enregistrement
+  laisse l'ancienne version, jamais un emplacement abîmé. Ils **survivent aux mises à jour** OpenPocket (le chargeur
+  n'écrit que la zone de l'application). Le son est coupé environ 0,1 s pendant l'écriture.
 
 En bas à droite : `C1 xx%` = charge du DSP sur le 2e cœur (`C0` = repli sur le cœur principal, `BYP` = garde-fou
 de surcharge : éteindre un bloc).
@@ -97,6 +115,11 @@ de surcharge : éteindre un bloc).
   de phase à chaque fondu (SOLA).
 - Silence numérique : plus de nombres dénormalisés (le silence coûtait 25× plus cher en calcul sur PC).
 - Mémoire : moteur 326 Ko dans la zone POOL de 344 Ko.
+- Enregistrement des presets (`tests/test_store.c`) : coupure de courant simulée à 1 286 moments d'un
+  enregistrement → ancienne version gardée 578 fois, nouvelle 708 fois, jamais d'emplacement abîmé ; aucune écriture
+  hors de la zone des presets.
+- Coût v25 vs v24 (PC) : +28 % sur un preset typique (drive + gate + ampli + baffle), +18 % tous blocs allumés ;
+  estimation sur la pédale : 55–60 % de C1 sur les presets les plus lourds (garde-fou BYP à 85 %).
 - Coût estimé vs v22 : +15 % sur un preset typique (drive + ampli 4 étages + baffle), +50 % avec les 11 blocs allumés
   et les effets les plus lourds.
 

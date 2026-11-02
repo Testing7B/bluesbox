@@ -123,3 +123,14 @@ puis `iis_set_sample_rate(44100)`, `iis_channel_on`, IRQ ALNK0 = 11 -> `iis_irq_
 - Chargeur (`loader/`) : felucca-bsp adapté à la Pocket X : zone de l'application [0x4000, 0xA3000) comme PocketX_016,
   tête de flash jamais écrite, enregistrements de mise à jour effacés entre 0xA3000 et 0xFF000.
 - Paquets (`tools/pxpkg.py`) : reconstruisent la zone de l'application officielle PocketX_016 à l'octet près.
+
+## v25 : presets en flash, baffles et ampli plus fins
+- Presets (`firmware/px_store.h`) : 42 emplacements de 96 o, deux copies A/B (0xF0000 / 0xF2000, deux secteurs de
+  4 Kio chacune), en-tête « OPPS » écrit en dernier (séquence + CRC16), relecture après écriture. Octets 0xF00..0xF7F
+  de chaque secteur toujours effacés (zone lue par le chargeur pour ses enregistrements). Pendant l'écriture :
+  sortie muette, IRQ ALNK0 masquée, 2e cœur entre deux blocs (sa boucle tourne en RAM).
+- Baffle : FIR de 128 points après les biquads (résonances du cône 1,2–6 kHz tirées par modèle, peigne du micro hors
+  axe, réflexion arrière des baffles ouverts), normalisé à l'unité en basses fréquences.
+- Ampli : triode asymétrique `u≥0 ? 0.7·tanh(u/0.7) : tanh(u)`, décalage de polarisation par enveloppe (100 ms,
+  0,45 pour ≥4 étages, 0,35 sinon), sag aussi sur le préampli (×0,3). `px_trim.h` recalibré (29 amplis à 0,160 RMS).
+- Mémoire : 327 724 o sur 344 064 dans POOL.
