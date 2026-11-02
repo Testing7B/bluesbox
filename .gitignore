@@ -1,0 +1,12 @@
+build/
+firmware/build/
+firmware/openpocket.bin
+docs/firmware/*.fwsc
+docs/firmware/manifest.json
+*.o
+__pycache__/
+# your own pedal's backup and images made from it: never in the repository (they hold the official firmware)
+fm1-1.bin
+fm1-300.bin
+*.dump.bin
+openpocket.bundle

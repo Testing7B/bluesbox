@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// OpenPocket — end-to-end test of the web installer (docs/pxota.js, docs/pxpkg.js) against a simulated pedal
+// (tests/devsim.c) that runs the pedal's real update code: firmware/bsp/chip/ota.c (step 1) and loader/ldr_core.c
+// (step 2), on a 1 MiB flash. No browser, no hardware.
+//   cc -O1 -o build/devsim tests/devsim.c && node tests/test_installer.mjs [PocketX_016.fwsc]
+// The optional official package checks the way back's step 1 (the official loader staged by OpenPocket's ota.c).
+import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Updater, IS_OPENPOCKET } from "../docs/pxota.js";
+import { productOf, logicalImage, checkOfficial } from "../docs/pxpkg.js";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const SIM = process.env.DEVSIM || join(ROOT, "build", "devsim");
+const TMP = mkdtempSync(join(tmpdir(), "opinst-"));
+let failed = 0;
+const ok = (c, what) => { console.log(`${what.padEnd(70)} ${c ? "ok" : "FAIL"}`); if (!c) failed++; };
+const FAST = { afterUpgrade: 50, afterStep1: 50, loaderWait: 5000, step1Idle: 3000, step2Idle: 5000, afterWrite: 50,
+  backWait: 5000, perRequest: 0, poll: 50 };
+
+execFileSync("python3", [join(ROOT, "tests", "fixtures.py"), TMP], { stdio: "inherit" });
+
+// a fake WebMIDI access over one simulated pedal: its port pair is renamed when the device re-enumerates
+function simAccess(args) {
+  const child = spawn(SIM, args, { stdio: ["pipe", "pipe", "inherit"] });
+  const log = [];
+  const access = { inputs: new Map(), outputs: new Map() };
+  let port = null, buf = "", readyFn;
+  const ready = new Promise((r) => { readyFn = r; });
+  const mkPorts = (name) => {
+    if (port) { port.input.state = "disconnected"; port.output.state = "disconnected"; }
+    access.inputs.clear(); access.outputs.clear();
+    if (name === "none") { port = null; return; }
+    const input = { name, state: "connected", onmidimessage: null, open: async () => {} };
+    const output = { name, state: "connected", open: async () => {},
+      send: (bytes) => {
+        if (output.state === "disconnected") throw new Error("disconnected");
+        child.stdin.write(Buffer.from(bytes).toString("hex") + "\n");
+      } };
+    port = { input, output };
+    access.inputs.set(name, input); access.outputs.set(name, output);
+  };
+  child.stdout.on("data", (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const ln = buf.slice(0, i); buf = buf.slice(i + 1);
+      if (ln.startsWith("#port ")) { mkPorts(ln.slice(6)); readyFn(); }
+      else if (ln.startsWith("#log ")) log.push(ln.slice(5));
+      else if (port && port.input.onmidimessage && ln) port.input.onmidimessage({ data: Uint8Array.from(Buffer.from(ln, "hex")) });
+    }
+  });
+  const done = new Promise((r) => child.on("exit", (code) => r(code)));
+  return { access, log, ready, end: async () => { child.stdin.end(); return done; } };
+}
+
+const pkg = (name) => readFileSync(join(TMP, name));
+const flashOf = (f) => readFileSync(f);
+const py = (code, ...a) => execFileSync("python3", ["-c", code, ...a]).toString().trim();
+const appOf = `
+import sys; sys.path.insert(0, sys.argv[2])
+import pocketx_fw as fw
+d = fw.flash_decrypt(open(sys.argv[1], 'rb').read())
+e = fw.flash_parse(d)
+bad = [k for k, v in fw.flash_checks(d, e).items() if not v]
+app = d[0x4000 + e[1]['addr']:0x4000 + e[1]['addr'] + e[1]['len']]
+i = app.find(b'OP-PRODUCT:')
+print(app[i + 11:i + 31].split(b'\\0')[0].decode(), 'CRC-OK' if not bad else 'CRC-BAD')`;
+
+// 1. the package files
+const px = pkg("PocketX_924.fwsc"), bb = pkg("BlackBox_924.fwsc");
+ok(productOf(px) === "PocketX_924" && productOf(bb) === "BlackBox_924", "packages carry their identity");
+
+// 2. OpenPocket 923 -> 924: handshake, step 1 (ota.c stages the loader), step 2 (ldr_core writes), back as 924
+{
+  const dump = join(TMP, "after_update.bin");
+  const sim = simAccess([join(TMP, "flash_old.bin"), "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  const steps = [];
+  const who = await u.identify();
+  ok(who && who.id.text === "PocketX_923" && IS_OPENPOCKET(who.id), "the pedal reports the OpenPocket it runs (PocketX_923)");
+  let res = null, err = null;
+  try { res = await u.install(logicalImage(px), "PocketX_924", (s) => steps.push(s)); } catch (e) { err = e; }
+  ok(!err && res === "PocketX_924", `update 923 -> 924 ${err ? "(" + err.code + " " + err.message + ")" : ""}`);
+  ok(["start", "verify", "loader", "write", "reboot", "done"].every((s) => steps.includes(s)), "every step reported");
+  const code = await sim.end();
+  ok(code === 0, "the pedal never wrote outside its allowed ranges");
+  ok(sim.log.some((l) => /step1 rc=0/.test(l)) && sim.log.some((l) => /staged head=LOADER.BIN/.test(l)), "step 1: loader staged at 0xE0000 (JLFS LOADER.BIN)");
+  ok(sim.log.some((l) => /record=flash loader_at=0xe0000/.test(l)), "step 1: update record written (flash 0xE4F00, RAM)");
+  ok(sim.log.some((l) => /step2 rc=0/.test(l)), "step 2: the loader wrote the app area");
+  const after = flashOf(dump), before = flashOf(join(TMP, "flash_old.bin"));
+  ok(after.subarray(0, 0x4000).equals(before.subarray(0, 0x4000)), "flash head [0, 0x4000) untouched");
+  ok(after.subarray(0xC0000, 0xC0010).toString() === "STOCK USER DATA!", "user data above the app area untouched");
+  ok(after.subarray(0xE0000, 0xE5000).every((b) => b === 0xFF), "staging area erased afterwards");
+  ok(py(appOf, dump, join(ROOT, "tools")) === "PocketX_924 CRC-OK", "flash now holds app PocketX_924, every CRC right");
+}
+
+// 3. the wrong package for the pedal: refused before anything happens
+{
+  const sim = simAccess([join(TMP, "flash_old.bin")]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  let err = null;
+  try { await u.install(logicalImage(bb), "BlackBox_924", () => {}); } catch (e) { err = e; }
+  ok(err && err.code === "model", "a BlackBox package on a Pocket X is refused (model)");
+  await sim.end();
+}
+
+// 4. official firmware -> OpenPocket (its step 1 simulated by ota.c, answering as PocketX_016)
+{
+  const dump = join(TMP, "from_stock.bin");
+  const sim = simAccess([join(TMP, "flash_old.bin"), "--stock", "PocketX_016", "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  let res = null, err = null;
+  try { res = await u.install(logicalImage(px), "PocketX_924", () => {}); } catch (e) { err = e; }
+  ok(!err && res === "PocketX_924", `official PocketX_016 -> OpenPocket 924 ${err ? "(" + err.code + ")" : ""}`);
+  await sim.end();
+}
+
+// 5. a damaged package: the loader refuses it before erasing anything
+{
+  const dump = join(TMP, "damaged.bin");
+  const sim = simAccess([join(TMP, "flash_old.bin"), "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, { ...FAST, step2Idle: 1500 });
+  const img = logicalImage(px);
+  img[0x60000] ^= 0x55;                                     // one byte inside the app area of flash.bin
+  let err = null;
+  try { await u.install(img, "PocketX_924", () => {}); } catch (e) { err = e; }
+  await sim.end();
+  ok(err && sim.log.some((l) => /step2 rc=-12/.test(l)), "damaged flash.bin: the loader stops (CRC, rc -12)");
+  ok(flashOf(dump).subarray(0x4000, 0xA3000).equals(flashOf(join(TMP, "flash_old.bin")).subarray(0x4000, 0xA3000)),
+     "damaged package: nothing in the app area erased");
+}
+
+// 6. the way back, step 1 with the real official package (when given): checkOfficial, then OpenPocket's ota.c checks
+//    and stages the official loader (its boot area must be valid)
+const off = process.argv[2];
+if (off && existsSync(off)) {
+  const bytes = readFileSync(off);
+  const chk = await checkOfficial(new Uint8Array(bytes));
+  ok(chk.known && chk.product === "PocketX_016", "official PocketX_016 package recognised (SHA-256)");
+  const sim = simAccess([join(TMP, "flash_old.bin")]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  const dev = await u.find((id) => IS_OPENPOCKET(id));
+  dev.link.send([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7]);
+  await new Promise((r) => setTimeout(r, 50));
+  const s1 = await u.serve(dev.link, chk.image, 0xE0000000, 3000, null);
+  await new Promise((r) => setTimeout(r, 200));
+  await sim.end();
+  ok(s1.finished && sim.log.some((l) => /step1 rc=0/.test(l)) && sim.log.some((l) => /foreign-loader/.test(l)),
+     "way back: OpenPocket stages the official loader (head checked)");
+  let bad = null;
+  try { await checkOfficial(new Uint8Array(px)); } catch (e) { bad = e; }
+  ok(bad !== null, "an OpenPocket package is not accepted as the official one");
+} else {
+  console.log("(no official package given: way-back test skipped)");
+}
+
+console.log(failed ? `\n${failed} FAILED` : "\nall installer tests passed");
+process.exit(failed ? 1 : 0);

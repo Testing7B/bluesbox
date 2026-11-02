@@ -1,0 +1,44 @@
+/* balaye tous les blocs x types x réglages (0/50/100) avec la libm de la pédale ; change les réglages en cours
+ * de jeu (comme l'UI) ; détecte NaN/Inf/explosion */
+#include <stdio.h>
+#include <string.h>
+#include "px_dsp.h"
+static px_engine e;
+static long bad;
+static int run(int blocks, float amp){
+  float in[64], out[64]; int nan = 0; static unsigned seed = 1;
+  for (int b = 0; b < blocks; b++) {
+    for (int i = 0; i < 64; i++) { seed = seed*1103515245u+12345u; float nz = ((seed>>9)&1023)/1024.0f - 0.5f;
+      in[i] = amp * (((b*64+i) % 180 < 90) ? 0.5f : -0.5f) + amp*0.2f*nz; }
+    px_engine_process(&e, in, out, 64);
+    for (int i = 0; i < 64; i++) if (out[i] != out[i] || out[i] > 50 || out[i] < -50) nan = 1;
+  }
+  return nan;
+}
+int main(void){
+  px_engine_init(&e, 44100.0f);
+  static const int V[3] = {0, 50, 100}; long n = 0;
+  for (int blk = 0; blk < PX_NBLK; blk++)
+   for (int t = 0; t < px_ntypes(blk); t++)
+    for (int a = 0; a < 3; a++) for (int b = 0; b < 3; b++) for (int c = 0; c < 3; c++) {
+      px_preset_t p; px_preset_factory(&p, (blk*7+t) % px_preset_count());
+      for (int z = 0; z < PX_NBLK; z++) p.on[z] = (z == PX_B_AMP || z == PX_B_CAB || z == blk);
+      p.type[blk] = (uint8_t)t;
+      p.p[blk][0] = V[a]; p.p[blk][1] = V[b]; p.p[blk][2] = V[c]; p.p[blk][3] = V[(a+c)%3]; p.p[blk][4] = V[(b+c)%3];
+      p.p[PX_B_AMP][0] = V[(a+b)%3];
+      px_engine_set(&e, &p); n++;
+      if (run(30, 1.0f) | run(10, 0.0f) | run(10, 3.0f)) {   /* signal, silence, très fort */
+        bad++; if (bad < 15) printf("PROBLEME : %s / %s  p=%d %d %d\n", px_block_name(blk), px_type_name(blk,t), V[a],V[b],V[c]);
+        px_engine_init(&e, 44100.0f);
+      }
+    }
+  /* tous les blocs ensemble, tous les presets, réglages extrêmes */
+  for (int pr = 0; pr < px_preset_count(); pr++) for (int x = 0; x < 3; x++) {
+      px_preset_t p; px_preset_factory(&p, pr);
+      for (int z = 0; z < PX_NBLK; z++) { p.on[z] = 1; for (int k = 0; k < 5; k++) p.p[z][k] = V[(x+k+z)%3]; }
+      px_engine_set(&e, &p); n++;
+      if (run(40, 1.0f) | run(20, 0.0f)) { bad++; printf("PROBLEME tout ON preset %d x%d\n", pr, x); px_engine_init(&e,44100.0f); }
+  }
+  printf("%ld configurations testees, %ld problemes\n", n, bad);
+  return bad != 0;
+}
