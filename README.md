@@ -23,7 +23,8 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   (one per style), a flicker-free colour UI, a chromatic tuner
 - **Detailed cabinets** (cone breakup, off-axis mic comb, open-back reflection) and **tube stages with bias shift**
   (the note compresses on a hard attack and blooms back)
-- **24-bit audio** in and out, like the official firmware (no more constant hiss on high-gain amps)
+- **24-bit audio** in and out, guitar read from the left input channel only, like the official firmware (the right
+  channel only carries noise: mixing it in was the constant hiss on high-gain amps)
 - **USB update**: the pedal shows up as a USB-MIDI device and takes updates from the [web installer](docs/index.html)
 
 Full list of models and controls (French): [docs/SONS-ET-COMMANDES.md](docs/SONS-ET-COMMANDES.md).

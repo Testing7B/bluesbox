@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "27"
+#define OP_VERSION_NUM "28"
 #define OP_VERSION "v" OP_VERSION_NUM   /* affiché au démarrage : change à chaque build livré */
 #define PROBE 0            /* 1 = diagnostic GPIO : affiche en bas les broches qui changent */
 #define ADC_PROBE 0        /* 1 = diagnostic ADC : affiche en bas les canaux qui bougent (C2:512) */

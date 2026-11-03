@@ -161,3 +161,11 @@ puis `iis_set_sample_rate(44100)`, `iis_channel_on`, IRQ ALNK0 = 11 -> `iis_irq_
 - Instructions par échantillon (PC, sans vectorisation) : DOOM SLUDGE v24 1 936 / v26 2 655 / v27 2 240 ;
   GROOVE METAL 1 430 / 2 151 / 1 744. Estimation sur la pédale : DOOM SLUDGE ~75 % (au lieu de 89 %).
 - Moteur : 326 612 o dans POOL (v26 : 327 724).
+
+## v28 : la guitare sur le canal gauche seul (le souffle venait du canal droit)
+- Mesure sur la pédale (écran de l'accordeur, v26) : rien de branché, L -76 à -91 dBFS, R -77 dBFS stable ;
+  en grattant fort, L -17 dBFS, R toujours -77 dBFS. La guitare n'arrive que sur le canal gauche ; le droit ne porte
+  qu'un bruit constant, 14 dB au-dessus du plancher du gauche.
+- La moyenne (G + D) / 2 ajoutait ce bruit au son : rapport signal/bruit 60 dB (-17 contre -77). Canal gauche seul,
+  comme le firmware officiel : 74 dB (-17 contre -91), soit jusqu'à 14 dB de souffle en moins, amplifié d'autant
+  par les amplis à gros gain. Entrée = G × 0,5 : même niveau qu'avant, réglages inchangés.

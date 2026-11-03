@@ -203,7 +203,9 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* bloc de
     for (uint32_t i = 0; i < n; i++) {
         float l = (float)((int32_t)(s[2u * i] << 8) >> 8), r = (float)((int32_t)(s[2u * i + 1u] << 8) >> 8);
         sl += l * l; sr += r * r;
-        a_in[i] = (l + r) * (0.5f / 8388608.0f);       /* même niveau qu'en 16 bits (moyenne G + D) */
+        a_in[i] = l * (0.5f / 8388608.0f);             /* guitare = canal G seul (comme l'officiel) ; le D ne porte
+                                                          que du bruit (~ -77 dBFS, mesuré v26). x0.5 : même niveau
+                                                          qu'avant (G + D) / 2, les réglages ne changent pas */
     }
     for (uint32_t i = n; i < A_FR; i++) a_in[i] = 0.0f;
     if (n) {                                           /* niveaux d'entrée G / D (écran de l'accordeur) */

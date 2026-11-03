@@ -1,4 +1,4 @@
-# OpenPocket — sons et commandes (v27)
+# OpenPocket — sons et commandes (v28)
 
 ![Interface v23](ui-v23.png)
 
@@ -97,9 +97,10 @@ FDBK ≈ 90**, comme les vrais : baisser FDBK pour arrêter.
 Appui long sur HOME. La ligne `IN L … R … dB` en haut indique le niveau de chaque canal de l'entrée (en dB sous le
 maximum) : rien de branché, c'est le bruit de fond de la pédale ; en jouant, c'est le niveau de ta guitare.
 
-## Entrée en 24 bits (v26)
-Comme le firmware officiel, l'entrée et la sortie audio sont lues en 24 bits (16 bits avant) : le souffle constant
-qu'on entendait sur les amplis à gros gain, même sans rien de branché, venait de là.
+## Entrée audio (v26–v28)
+Comme le firmware officiel : entrée et sortie en 24 bits (v26), et la guitare lue sur le canal gauche seul (v28).
+Le canal droit de l'entrée ne porte qu'un bruit constant (-77 dB) ; avant la v28 il était mélangé au son, et les
+amplis à gros gain le transformaient en souffle constant, même sans rien de branché.
 
 ## Enregistrer ses sons (v25)
 - Un `*` en haut de l'écran signale que le son a été modifié depuis le preset.
