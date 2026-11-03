@@ -61,7 +61,7 @@ Pocket X : PC0/PC1 = encodeur, PC7 = écran, PA0-PA3 = boutons, PA10 = knob MAST
 |---|---|---|
 | MCLK | PA4 | sortie (mclk_output = 1) |
 | SCLK / LRCK | PA5 / PA6 | JieLi maître |
-| **Entrée guitare** | **PA8 = DAT1** | I2S ALNK0, 16 bits stéréo, 44,1 kHz (ADC externe) |
+| **Entrée guitare** | **PA8 = DAT1** | I2S ALNK0, 24 bits stéréo (16 bits jusqu'à la v25), 44,1 kHz (ADC externe) |
 | **Sortie** | **PA7 = DAT0** | I2S ALNK0 -> DAC externe « 344C » -> ampli SGM8905 -> OUT + casque |
 | **Activation ampli** | **PA9 = 3,3 V** | GPIO sortie haute (craquement = mise en marche de l'ampli) |
 Le DAC interne (DACL) n'est PAS utilisé par la Pocket X. Passthrough guitare -> sortie : propre.
@@ -134,3 +134,18 @@ puis `iis_set_sample_rate(44100)`, `iis_channel_on`, IRQ ALNK0 = 11 -> `iis_irq_
 - Ampli : triode asymétrique `u≥0 ? 0.7·tanh(u/0.7) : tanh(u)`, décalage de polarisation par enveloppe (100 ms,
   0,45 pour ≥4 étages, 0,35 sinon), sag aussi sur le préampli (×0,3). `px_trim.h` recalibré (29 amplis à 0,160 RMS).
 - Mémoire : 327 724 o sur 344 064 dans POOL.
+
+## v26 : entrée et sortie en 24 bits (souffle des amplis à gros gain)
+- Constat : souffle constant (« shhh ») sur les amplis high-gain, même sans câble branché, absent avec le firmware
+  officiel. Cause : l'entrée était lue en 16 bits ; le bruit de quantification, multiplié par le gain de l'ampli
+  (~60 dB), devenait audible.
+- Firmware officiel (PocketX_016, désassemblé) : même ALNK0, mêmes broches, maître, 64 SCLK par trame, mais
+  - chaque canal est mis en **24 bits** (fonction 0x0200664A : `CON1 |= 1 << (4*ch + 2)`, le bit `data_width` du SDK) ;
+  - LEN = 128 et demi-tampon de 512 o traité comme 64 trames de 8 o : en 24 bits, LEN compte des mots de 32 bits ;
+  - entrée lue par `(mot << 8) >> 7` : 24 bits alignés à droite (bit 23 = signe), canal gauche seul, ×2 ;
+  - sortie écrite en entiers 24 bits écrêtés à ±8 388 600 sur les deux mots de la trame.
+- OpenPocket v26 : `data_width = BIT(0) | BIT(1)`, `sr_points = 256` (128 trames par bloc, comme avant), tas de
+  4 096 o pour les tampons du pilote (2 canaux × 8 × 256). Entrée = (G + D) / 2 en 24 bits : même niveau qu'avant,
+  les réglages des amplis ne changent pas. Sortie en 24 bits (le volume MASTER ne coûte plus de résolution).
+- Diagnostic : l'écran de l'accordeur affiche `IN L -xx R -xx dB`, le niveau de chaque canal d'entrée (dBFS),
+  pour vérifier où arrive la guitare et le plancher de bruit.

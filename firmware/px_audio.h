@@ -2,7 +2,11 @@
  * OpenPocket X — le VRAI son : guitare -> moteur DSP (engine/px_dsp.c) -> sortie, réglé par l'UI.
  *
  * Chaîne audio de la Pocket X (trouvée avec les builds de test v10..v14, voir docs/AUDIO-SDK.md) :
- *   I2S ALNK0, groupe IIS_PORTA, JieLi maître, MCLK=PA4 SCLK=PA5 LRCK=PA6, 44,1 kHz, 16 bits stéréo
+ *   I2S ALNK0, groupe IIS_PORTA, JieLi maître, MCLK=PA4 SCLK=PA5 LRCK=PA6, 44,1 kHz, 24 bits stéréo (v26)
+ *   24 bits comme le firmware officiel (PocketX_016 : bit « 24 bits » de chaque canal dans ALNK CON1) : en 24 bits
+ *   la DMA range un échantillon par mot de 32 bits, aligné à droite (bit 23 = signe) ; LEN compte des mots, donc
+ *   sr_points = 2 x A_FR pour garder 128 trames stéréo par bloc. En 16 bits, le bruit de quantification de l'entrée,
+ *   multiplié par le gain des amplis, s'entendait comme un souffle constant.
  *   ENTREE guitare = DAT1 (PA8)    SORTIE = DAT0 (PA7) -> DAC « 344C » -> ampli SGM8905 -> OUT + casque
  *   ACTIVATION de l'ampli = PA9 à 3,3 V
  * Pilote I2S : celui du SDK officiel JieLi (sdk/iis.bc, Apache-2.0), compilé depuis son bitcode.
@@ -42,7 +46,7 @@ void *os_current_task_rom(void) { return 0; }
 void cpu_assert_debug(void) { }
 void P33_SYSTEM_RESET(void) { for (;;) ; }
 
-static uint8_t jl_heap[4096] __attribute__((aligned(8)));
+static uint8_t jl_heap[4096] __attribute__((aligned(8)));   /* iis_open : 2 canaux x 8 x sr_points (256) */
 void *malloc(unsigned n) { return (n <= sizeof jl_heap) ? jl_heap : 0; }   /* un seul bloc : iis_open */
 void free(void *p) { (void)p; }
 /* memset / memcpy: felucca-bsp libc.c (included by openpocket.c) */
@@ -73,7 +77,15 @@ int gpio_set_pull_down(uint32_t g, int on)   { jl_rmw(g, 0x14, on); return 0; }
 
 static px_engine g_eng __attribute__((section(".pool"), aligned(8)));   /* ~250 Ko : zone RAM « POOL » */
 static float a_in[A_FR], a_out[A_FR];
-static int16_t a_res[A_FR];
+static int32_t a_res[A_FR];                            /* sortie, 24 bits alignés à droite */
+static volatile float a_lvl[2];                        /* entrée G / D : moyenne des carrés, en pas de 24 bits */
+/* niveau d'entrée en dB sous la pleine échelle (dBFS), arrondi ; -199 = silence numérique */
+static int a_level_db(int ch)
+{
+    float m = a_lvl[ch & 1] * (1.0f / (8388608.0f * 8388608.0f));
+    if (m < 1e-20f) return -199;
+    return (int)(4.3429448f * logf(m) - 0.5f);         /* 10 log10 */
+}
 static volatile float a_gain = 0.64f;                  /* volume MASTER (knob), appliqué en sortie */
 static volatile uint32_t a_load, a_peak, a_blocks;     /* charge DSP en % */
 static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boot, safe mode) */
@@ -101,11 +113,11 @@ static void dsp_block(void)
     }
     if (a_nan) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     if (a_mute) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
-    float g = a_gain * 32767.0f;
+    float g = a_gain * 8388607.0f;
     for (uint32_t i = 0; i < A_FR; i++) {
         float v = a_out[i] * g;
-        if (v > 32767.0f) v = 32767.0f; else if (v < -32768.0f) v = -32768.0f;
-        a_res[i] = (int16_t)v;
+        if (v > 8388607.0f) v = 8388607.0f; else if (v < -8388608.0f) v = -8388608.0f;
+        a_res[i] = (int32_t)v;
     }
     uint32_t pct = (fm1_ticks() - t0) * 100u / A_BUDGET;
     a_load = (a_load * 7u + pct) / 8u;
@@ -184,12 +196,20 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* bloc de
     (void)priv;
     if (ch != 1u) return;
     a_collect();                                       /* a_in ne doit plus être lu par CPU1 */
-    const int16_t *s = (const int16_t *)data;
-    uint32_t n = (uint32_t)len / 4u;
+    const uint32_t *s = (const uint32_t *)data;
+    uint32_t n = (uint32_t)len / 8u;                   /* 2 mots de 32 bits par trame */
     if (n > A_FR) n = A_FR;
-    for (uint32_t i = 0; i < n; i++)
-        a_in[i] = (float)((int32_t)s[2u * i] + s[2u * i + 1u]) * (0.5f / 32768.0f);
+    float sl = 0.0f, sr = 0.0f;
+    for (uint32_t i = 0; i < n; i++) {
+        float l = (float)((int32_t)(s[2u * i] << 8) >> 8), r = (float)((int32_t)(s[2u * i + 1u] << 8) >> 8);
+        sl += l * l; sr += r * r;
+        a_in[i] = (l + r) * (0.5f / 8388608.0f);       /* même niveau qu'en 16 bits (moyenne G + D) */
+    }
     for (uint32_t i = n; i < A_FR; i++) a_in[i] = 0.0f;
+    if (n) {                                           /* niveaux d'entrée G / D (écran de l'accordeur) */
+        a_lvl[0] += (sl / (float)n - a_lvl[0]) * 0.0625f;
+        a_lvl[1] += (sr / (float)n - a_lvl[1]) * 0.0625f;
+    }
     tn_capture(a_in, A_FR);
 #if DSP_CPU1
     if (a_c1 && fm1_cpu1_run(dsp_job, 0)) { a_job = 1; return; }
@@ -201,8 +221,8 @@ static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* bloc de
 {
     (void)priv; (void)ch;
     a_collect();                                       /* le bloc précédent doit être fini */
-    int16_t *d = (int16_t *)data;
-    uint32_t n = (uint32_t)len / 4u;
+    int32_t *d = (int32_t *)data;
+    uint32_t n = (uint32_t)len / 8u;
     if (n > A_FR) n = A_FR;
     for (uint32_t i = 0; i < n; i++) d[2u * i] = d[2u * i + 1u] = a_res[i];
 }
@@ -325,8 +345,9 @@ static void audio_start(void)
     a_pd.channel_in = 1u << 1;                         /* DAT1 = PA8 : guitare */
     a_pd.channel_out = 1u << 0;                        /* DAT0 = PA7 : sortie */
     a_pd.port_sel = IIS_PORTA;
-    a_pd.data_width = 0; a_pd.mclk_output = 1; a_pd.slave_mode = 0;
-    a_pd.dump_points_num = 0; a_pd.sr_points = A_FR;
+    a_pd.data_width = (1u << 1) | (1u << 0);          /* 24 bits sur les deux canaux, comme l'officiel */
+    a_pd.mclk_output = 1; a_pd.slave_mode = 0;
+    a_pd.dump_points_num = 0; a_pd.sr_points = 2u * A_FR;   /* LEN en mots : 2 par trame en 24 bits */
     iis_set_enc_data_handler(0, a_enc, 0);
     iis_set_dec_data_handler(0, a_dec, 0);
     iis_open(&a_pd, 0);

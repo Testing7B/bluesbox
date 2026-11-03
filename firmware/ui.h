@@ -358,7 +358,28 @@ static void ui_fx_cycle(void)          /* FX : DRV -> SFX -> PIT -> CMP -> GT ->
 
 /* ===================================================== accordeur ======== */
 static const char *NOTE_N[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-static int tn_last_note = -2, tn_last_x = -1, tn_last_c = 1000;
+static int tn_last_note = -2, tn_last_x = -1, tn_last_c = 1000, tn_last_lv = 0x7FFF;
+/* "IN L -82  R -84 dB": input level of each I2S channel, dB below full scale (24-bit, v26 diagnostic) */
+static int lv_str(char *b, int v)
+{
+    int i = 0;
+    if (v <= -199) { b[0] = '-'; b[1] = '-'; b[2] = '-'; return 3; }
+    if (v < 0) { b[i++] = '-'; v = -v; }
+    char t[4]; num3(t, (uint32_t)v);
+    for (int k = 0; t[k]; k++) b[i++] = t[k];
+    return i;
+}
+static void tuner_level(void)
+{
+    int l = a_level_db(0), r = a_level_db(1);
+    if (((l & 0xFF) | ((r & 0xFF) << 8)) == tn_last_lv) return;
+    tn_last_lv = (l & 0xFF) | ((r & 0xFF) << 8);
+    char b[28]; int i = 0;
+    b[i++] = 'I'; b[i++] = 'N'; b[i++] = ' '; b[i++] = ' '; b[i++] = 'L'; b[i++] = ' '; i += lv_str(b + i, l);
+    b[i++] = ' '; b[i++] = ' '; b[i++] = ' '; b[i++] = 'R'; b[i++] = ' '; i += lv_str(b + i, r);
+    b[i++] = ' '; b[i++] = 'd'; b[i++] = 'B'; b[i] = 0;
+    ft_box(0, 32, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
+}
 #define TN_BAR_Y 170u
 static void tuner_open(void)
 {
@@ -371,12 +392,13 @@ static void tuner_open(void)
     ft_box(100, TN_BAR_Y + 22u, 40, "0", &FT_SM, UI_DIM, UI_BG, 1);
     ft_box(190, TN_BAR_Y + 22u, 40, "+50", &FT_SM, UI_DIM, UI_BG, 1);
     ft_box(0, F_Y, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_BG, 1);
-    tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000;
+    tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
 static void tuner_close(void) { ui_mode = M_CHAIN; ui_invalidate(); lcd_rect(0, 0, 240, 240, UI_BG); lcd_rect(0, 224, 240, 16, UI_PANEL); }
 static void tuner_draw(float hz)       /* hz <= 0 : pas de note */
 {
     int note = -1, c = 0; float cents = 0.0f;
+    tuner_level();
     if (hz > 20.0f) {
         float st = 12.0f * logf(hz / 440.0f) * 1.44269504f;   /* demi-tons depuis A4 = 440 Hz */
         int r = (int)(st + (st >= 0 ? 0.5f : -0.5f));

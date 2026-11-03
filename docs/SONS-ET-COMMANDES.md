@@ -1,4 +1,4 @@
-# OpenPocket — sons et commandes (v25)
+# OpenPocket — sons et commandes (v26)
 
 ![Interface v23](ui-v23.png)
 
@@ -92,6 +92,14 @@ FDBK ≈ 90**, comme les vrais : baisser FDBK pour arrêter.
 | AMP, CAB, DLY, REV, MOD | aller directement au bloc ; 2e appui = allumer/éteindre |
 | FX | parcourt DRV → SFX → PIT → CMP → GT → EQ |
 | MASTER | volume de sortie |
+
+## Accordeur
+Appui long sur HOME. La ligne `IN L … R … dB` en haut indique le niveau de chaque canal de l'entrée (en dB sous le
+maximum) : rien de branché, c'est le bruit de fond de la pédale ; en jouant, c'est le niveau de ta guitare.
+
+## Entrée en 24 bits (v26)
+Comme le firmware officiel, l'entrée et la sortie audio sont lues en 24 bits (16 bits avant) : le souffle constant
+qu'on entendait sur les amplis à gros gain, même sans rien de branché, venait de là.
 
 ## Enregistrer ses sons (v25)
 - Un `*` en haut de l'écran signale que le son a été modifié depuis le preset.
