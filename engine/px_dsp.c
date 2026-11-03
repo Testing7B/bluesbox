@@ -27,8 +27,10 @@ static inline float px_tanh(float x)                   /* rational, err < 1e-3 o
 }
 static inline float px_abs(float x) { return x < 0.0f ? -x : x; }
 static inline float triode(float u)                    /* grid current (u > 0) limits earlier and harder than cutoff */
-{
-    return u >= 0.0f ? 0.7f * px_tanh(u * 1.4285714f) : px_tanh(u);
+{                                                      /* = u >= 0 ? 0.7 px_tanh(u / 0.7) : px_tanh(u), folded */
+    float u2 = u * u;
+    if (u >= 0.0f) return u > 2.1f ? 0.7f : u * (13.23f + u2) / (13.23f + 9.0f * u2);
+    return u < -3.0f ? -1.0f : u * (27.0f + u2) / (27.0f + 9.0f * u2);
 }
 static inline float lfo_sin(float ph)                  /* parabolic sine, ph in [0,1) -> -1..1 */
 {
@@ -893,10 +895,28 @@ static void rc_amp(px_engine *e)
     if (v->vdb) bq_peak(&e->amp_voice, sr, (float)v->vf, 0.8f, (float)v->vdb); else bq_ident(&e->amp_voice);
     e->amp_sagk = (float)v->sag100 * 0.012f;
     e->amp_envk = 1.0f - expf(-1.0f / (0.1f * sr));     /* blocking: ~100 ms (coupling cap x grid leak), once per sample */
-    e->amp_bk = v->n >= 4 ? 0.45f : 0.35f;
+    e->amp_bk = (v->n >= 4 ? 0.45f : 0.35f) * e->amp_envk;   /* env is kept pre-scaled by the depth (0.45 / 0.35) */
     e->amp_pw = (float)v->pw10 * 0.1f;
     e->amp_pwn = 1.0f / px_tanh(e->amp_pw);
     e->amp_out = AMP_TRIM[t] * 0.84f;
+}
+
+/* cabinet fine structure, one sample: sparse taps on a 64-sample ring + breakup resonators, h[k] = A dec^k sin(kw)
+ * = b z^-1 / (1 - a1 z^-1 - a2 z^-2). The state is passed in so the level normalisation can run its own copy. */
+static inline float cab_detail(const px_engine *e, float x, float *rb, int *rw, float (*ms)[2])
+{
+    int w = (*rw - 1) & 63;
+    float y = 0.0f, xp;
+    *rw = w;
+    rb[w] = x;
+    for (int k = 0; k < e->cab_nt; k++) y += e->cab_tg[k] * rb[(w + e->cab_ti[k]) & 63];
+    xp = rb[(w + 1) & 63];                              /* x[n-1] */
+    for (int m = 0; m < PX_CABM; m++) {
+        float yn = e->cab_m[m][0] * ms[m][0] + e->cab_m[m][1] * ms[m][1] + e->cab_m[m][2] * xp;
+        ms[m][1] = ms[m][0]; ms[m][0] = yn;
+        y += yn;
+    }
+    return y * e->cab_dg;
 }
 
 static void rc_cab(px_engine *e)
@@ -919,57 +939,64 @@ static void rc_cab(px_engine *e)
     if (c->p2) bq_peak(&f[n++], sr, (float)c->p2, 1.6f, (float)c->p2db + bright * 0.6f);
     bq_lowpass(&f[n++], sr, (float)c->lp * mic, 0.9f);
     bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, 0.8f);
-    /* fine structure (FIR, PX_CABF taps): what a real speaker adds to the smooth curve above */
+    /* fine structure: what a real speaker adds to the smooth curve above. Sparse taps (direct sound, the mic's
+     * off-axis comb, the back wave of open cabinets) + the cone's breakup modes as 2-pole resonators: the same
+     * impulse response as v25's 128-tap FIR (A dec^k sin kw per mode), without its cost on the pedal. */
     {
-        float *h = e->cab_fir, s = 0.0f;
         uint32_t rnd = 0x9E3779B9u * (uint32_t)(t + 1);
 #define RND() (rnd = rnd * 1664525u + 1013904223u, (float)(rnd >> 8) * (1.0f / 16777216.0f))
-        for (int k = 0; k < PX_CABF; k++) h[k] = 0.0f;
+        int nt = 0;
+        float dc = 0.0f;
         /* mic: two paths across the cone (centre .. edge): an off-axis comb;
          * MIC 100 = cap centre (notch out of band), MIC 0 = cone edge (notch ~6 kHz) */
         float tau = (0.00002f + (1.0f - f01(q[2])) * 0.00006f) * sr;   /* notch from ~25 kHz (centre) to ~6 kHz (edge) */
         int ti = (int)tau; float tf = tau - (float)ti;
-        h[0] += 0.80f;                                               /* depth: at most -4.4 dB */
-        h[ti] += 0.20f * (1.0f - tf); h[ti + 1] += 0.20f * tf;
-        /* cone breakup: narrow resonances between 1.2 and 6 kHz, fixed per speaker (seeded by the cab) */
-        for (int m = 0; m < 10; m++) {
-            float fr = 1200.0f * powf(5.0f, RND());
-            float Q = 5.0f + 7.0f * RND();
-            float rel = 0.10f + 0.20f * RND();                      /* peaks of +1..+2.5 dB, a few dips */
-            if (RND() < 0.25f) rel = -0.6f * rel;
-            float w = 2.0f * PI_F * fr / sr, dec = expf(-PI_F * fr / (Q * sr)), A = rel * 2.0f * PI_F * fr / (Q * sr);
-            float env = A, s1 = sinf(w), c1 = cosf(w), sn = 0.0f, cn = 1.0f;
-            for (int k = 0; k < PX_CABF; k++) {
-                h[k] += env * sn;
-                float t2 = sn * c1 + cn * s1; cn = cn * c1 - sn * s1; sn = t2;   /* sin(k w) by rotation */
-                env *= dec;
-            }
-        }
+        e->cab_ti[nt] = 0; e->cab_tg[nt++] = 0.80f;                  /* depth: at most -4.4 dB */
+        if (ti == 0) e->cab_tg[0] += 0.20f * (1.0f - tf); else { e->cab_ti[nt] = (uint8_t)ti; e->cab_tg[nt++] = 0.20f * (1.0f - tf); }
+        e->cab_ti[nt] = (uint8_t)(ti + 1); e->cab_tg[nt++] = 0.20f * tf;
         /* open back: the rear wave comes round, inverted, ~0.8 ms later */
         if (t == PX_CAB_110 || t == PX_CAB_112JN || t == PX_CAB_210 || t == PX_CAB_212BLUE || t == PX_CAB_410BASSMAN ||
             t == PX_CAB_115) {
+            static const float BW[5] = {-0.01f, -0.025f, -0.03f, -0.025f, -0.01f};
             int d = (int)(0.0008f * sr);
-            h[d - 2] -= 0.01f; h[d - 1] -= 0.025f; h[d] -= 0.03f; h[d + 1] -= 0.025f; h[d + 2] -= 0.01f;
+            if (d > 61) d = 61;
+            for (int k = 0; k < 5; k++) { e->cab_ti[nt] = (uint8_t)(d - 2 + k); e->cab_tg[nt++] = BW[k]; }
         }
-        for (int k = PX_CABF - 32; k < PX_CABF; k++)          /* fade: no truncation ripple */
-            h[k] *= 0.5f + 0.5f * cosf(PI_F * (float)(k - (PX_CABF - 32)) / 32.0f);
-        for (int k = 0; k < PX_CABF; k++) s += h[k];
-        for (int k = 0; k < PX_CABF; k++) h[k] /= s;            /* unity at low frequencies: the bass stays as above */
+        e->cab_nt = nt;
+        for (int k = 0; k < nt; k++) dc += e->cab_tg[k];
+        /* cone breakup: narrow resonances between 1.2 and 6 kHz, fixed per speaker (seeded by the cab): the same 10
+         * draws as v25, the PX_CABM strongest kept (the weakest, < 1 dB, were not worth their cost) */
+        float mf[10], mq[10], mr[10];
+        for (int m = 0; m < 10; m++) {
+            mf[m] = 1200.0f * powf(5.0f, RND());
+            mq[m] = 5.0f + 7.0f * RND();
+            mr[m] = 0.10f + 0.20f * RND();                      /* peaks of +1..+2.5 dB, a few dips */
+            if (RND() < 0.25f) mr[m] = -0.6f * mr[m];
+        }
+        for (int m = 0; m < PX_CABM; m++) {
+            int b = m;
+            for (int j = m + 1; j < 10; j++) if (px_abs(mr[j]) > px_abs(mr[b])) b = j;
+            float fr = mf[b], Q = mq[b], rel = mr[b];
+            mf[b] = mf[m]; mq[b] = mq[m]; mr[b] = mr[m];
+            float w = 2.0f * PI_F * fr / sr, dec = expf(-PI_F * fr / (Q * sr)), A = rel * 2.0f * PI_F * fr / (Q * sr);
+            float a1 = 2.0f * dec * cosf(w), a2 = -dec * dec, bb = A * dec * sinf(w);   /* h[k] = A dec^k sin(kw) */
+            e->cab_m[m][0] = a1; e->cab_m[m][1] = a2; e->cab_m[m][2] = bb;
+            dc += bb / (1.0f - a1 - a2);
+        }
+        e->cab_dg = 1.0f / dc;                                  /* unity at low frequencies: the bass stays as above */
 #undef RND
-        if (!e->cab_firon) { for (int k = 0; k < 2 * PX_CABF; k++) e->cab_hist[k] = 0.0f; e->cab_hw = 0; }
+        if (!e->cab_firon) { memset(e->cab_rb, 0, sizeof e->cab_rb); memset(e->cab_ms, 0, sizeof e->cab_ms); e->cab_rw = 0; }
         e->cab_firon = 1;
     }
     px_bq g[8];
-    float en = 0.0f, ir[PX_CABF];
+    float en = 0.0f, rb[64], ms[PX_CABM][2];
+    int rw = 0;
     for (int k = 0; k < n; k++) { g[k] = f[k]; bq_reset(&g[k]); }
-    for (int k = 0; k < PX_CABF; k++) ir[k] = 0.0f;
-    for (int i = 0; i < 4096 + PX_CABF; i++) {          /* energy normalisation (filters, then the FIR): every cab */
-        float x = (i == 0) ? 1.0f : 0.0f, y = 0.0f;     /* plays at the same level */
-        if (i < 4096) for (int k = 0; k < n; k++) x = bq_run(&g[k], x);
-        else x = 0.0f;
-        for (int k = PX_CABF - 1; k > 0; k--) ir[k] = ir[k - 1];
-        ir[0] = x;
-        for (int k = 0; k < PX_CABF; k++) y += e->cab_fir[k] * ir[k];
+    memset(rb, 0, sizeof rb); memset(ms, 0, sizeof ms);
+    for (int i = 0; i < 4096 + 512; i++) {              /* energy normalisation (filters, then the detail): every */
+        float x = (i == 0) ? 1.0f : 0.0f;               /* cab plays at the same level */
+        for (int k = 0; k < n; k++) x = bq_run(&g[k], x);
+        float y = cab_detail(e, x, rb, &rw, ms);
         en += y * y;
     }
     e->cab_g = (en > 1e-12f) ? 1.0f / sqrtf(en * 2.0f) : 1.0f;
@@ -1269,8 +1296,8 @@ static inline float drive_run(px_engine *e, float x)   /* oversampled */
 static inline float amp_stage(px_engine *e, int i, float x, int upd)
 {
     x = op_run(&e->amp_hp[i], x);
-    float u = x * e->amp_g[i] + e->amp_bias[i] - e->amp_bk * e->amp_env[i];
-    if (upd) e->amp_env[i] += ((u > 0.0f ? u : 0.0f) - e->amp_env[i]) * e->amp_envk;   /* grid current charges the */
+    float u = x * e->amp_g[i] + e->amp_bias[i] - e->amp_env[i];
+    if (upd) e->amp_env[i] += (u > 0.0f ? u : 0.0f) * e->amp_bk - e->amp_env[i] * e->amp_envk;   /* grid current charges the */
     x = triode(u) - e->amp_boff[i] + e->dn;        /* coupling cap: the bias shifts with playing, then recovers */
     return op_run(&e->amp_lp[i], x);               /* (the bias swallows tiny signals: re-inject the offset) */
 }
@@ -1357,6 +1384,8 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
     const int dly_t = p->type[PX_B_DELAY] % PX_DLY_COUNT;
     const int drv_on = p->on[PX_B_DRIVE], amp_on = p->on[PX_B_AMP], amp_os = amp_on && e->amp_n > 0;
     const int os_on = drv_on || amp_os;
+    /* supply sag: slow (~11 ms), its two divisions once a block (divisions are slow on the pedal's FPU) */
+    const float sag_pa = 1.0f / (1.0f + e->amp_sag * e->amp_sagk), sag_pre = 1.0f / (1.0f + e->amp_sag * e->amp_sagk * 0.3f);
 
     for (int k = 0; k < n; k++) {
         e->dn = (k & 1) ? 1e-15f : -1e-15f;            /* anti-denormal (-300 dB): digital silence never decays */
@@ -1493,7 +1522,7 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
             if (drv_on) x = drive_pre(e, x);
             if (amp_os) {
                 x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
-                x *= 1.0f / (1.0f + e->amp_sag * e->amp_sagk * 0.3f);   /* supply sag reaches the preamp too */
+                x *= sag_pre;                          /* supply sag reaches the preamp too */
             }
             for (int o = 0; o < PX_OVERSAMPLE; o++) {
                 float u = (o == 0) ? x * osg : 0.0f;
@@ -1516,26 +1545,14 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
             x = bq_run(&e->amp_pres, x);
             float a = px_abs(x);                       /* power amp + supply sag */
             e->amp_sag += (a - e->amp_sag) * 0.002f;
-            x = px_tanh(x * e->amp_pw) * e->amp_pwn / (1.0f + e->amp_sag * e->amp_sagk);
+            x = px_tanh(x * e->amp_pw) * e->amp_pwn * sag_pa;
             x = x * e->amp_out + e->dn;
         }
 
         /* ---- cabinet ---- */
         if (p->on[PX_B_CAB] && e->cab_n) {
             for (int c = 0; c < e->cab_n; c++) x = bq_run(&e->cab[c], x);
-            {                                          /* detail FIR: doubled history, one straight dot product */
-                int w = (e->cab_hw - 1) & (PX_CABF - 1);
-                const float *hh = e->cab_fir, *xs;
-                float acc0 = 0.0f, acc1 = 0.0f, acc2 = 0.0f, acc3 = 0.0f;
-                e->cab_hw = w;
-                e->cab_hist[w] = x; e->cab_hist[w + PX_CABF] = x;
-                xs = e->cab_hist + w;
-                for (int k = 0; k < PX_CABF; k += 4) {
-                    acc0 += hh[k] * xs[k]; acc1 += hh[k + 1] * xs[k + 1];
-                    acc2 += hh[k + 2] * xs[k + 2]; acc3 += hh[k + 3] * xs[k + 3];
-                }
-                x = (acc0 + acc1) + (acc2 + acc3);
-            }
+            if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);   /* breakup, mic, back wave */
             x *= e->cab_g;
         }
 

@@ -149,3 +149,15 @@ puis `iis_set_sample_rate(44100)`, `iis_channel_on`, IRQ ALNK0 = 11 -> `iis_irq_
   les réglages des amplis ne changent pas. Sortie en 24 bits (le volume MASTER ne coûte plus de résolution).
 - Diagnostic : l'écran de l'accordeur affiche `IN L -xx R -xx dB`, le niveau de chaque canal d'entrée (dBFS),
   pour vérifier où arrive la guitare et le plancher de bruit.
+
+## v27 : charge processeur (DOOM SLUDGE en BYP à 89 % sur la v26)
+- Le FIR de 128 points des baffles (v25) coûtait cher sur le FPU de la pédale (128 multiplications par échantillon).
+  Remplacé par la même réponse calculée autrement : quelques prises éparses (son direct, peigne du micro, onde
+  arrière) + les résonances du cône en résonateurs à 2 pôles (h[k] = A·dec^k·sin(kw), exactement ce que le FIR
+  additionnait), les 6 plus fortes des 10 tirages : écart avec la v26 de 0,5 dB RMS, 1,9 dB au pire sur les petits pics.
+- Ampli : la courbe de triode repliée en une seule fraction rationnelle (identique à 2e-7 près), l'enveloppe de
+  polarisation pré-multipliée par sa profondeur, et les deux divisions de l'affaissement d'alimentation calculées une
+  fois par bloc de 64 échantillons au lieu de chaque échantillon.
+- Instructions par échantillon (PC, sans vectorisation) : DOOM SLUDGE v24 1 936 / v26 2 655 / v27 2 240 ;
+  GROOVE METAL 1 430 / 2 151 / 1 744. Estimation sur la pédale : DOOM SLUDGE ~75 % (au lieu de 89 %).
+- Moteur : 326 612 o dans POOL (v26 : 327 724).

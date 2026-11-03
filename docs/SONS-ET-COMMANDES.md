@@ -1,4 +1,4 @@
-# OpenPocket — sons et commandes (v26)
+# OpenPocket — sons et commandes (v27)
 
 ![Interface v23](ui-v23.png)
 
@@ -126,8 +126,9 @@ de surcharge : éteindre un bloc).
 - Enregistrement des presets (`tests/test_store.c`) : coupure de courant simulée à 1 286 moments d'un
   enregistrement → ancienne version gardée 578 fois, nouvelle 708 fois, jamais d'emplacement abîmé ; aucune écriture
   hors de la zone des presets.
-- Coût v25 vs v24 (PC) : +28 % sur un preset typique (drive + gate + ampli + baffle), +18 % tous blocs allumés ;
-  estimation sur la pédale : 55–60 % de C1 sur les presets les plus lourds (garde-fou BYP à 85 %).
+- Coût : la v25 chargeait trop la pédale (DOOM SLUDGE en BYP à 89 % sur la v26). La v27 calcule les baffles et
+  l'ampli autrement (même son, à 0,5 dB près en moyenne) : environ −16 % sur DOOM SLUDGE, −19 % sur GROOVE METAL,
+  soit +16 à +22 % par rapport à la v24 (garde-fou BYP à 85 %).
 - Coût estimé vs v22 : +15 % sur un preset typique (drive + ampli 4 étages + baffle), +50 % avec les 11 blocs allumés
   et les effets les plus lourds.
 

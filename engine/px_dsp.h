@@ -84,7 +84,8 @@ typedef struct { float b0, b1, a1, z; } px_op;      /* first-order section (RC) 
 #define PX_DLY_N 48000                 /* 1,09 s de delay */
 #define PX_RV_C 2800                   /* combs de reverb */
 #define PX_RV_A 1100
-#define PX_CABF 128                    /* cabinet detail filter, taps (2.9 ms) */
+#define PX_CABM 6                      /* cabinet detail: cone breakup modes (2-pole resonators) */
+#define PX_CABT 8                      /* cabinet detail: sparse taps (mic comb, back wave) */
 
 typedef struct {
     float sr;
@@ -114,14 +115,16 @@ typedef struct {
     int   drv_clip, drv_tm, drv_np, drv_pre, drv_dcb;
     /* amp */
     int   amp_n, amp_hard;
-    float amp_g[4], amp_bias[4], amp_boff[4], amp_env[4], amp_envk, amp_bk;   /* env: bias shift (blocking) */
+    float amp_g[4], amp_bias[4], amp_boff[4], amp_env[4], amp_envk, amp_bk;   /* env: bias shift (blocking), x depth */
     px_bq amp_tight, amp_bright;
     px_op amp_hp[4], amp_lp[4];
     px_bq ts_low, ts_mid, ts_high, amp_pres, amp_res, amp_voice;
     float amp_sag, amp_sagk, amp_pw, amp_pwn, amp_out;
     /* cabinet */
     px_bq cab[8]; float cab_g; int cab_n;
-    float cab_fir[PX_CABF], cab_hist[2 * PX_CABF]; int cab_hw, cab_firon;   /* fine structure: breakup, mic, back wave */
+    /* fine structure (v27: same response as v25's 128-tap FIR, ~4x cheaper): sparse taps + breakup resonators */
+    float cab_rb[64], cab_tg[PX_CABT], cab_m[PX_CABM][3], cab_ms[PX_CABM][2], cab_dg;
+    uint8_t cab_ti[PX_CABT]; int cab_rw, cab_nt, cab_firon;
     /* eq */
     px_bq eq[5]; int eq_n;
     /* modulation */
