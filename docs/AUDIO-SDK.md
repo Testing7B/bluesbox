@@ -151,3 +151,21 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - The (L + R) / 2 mix put that noise into the sound: signal-to-noise 60 dB (−17 vs −77). Left channel only, like the
   official firmware: 74 dB (−17 vs −91), up to 14 dB less hiss, amplified just as much by the high-gain amps.
   Input = L × 0.5: same level as before, settings unchanged. Confirmed on the pedal: the hiss is gone.
+
+## v29: SYN block, block order per preset
+- 12th block **SYN** (appended to the block indices, so presets keep theirs): ORGAN, CHURCH ORGAN, STRINGS, CHOIR
+  (delay-line octave shifters on a level-held signal + key envelope; ensemble; vocal formants), MONO SYNTH (pitch
+  tracker: 50 Hz high-pass + fixed 110 Hz 4th-order low-pass so the fundamental always dominates, armed zero
+  crossings with hysteresis, sub-sample timing, median of 3 periods; polyBLEP saw/pulse; 24 dB ladder with tanh
+  feedback), PWM SYNTH and BASS SYNTH (comparator / flip-flop dividers, no tracking delay), 12-STRING, ACOUSTIC (body
+  EQ + early reflections), SITAR (one-sided bridge contact + 6 damped comb strings), BARITONE.
+  Tracker on single plucked notes E2..A3 (synthetic): locks in 30–80 ms, within 2–9 cents.
+- **Block order**: `px_preset_t.order[12]`, a permutation (invalid → default). The engine builds the list of active
+  blocks once per call and runs it per sample; DRIVE and AMP share oversampling set A when AMP follows DRIVE,
+  otherwise a separate DRIVE uses set B. Default order checked bit-exact against v28 on all 42 earlier presets.
+- **SOLA search** (pitch shifters) made ~3× cheaper: coarse pass every 8 offsets on every 4th sample, fine pass ±7;
+  energy on the target note unchanged or better (440 Hz octave up: 94.6 % → 99.8 %).
+- **Preset store format 2**: 52 slots of 112 bytes (sector 0: 34 slots, 0xEF0 bytes; sector 1: 18). A format-1 copy
+  (v25..v28) is converted at boot; the first save writes format 2 to the other copy.
+- Instructions per sample (PC, scalar): B3 ORGAN 2,329 (the heaviest new preset, as heavy as DOOM SLUDGE 2,311);
+  others 709–1,795. Engine 339,660 bytes in POOL (344,064).

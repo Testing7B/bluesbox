@@ -13,7 +13,7 @@ int main(void){ mksig(); int bad=0, n=0; static const int V[3]={0,50,100};
     p.type[blk]=t; for(int k=0;k<5;k++) p.p[blk][k]=(a==2)?100:V[(a+k)%3];
     px_engine_init(&e,44100.0f); px_engine_set(&e,&p); n++;
     float out[64], in[64]={0}; double pk=0, last=0; long cnt=0; int nan=0;
-    for(int b=0;b<44100*11/64;b++){ const float*src = (b*64 < 44100*3)? sig+b*64 : in;
+    for(int b=0;b<44100*11/64;b++){ const float*src = (b*64 + 64 <= 44100*3)? sig+b*64 : in;
       px_engine_process(&e,src,out,64);
       for(int i=0;i<64;i++){ float v=out[i]; if(v!=v) nan=1; if(fabs(v)>pk) pk=fabs(v); if(b*64>=44100*10){ last+=v*v; cnt++; } } }
     last=sqrt(last/cnt);

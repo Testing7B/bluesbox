@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "28"
+#define OP_VERSION_NUM "29"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -560,7 +560,8 @@ static void app_main(void)
     dbn_t bhome = {0,0,0};
     uint32_t adc_tick = 0, home_t = 0, t_knob = 0, t_tuner = 0;
     int home_down = 0, home_long = 0, push_down = 0, push_long = 0;
-    uint32_t push_t = 0;
+    uint32_t push_t = 0, clk_t = 0;
+    int clk_pend = 0;                    /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
     int32_t master_raw = -100;
 #if DSP_CPU1
     fm1_cpu1_bar_build(27u);             /* a new build gives the 2nd core another chance */
@@ -725,8 +726,23 @@ static void app_main(void)
             if (p_push || p_save || p_up || p_dn || p_fx || p_mod || p_amp || p_cab || p_dly || p_rev || p_home) tuner_close();
         } else if (p_save) {
             save_open();
+        } else if (ui_mode == M_MOVE) {  /* moving a block: PUSH drops it, HOME puts it back */
+            clk_pend = 0;
+            if (p_push) ui_move_drop();
+            else if (p_home) ui_move_cancel();
         } else {
-            if (p_tuner) tuner_open();
+            /* chain page: double-click PUSH = move the selected block; a single click opens it (after 350 ms) */
+            if (p_push && ui_mode == M_CHAIN) {
+                if (clk_pend && now - clk_t < 350u) { clk_pend = 0; ui_move_start(); }
+                else { clk_pend = 1; clk_t = now; }
+                p_push = 0;
+            }
+            if (clk_pend && (now - clk_t >= 350u || ui_mode != M_CHAIN)) {
+                clk_pend = 0;
+                if (ui_mode == M_CHAIN) ui_push();
+            }
+            if (ui_mode == M_MOVE) { }
+            else if (p_tuner) tuner_open();
             else {
                 if (p_push) ui_push();
                 if (p_up) ui_preset_step(+1);

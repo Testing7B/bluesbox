@@ -39,6 +39,18 @@ int main(void){
       px_engine_set(&e, &p); n++;
       if (run(40, 1.0f) | run(20, 0.0f)) { bad++; printf("PROBLEM all ON preset %d x%d\n", pr, x); px_engine_init(&e,44100.0f); }
   }
+  /* block order (v29): random orders, all blocks on, every preset; invalid orders fall back to the default */
+  { unsigned r = 12345u;
+    for (int pr = 0; pr < px_preset_count(); pr++) for (int x = 0; x < 4; x++) {
+      px_preset_t p; px_preset_factory(&p, pr);
+      for (int z = 0; z < PX_NBLK; z++) p.on[z] = 1;
+      for (int i = PX_NBLK - 1; i > 0; i--) { r = r * 1103515245u + 12345u; int j = (int)((r >> 8) % (unsigned)(i + 1));
+        uint8_t t = p.order[i]; p.order[i] = p.order[j]; p.order[j] = t; }
+      if (x == 3) p.order[0] = p.order[1];        /* not a permutation */
+      px_engine_set(&e, &p); n++;
+      if (run(40, 1.0f) | run(20, 0.0f) | run(10, 3.0f)) { bad++; printf("PROBLEM order preset %d x%d\n", pr, x); px_engine_init(&e,44100.0f); }
+    }
+  }
   printf("%ld configurations tested, %ld problems\n", n, bad);
   return bad != 0;
 }

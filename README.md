@@ -8,7 +8,11 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 
 ## What it does
 
-- **11-block chain, 118 models**: GATE → COMP → PITCH → SPECIAL FX → DRIVE → AMP → CAB → EQ → MOD → DELAY → REVERB
+- **12-block chain, 129 models**, in any order you like (double-click PUSH to move a block; the order is saved with
+  the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB
+- **Synths, keyboards and other guitars** from a normal guitar (no MIDI pickup): organ, church organ, string machine,
+  choir, mono synth with pitch tracking and a resonant ladder filter, PWM synth, bass synth, 12-string, acoustic,
+  sitar (bridge buzz + sympathetic strings), baritone
 - **29 amps** (Twin, Deluxe, Princeton, Tweed Bassman, Champ, AC30, AC15, JTM45, Plexi, JCM800, JVM, Hiwatt, Orange,
   Matchless, Dumble ODS, SLO, Mark IIC+, Rectifier, 5150 / 5150 III, Ecstasy, Friedman BE, VH4, Powerball, Revv,
   JC-120, Supro, Two-Rock, SVT), tube stages oversampled ×4, real tone stacks, power-amp sag, all level-matched
@@ -18,7 +22,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   HM-2, Metal Zone, Precision Drive, B7K)
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,
   ring modulator, bitcrusher, slicer, square-wave synth, 4 compressors, 3 EQs
-- **42 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 42 factory presets
+- **52 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 52 factory presets
   (one per style), a flicker-free colour UI, a chromatic tuner
 - **Detailed cabinets** (cone breakup, off-axis mic comb, open-back reflection) and **tube stages with bias shift**
   (the note compresses on a hard attack and blooms back)

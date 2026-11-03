@@ -1,9 +1,14 @@
-# OpenPocket — sounds and controls (v28)
+# OpenPocket — sounds and controls (v29)
 
 ![OpenPocket screens](ui-v23.png)
 
-## The chain (11 blocks, 118 models)
-`GT → CMP → PIT → SFX → DRV → AMP → CAB → EQ → MOD → DLY → REV`
+## The chain (12 blocks, 129 models)
+Default order: `GT → CMP → PIT → SFX → SYN → DRV → AMP → CAB → EQ → MOD → DLY → REV`
+
+Since v29 every preset has its own block order: **double-click PUSH** on the chain to grab the selected block, turn
+the knob to move it, PUSH to drop it (HOME puts it back). Delay before the amp, wah after the drive, octaver after
+the fuzz... The order is saved with the preset. DRV and AMP share one oversampled section when AMP comes right after
+DRV; elsewhere each runs its own.
 
 Each block has a **type** (the model), an **ON/OFF** state and up to **5 settings (0–100)**. Where a bare number
 would mean nothing, the screen shows the real value: interval (`+5TH`), semitones (`-7`), time in ms (`510`),
@@ -57,6 +62,26 @@ asymmetric, hard diodes, germanium, LED, MOSFET, the Muff's two stages, starved 
 tone control (low-pass, the Muff's and DS-1's LP/HP blend, the HM-2's peaks). Level-matched: at noon every drive
 comes out at the same level as the guitar (boosts: +6 dB).
 
+### SYN — 11 synths, keyboards and other guitars (v29)
+Played with a normal guitar: no special pickup, no MIDI.
+
+| Family | Type | Settings | How it works |
+|---|---|---|---|
+| Keyboards (chords OK) | ORGAN | 16', 8', 4', PERC, DRY | drawbars: −1 octave, the guitar's own pitch, +1 octave; key click; percussion (+19 semitones, decaying) |
+| | CHURCH ORGAN | 16', 8', 4', 2', DRY | pipe organ: slow speech, long release, slight celeste |
+| | STRINGS | ATTACK, RELEASE, OCTAVE, TONE, DRY | tape-replay / string machine: swell, +1 octave layer, 3-voice ensemble |
+| | CHOIR | ATTACK, RELEASE, VOWEL, OCTAVE, DRY | the strings through vocal formants, "ooh" (0) to "aah" (100) |
+| Synths that follow your note (one note at a time) | MONO SYNTH | WAVE, OCTAVE, CUTOFF, RESO, ENV | pitch tracker → band-limited saw / square / pulse → 24 dB resonant ladder filter with envelope |
+| Synths that follow the waveform (no delay) | PWM SYNTH | WIDTH, RATE, CUTOFF, RESO, MIX | the guitar turned into a pulse wave whose width moves, then the ladder filter |
+| | BASS SYNTH | OCT -1, OCT -2, CUTOFF, ENV, DRY | square waves one and two octaves down, filter swept by each attack |
+| Other guitars | 12-STRING | OCTAVE, DETUNE, TONE | thin octave strings, slightly out of tune, plus the doubled unison strings |
+| | ACOUSTIC | BODY, BASS, TREBLE, ROOM | magnetic pickup → flat-top: body resonance (parlour to jumbo), top, sparkle, body reflections |
+| | SITAR | KEY, BUZZ, SYMPATH, DECAY | bridge buzz (jawari) + 6 sympathetic strings tuned to KEY |
+| | BARITONE | TUNE, TONE, MIX | the whole guitar 1 to 12 semitones down |
+
+Keyboards hold the note while the string sounds (like a key held down) and release when it dies away or when you
+mute it. MONO SYNTH needs single notes: it finds the pitch in 30–80 ms and is accurate to a few cents.
+
 ### Effects
 | Block | Types |
 |---|---|
@@ -72,24 +97,27 @@ comes out at the same level as the guitar (boosts: +6 dB).
 The analog/tape delays (ANALOG, MEMORY MAN, TAPE, SPACE ECHO, LO-FI) **self-oscillate above FDBK ≈ 90**, like the
 real ones: lower FDBK to stop it.
 
-## 42 factory presets (one per style)
+## 52 factory presets (one per style)
 01 GLASS CLEAN · 02 JAZZ BOX · 03 COUNTRY SNAP · 04 TEXAS BLUES · 05 TWEED BLUES · 06 BRIT JANGLE · 07 60S PSYCH ·
 08 70S ROCK · 09 80S HAIR · 10 BRIT CRUNCH · 11 SMOOTH LEAD · 12 SPACE LEAD · 13 DOTTED 8TH · 14 MARK SOLO ·
 15 THRASH · 16 GROOVE METAL · 17 DJENT · 18 DOOM SLUDGE · 19 SWEDE DEATH · 20 SHOEGAZE · 21 SWELL PAD ·
 22 FUNK WAH · 23 SURF · 24 SWAMP TREM · 25 VIBE ROCK · 26 ROTARY ORGAN · 27 HARM LEAD · 28 WHAMMY DIVE ·
 29 OCTA FUZZ · 30 SQUARE SYNTH · 31 RING MOD · 32 LO-FI TAPE · 33 STUTTER FUZZ · 34 BITCRUSH · 35 BASS DRIVE ·
-36 BASS OCTAVE · 37 TWEED CHAMP · 38 HIWATT STACK · 39 MODERN HIGH · 40 SUPRO GRIT · 41 STONER FUZZ · 42 CHIME CLEAN
+36 BASS OCTAVE · 37 TWEED CHAMP · 38 HIWATT STACK · 39 MODERN HIGH · 40 SUPRO GRIT · 41 STONER FUZZ · 42 CHIME CLEAN ·
+43 B3 ORGAN · 44 CHURCH ORGAN · 45 MELLO STRINGS · 46 CHOIR PAD · 47 MONO LEAD · 48 PWM SYNTH · 49 SYNTH BASS ·
+50 12-STRING · 51 ACOUSTIC · 52 SITAR
 
 ## Controls
 | Control | Action |
 |---|---|
 | KNOB (PARA) | chain: pick the block · block page: pick the line · editing: change the value (turn fast = steps of 5) |
 | PUSH (knob) | chain → open the block · type/setting line → edit · ON/OFF line → toggle · while editing → confirm |
+| PUSH **double-click** (chain) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
 | PUSH **long press (0.8 s)** | **SAVE**: store the current sound (see below) |
 | HOME | back to the chain · **long press (0.7 s) = tuner** |
 | Right / left footswitch | next / previous preset |
 | AMP, CAB, DLY, REV, MOD | jump to the block; press again = on/off |
-| FX | steps through DRV → SFX → PIT → CMP → GT → EQ |
+| FX | steps through DRV → SFX → SYN → PIT → CMP → GT → EQ |
 | MASTER | output volume |
 
 Bottom right: `C1 xx%` = DSP load on the second core (`C0` = fallback on the main core, `BYP` = overload guard:
@@ -97,13 +125,14 @@ turn a block off).
 
 ## Saving your sounds (v25)
 - A `*` at the top of the screen means the sound has been edited since the preset was loaded.
-- **Long press on PUSH**: SAVE page. The knob picks the slot (1 to 42; the current preset is offered first; the
+- **Long press on PUSH**: SAVE page. The knob picks the slot (1 to 52; the current preset is offered first; the
   screen shows the name of the sound that will be replaced), PUSH saves, HOME cancels.
 - At the very end of the list: **RESTORE FACTORY** puts the current slot back to its factory preset.
 - The pedal starts on the slot saved last.
 - Sounds are kept in flash (0xF0000–0xF4000, two copies): a power cut during a save leaves the previous version,
   never a damaged slot. They **survive OpenPocket updates** (the update loader only writes the app area). The sound
-  is muted for about 0.1 s while saving.
+  is muted for about 0.1 s while saving. The block order is saved too. Sounds saved with v25–v28 are converted at
+  the first start of v29 (the SYN block off, the default order).
 
 ## Tuner
 Long press on HOME. The `IN L … R … dB` line at the top shows the level of each input channel (dB below full

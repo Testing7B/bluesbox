@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket — the user's presets in flash.
  *
- * 42 slots of 96 bytes (px_preset_t, 91 B, + a "saved" mark), kept in RAM (st_slot) and written as one whole copy
+ * 52 slots of 112 bytes (px_preset_t, 110 B, + a "saved" mark), kept in RAM (st_slot) and written as one whole copy
  * on each save, alternately to copy A [0xF0000, 0xF2000) and copy B [0xF2000, 0xF4000), each two 4 KiB sectors:
- *   sector 0: header (16 B) + slots 0..37        sector 1: slots 38..41
+ *   sector 0: header (16 B) + slots 0..33        sector 1: slots 34..51
+ * Format 2 (v29: a 12th block and the block order). A format-1 copy (v25..v28: 42 slots of 96 B, 11 blocks) is read
+ * and converted at boot: the saved sounds come through, the new block off, the order the default one; the next save
+ * writes format 2 to the other copy.
  * The header goes last, with a sequence number and a CRC16 of every slot: at boot the valid copy with the highest
  * sequence wins, so a power cut during a save leaves the previous copy. Bytes 0xF00..0xF7F of each sector stay
  * erased: the update loader treats a valid record there as an update record (loader/ldr_core.c).
@@ -15,9 +18,15 @@
 
 #define ST_A       0xF0000u
 #define ST_B       0xF2000u
-#define ST_NSLOT   42u
-#define ST_SLOT    96u
-#define ST_S0N     38u                          /* slots in sector 0: 16 + 38 * 96 = 0xE50 < 0xF00 */
+#define ST_NSLOT   52u
+#define ST_SLOT    112u
+#define ST_S0N     34u                          /* slots in sector 0: 16 + 34 * 112 = 0xEF0 < 0xF00 */
+#define ST_VER     2u
+#define ST1_NSLOT  42u                          /* format 1 (v25..v28) */
+#define ST1_SLOT   96u
+#define ST1_S0N    38u
+#define ST1_PSIZE  91u                          /* its preset: name 14, on 11, type 11, p 11 x 5 */
+typedef char st_size_check[(sizeof(px_preset_t) < ST_SLOT && ST_NSLOT == 52u) ? 1 : -1];
 #define ST_MAGIC   0x5350504Fu                  /* "OPPS" */
 #define ST_MARK    0x5Au                        /* slot holds a saved preset (else: the factory one) */
 #ifndef ST_IRQ_OFF
@@ -34,12 +43,49 @@ static uint32_t st_slot_off(uint32_t base, uint32_t k)
 {
     return k < ST_S0N ? base + 16u + k * ST_SLOT : base + 0x1000u + (k - ST_S0N) * ST_SLOT;
 }
+static uint32_t st1_slot_off(uint32_t base, uint32_t k)
+{
+    return k < ST1_S0N ? base + 16u + k * ST1_SLOT : base + 0x1000u + (k - ST1_S0N) * ST1_SLOT;
+}
+/* a format-1 slot -> format 2: the 11 old blocks copied over factory slot k (new block, order: defaults) */
+static void st_from_v1(uint32_t k, const uint8_t *o)
+{
+    memset(st_slot[k], 0xFF, ST_SLOT);
+    if (o[ST1_PSIZE] != ST_MARK) return;                       /* never saved: stays the factory preset */
+    px_preset_t q;
+    px_preset_factory(&q, (int)k);
+    memcpy(q.name, o, 14);
+    memcpy(q.on, o + 14, 11); q.on[PX_B_SYN] = 0;
+    memcpy(q.type, o + 25, 11);
+    memcpy(q.p, o + 36, 55);
+    px_order_default(q.order);
+    memcpy(st_slot[k], &q, sizeof q);
+    st_slot[k][sizeof q] = ST_MARK;
+}
 static uint32_t st_crc(void)
 {
     uint32_t k, c = 0;
     for (k = 0; k < ST_NSLOT; k++)
         c = ota_crc16(st_slot[k], ST_SLOT, c);
     return c;
+}
+/* reads copy `base` (format h->ver) into st_slot; returns its CRC as stored on flash */
+static uint32_t st_read_copy(uint32_t base, const st_hdr_t *h)
+{
+    uint32_t k, c = 0;
+    if (h->ver == 1u) {
+        static uint8_t o[ST1_SLOT];
+        memset(st_slot, 0xFF, sizeof st_slot);
+        for (k = 0; k < ST1_NSLOT; k++) {
+            if (ota_fread(st1_slot_off(base, k), o, ST1_SLOT)) return ~0u;
+            c = ota_crc16(o, ST1_SLOT, c);
+            st_from_v1(k, o);
+        }
+        return c;
+    }
+    for (k = 0; k < ST_NSLOT; k++)
+        if (ota_fread(st_slot_off(base, k), st_slot[k], ST_SLOT)) return ~0u;
+    return st_crc();
 }
 
 /* boot: the newest valid copy into st_slot (call with the flash readable; it may turn interrupts on) */
@@ -49,21 +95,21 @@ static void st_load(void)
     uint32_t i, k, best = 0, bseq = 0;
     st_hdr_t h;
     memset(st_slot, 0xFF, sizeof st_slot);
+    st_hdr_t bh;
+    memset(&bh, 0, sizeof bh);
     for (i = 0; i < 2u; i++) {
-        if (ota_fread(BASE[i], &h, sizeof h) || h.magic != ST_MAGIC || h.nslot != ST_NSLOT || h.ver != 1u)
-            continue;
-        for (k = 0; k < ST_NSLOT; k++)
-            if (ota_fread(st_slot_off(BASE[i], k), st_slot[k], ST_SLOT))
-                break;
-        if (k == ST_NSLOT && st_crc() == h.crc && (!best || (int32_t)(h.seq - bseq) > 0)) {
+        if (ota_fread(BASE[i], &h, sizeof h) || h.magic != ST_MAGIC) continue;
+        if (!((h.ver == ST_VER && h.nslot == ST_NSLOT) || (h.ver == 1u && h.nslot == ST1_NSLOT))) continue;
+        if (st_read_copy(BASE[i], &h) == h.crc && (!best || (int32_t)(h.seq - bseq) > 0)) {
             best = BASE[i];
             bseq = h.seq;
             st_last = h.last;
+            bh = h;
         }
     }
+    (void)k;
     if (best) {                                   /* read the winner again (the loop left the other in st_slot) */
-        for (k = 0; k < ST_NSLOT; k++)
-            ota_fread(st_slot_off(best, k), st_slot[k], ST_SLOT);
+        st_read_copy(best, &bh);
         st_cur = best;
         st_seq = bseq;
     } else {
@@ -78,7 +124,7 @@ static int st_saved(uint32_t k) { return k < ST_NSLOT && st_slot[k][sizeof(px_pr
 /* the preset in slot k: the saved one, else the factory one */
 static void st_get(uint32_t k, px_preset_t *p)
 {
-    if (st_saved(k)) memcpy(p, st_slot[k], sizeof *p);
+    if (st_saved(k)) { memcpy(p, st_slot[k], sizeof *p); if (!px_order_valid(p->order)) px_order_default(p->order); }
     else px_preset_factory(p, (int)k);
 }
 
@@ -105,7 +151,7 @@ static int st_commit(void)
     int rc = 0;
     if (!st_ok) return -1;
     memset(&h, 0, sizeof h);
-    h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = 1u; h.nslot = ST_NSLOT; h.last = st_last;
+    h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = ST_VER; h.nslot = ST_NSLOT; h.last = st_last;
     st_audio_hold(1);
     if (fl_erase4k(base, &k) || fl_erase4k(base + 0x1000u, &k)) rc = -2;
     for (k = 0; !rc && k < ST_NSLOT; k++) {

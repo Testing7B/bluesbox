@@ -1,7 +1,7 @@
 @echo off
 REM  Runs your DI guitar recording through the OpenPocket engine and writes a processed WAV.
 REM  Usage: drag a WAV onto this .bat, OR:
-REM     render.bat  input.wav  [output.wav]  [preset 1..42]
+REM     render.bat  input.wav  [output.wav]  [preset 1..52]
 REM  Preset list: docs\SOUNDS-AND-CONTROLS.md (e.g. 6 = BRIT JANGLE, 16 = GROOVE METAL)
 setlocal
 if "%~1"=="" (

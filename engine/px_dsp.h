@@ -4,7 +4,10 @@
  * px_dsp.h — v3: a preset = 11 blocks; each block has a TYPE, an ON/OFF state and 5 settings 0..100.
  * The UI and the engine share exactly this structure.
  *
- *   IN -> GATE -> COMP -> PITCH -> SFX -> [ DRIVE -> AMP ] (x4) -> CAB -> EQ -> MOD -> DELAY -> REVERB -> OUT
+ *   default order: IN -> GATE -> COMP -> PITCH -> SFX -> SYN -> [ DRIVE -> AMP ] (x4) -> CAB -> EQ -> MOD -> DELAY
+ *                  -> REVERB -> OUT
+ *   v29: each preset carries its own block order (order[]); DRIVE and AMP share one oversampled section when AMP
+ *   comes right after DRIVE, otherwise each runs its own.
  *
  * Models are voiced from published circuit analyses (ElectroSmash, Electric Druid, Rob Robinette,
  * Duncan Amps, Celestion/Jensen datasheets, Boss/Roland/Ampeg manuals...) — see docs/SOUNDS-AND-CONTROLS.md.
@@ -30,7 +33,7 @@ extern "C" {
 
 /* --------------------------------------------------------------- blocks --- */
 enum { PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_DRIVE, PX_B_AMP, PX_B_CAB, PX_B_EQ, PX_B_MOD,
-       PX_B_DELAY, PX_B_REVERB, PX_NBLK };
+       PX_B_DELAY, PX_B_REVERB, PX_B_SYN, PX_NBLK };   /* SYN appended (v29): older presets keep their indices */
 #define PX_NPAR 5
 
 enum { PX_CMP_SQUASH, PX_CMP_STUDIO, PX_CMP_OPTO, PX_CMP_SWELL, PX_CMP_COUNT };
@@ -48,6 +51,8 @@ enum { PX_AMP_TWIN, PX_AMP_DELUXE, PX_AMP_PRINCETON, PX_AMP_BASSMAN, PX_AMP_CHAM
 enum { PX_CAB_110, PX_CAB_112JN, PX_CAB_210, PX_CAB_212BLUE, PX_CAB_212GB, PX_CAB_410BASSMAN, PX_CAB_412GB,
        PX_CAB_412T75, PX_CAB_412V30, PX_CAB_412H30, PX_CAB_112CREAM, PX_CAB_115, PX_CAB_810SVT, PX_CAB_410BASS,
        PX_CAB_DI, PX_CAB_COUNT };
+enum { PX_SYN_ORGAN, PX_SYN_CHURCH, PX_SYN_STRINGS, PX_SYN_CHOIR, PX_SYN_MONO, PX_SYN_PWM, PX_SYN_BASS,
+       PX_SYN_12STR, PX_SYN_ACOUSTIC, PX_SYN_SITAR, PX_SYN_BARI, PX_SYN_COUNT };
 enum { PX_EQ_5BAND, PX_EQ_GEQ, PX_EQ_PARAM, PX_EQ_COUNT };
 enum { PX_MOD_CHORUS, PX_MOD_DIMENSION, PX_MOD_FLANGER, PX_MOD_PHASE90, PX_MOD_STONE, PX_MOD_UNIVIBE,
        PX_MOD_OPTOTREM, PX_MOD_BIASTREM, PX_MOD_HARMTREM, PX_MOD_ROTARY, PX_MOD_VIBRATO, PX_MOD_COUNT };
@@ -62,7 +67,11 @@ typedef struct {
     uint8_t on[PX_NBLK];
     uint8_t type[PX_NBLK];
     uint8_t p[PX_NBLK][PX_NPAR];   /* 0..100 */
+    uint8_t order[PX_NBLK];        /* processing (and display) order: a permutation of the block indices */
 } px_preset_t;
+
+void px_order_default(uint8_t *order);
+int  px_order_valid(const uint8_t *order);   /* 1 = a permutation of 0..PX_NBLK-1 */
 
 /* ------------------------------------------------------------ UI catalog --- */
 const char *px_block_label(int blk);
@@ -81,6 +90,7 @@ typedef struct { float b0, b1, b2, a1, a2, z1, z2; } px_bq;
 typedef struct { float b0, b1, a1, z; } px_op;      /* first-order section (RC) */
 
 #define PX_PS_N 2048                   /* pitch shifter buffer (46 ms) */
+#define PX_SYN_CB 1024                 /* SYN: ensemble / doubler / body reflections (23 ms) */
 #define PX_DLY_N 48000                 /* 1.09 s of delay */
 #define PX_RV_C 2800                   /* reverb combs */
 #define PX_RV_A 1100
@@ -107,8 +117,27 @@ typedef struct {
     float sfx_a, sfx_b, sfx_c, sfx_d, sfx_mix, sfx_qd;
     int   sfx_pat, crush_n, crush_k; float crush_v, crush_q;
     px_bq sfx_f1, sfx_f2;
-    /* oversampling */
+    /* oversampling (set A: amp, or drive + amp together; set B: a drive that is not right before the amp) */
     px_bq os_up, os_up2, os_dn, os_dn2;
+    px_bq osb_up, osb_up2, osb_dn, osb_dn2;
+    uint8_t ord[PX_NBLK];
+    /* synth / instrument block (v29) */
+    float syn_buf[PX_PS_N]; int syn_w;                 /* shifter source (organ, strings...); sitar: string combs */
+    float syn_cb[PX_SYN_CB]; int syn_cw;
+    float syn_ph[3], syn_off[3][2], syn_inc[3], syn_W[3], syn_lvl[3]; int syn_nv;
+    float syn_dry, syn_out, syn_d8;                    /* dry guitar, effect level, organ 8' (the guitar's own pitch) */
+    float syn_env, syn_slow, syn_ea, syn_er, syn_sr2;  /* envelope (fast, slow), coefficients */
+    float syn_kg, syn_ka, syn_kr, syn_thr; int syn_key;   /* key gate: gain, attack, release, threshold, held */
+    float syn_perc, syn_pk, syn_plvl, syn_click, syn_clk; uint32_t syn_rnd; int syn_snap;
+    float syn_lfo[3], syn_linc[2], syn_cdep[2], syn_cbase;
+    px_bq syn_f[6]; int syn_nf;
+    float syn_lp, syn_lpk, syn_hp, syn_hpk;
+    /* tracker + oscillator + ladder filter (mono / pwm / bass synths) */
+    float syn_t1, syn_t2, syn_prev, syn_cnt, syn_per, syn_p1, syn_p2, syn_f0, syn_f0t, syn_glk, syn_oph, syn_mul;
+    float syn_wave, syn_lad[4], syn_cut, syn_res, syn_ea2, syn_fenv, syn_fdk, syn_amp, syn_ff, syn_ff2, syn_sq;
+    float syn_pwm, syn_pw0, syn_pwd;
+    /* sitar */
+    int   syn_cl[6], syn_cp[6], syn_c0[6], syn_type; float syn_cs[6], syn_cfb, syn_cdamp, syn_buzz, syn_sym;
     /* drive */
     px_bq drv_hp, drv_shelf, drv_lp, drv_mid, drv_t1, drv_t2, drv_t3;
     float drv_gain, drv_level, drv_blend, drv_bias, drv_off, drv_gate, drv_dcs, drv_dck, drv_shelf_lo, drv_mix;

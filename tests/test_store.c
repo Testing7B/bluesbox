@@ -86,18 +86,20 @@ int main(void)
     /* many saves: the copies alternate, the newest wins; the last slot (in sector 1) works too */
     for (int i = 0; i < 25; i++) {
         p.p[PX_B_DELAY][0] = (uint8_t)i;
-        CHECK(st_save((uint32_t)(i % 2 ? 41 : 0), &p) == 0, "repeated save");
+        p.order[0] = (uint8_t)(i % 2 ? PX_B_SYN : PX_B_GATE); p.order[4] = (uint8_t)(i % 2 ? PX_B_GATE : PX_B_SYN);
+        CHECK(st_save((uint32_t)(i % 2 ? ST_NSLOT - 1u : 0), &p) == 0, "repeated save");
     }
     reboot();
-    st_get(0, &q); CHECK(q.p[PX_B_DELAY][0] == 24, "slot 1: the newest of 25 saves");
-    st_get(41, &q); CHECK(q.p[PX_B_DELAY][0] == 23, "slot 42 (second sector): its newest save");
+    st_get(0, &q); CHECK(q.p[PX_B_DELAY][0] == 24 && q.order[0] == PX_B_GATE, "slot 1: the newest of 25 saves");
+    st_get(ST_NSLOT - 1u, &q);
+    CHECK(q.p[PX_B_DELAY][0] == 23 && q.order[0] == PX_B_SYN && px_order_valid(q.order), "last slot (second sector): its newest save, with its block order");
     loader_bytes_clear();
 
     /* factory reset of a slot */
-    CHECK(st_reset(41) == 0, "restore slot 42 to factory");
+    CHECK(st_reset(ST_NSLOT - 1u) == 0, "restore the last slot to factory");
     reboot();
-    st_get(41, &q); px_preset_factory(&f, 41);
-    CHECK(!st_saved(41) && !memcmp(&q, &f, sizeof q), "slot 42 is factory again after a reboot");
+    st_get(ST_NSLOT - 1u, &q); px_preset_factory(&f, (int)ST_NSLOT - 1);
+    CHECK(!st_saved(ST_NSLOT - 1u) && !memcmp(&q, &f, sizeof q), "the last slot is factory again after a reboot");
 
     /* a power cut at every step of a save: after it, the store is the old one or the new one, never broken */
     {
@@ -127,6 +129,44 @@ int main(void)
         CHECK(bad == 0 && olds > 0 && news > 0, "a power cut never breaks the store");
     }
     CHECK(nor[0xEFFFF] == 0x11 && nor[0xF4000] == 0x22, "flash outside the store untouched");
+
+    /* format 1 (v25..v28: 42 slots of 96 B, 11 blocks) written by an older OpenPocket: converted at boot */
+    {
+        memset(nor + 0xF0000, 0xFF, 0x4000);
+        static uint8_t old[42][96];
+        memset(old, 0xFF, sizeof old);
+        const char *nm = "OLD LEAD";
+        for (int k = 1; k < 42; k += 13) {                     /* slots 2, 15, 28, 41 saved */
+            memset(old[k], 0, 91);
+            memcpy(old[k], nm, 9);
+            for (int b = 0; b < 11; b++) { old[k][14 + b] = (uint8_t)(b & 1); old[k][25 + b] = (uint8_t)b; }
+            for (int i = 0; i < 55; i++) old[k][36 + i] = (uint8_t)(i + k);
+            old[k][91] = ST_MARK;
+        }
+        uint32_t c = 0;
+        for (int k = 0; k < 42; k++) c = ota_crc16(old[k], 96, c);
+        st_hdr_t h; memset(&h, 0, sizeof h);
+        h.magic = ST_MAGIC; h.seq = 7; h.crc = (uint16_t)c; h.ver = 1; h.nslot = 42; h.last = 27;
+        for (int k = 0; k < 42; k++)
+            memcpy(nor + 0xF2000 + (k < 38 ? 16 + k * 96 : 0x1000 + (k - 38) * 96), old[k], 96);
+        memcpy(nor + 0xF2000, &h, sizeof h);
+        reboot();
+        st_get(27, &q);
+        int ok = !strcmp(q.name, "OLD LEAD") && q.on[PX_B_SYN] == 0 && px_order_valid(q.order) && q.order[4] == PX_B_SYN;
+        for (int b = 0; b < 11; b++) ok &= q.on[b] == (b & 1) && q.type[b] == b;
+        for (int i = 0; i < 55; i++) ok &= ((uint8_t *)q.p)[i] == (uint8_t)(i + 27);
+        CHECK(ok && st_saved(27) && cur_preset == 27, "format 1 store: saved sounds converted, the pedal starts on the last one");
+        st_get(2, &q); px_preset_factory(&f, 2);
+        CHECK(!st_saved(2) && !memcmp(&q, &f, sizeof q), "format 1 store: unsaved slots stay factory");
+        st_get(45, &q); px_preset_factory(&f, 45);
+        CHECK(!memcmp(&q, &f, sizeof q), "format 1 store: the new slots 43..52 are factory");
+        q.p[PX_B_SYN][0] = 9;                                  /* next save: format 2 in the other copy */
+        CHECK(st_save(27, &q) == 0, "save after conversion");
+        reboot();
+        st_get(27, &f);
+        CHECK(!memcmp(&q, &f, sizeof q) && st_saved(40), "after the first save: format 2, everything still there");
+        loader_bytes_clear();
+    }
     loader_bytes_clear();
     printf(fails ? "%d FAILED\n" : "store tests passed\n", fails);
     return fails != 0;

@@ -3,9 +3,9 @@
  *
  *  +--------------------------+  header: preset number + name (bold), volume
  *  | 05 BRIT JANGLE   VOL 80  |
- *  +--------------------------+  chain: 11 tiles (on = block colour, off = grey)
- *  | GT  CMP PIT SFX DRV AMP  |
- *  | CAB EQ  MOD DLY REV      |
+ *  +--------------------------+  chain: 12 tiles in the preset's order (on = block colour, off = grey)
+ *  | GT  CMP PIT SFX SYN DRV  |
+ *  | AMP CAB EQ  MOD DLY REV  |
  *  +--------------------------+  block page: model (bold) + ON/OFF + up to 5 knobs as bars
  *  | AMP                 ON   |
  *  | <      AC 30 TB       >  |
@@ -18,11 +18,13 @@
  *
  * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to the chain (long press = tuner);
  * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = jump to that block (press again = on/off);
- * FX = cycles DRV, SFX, PIT, CMP, GT, EQ. Hold PUSH = SAVE (the preset into one of the 42 slots, kept in flash).
+ * FX = cycles DRV, SFX, SYN, PIT, CMP, GT, EQ. Hold PUSH = SAVE (the preset into one of the 52 slots, in flash).
+ * Double-click PUSH on the chain = MOVE the selected block: KNOB moves it along the chain, PUSH drops it there,
+ * HOME puts it back (v29: the order is part of the preset).
  */
 #pragma once
 
-enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE };
+enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE, M_MOVE };
 static uint32_t st_gen;                 /* bumped on each save: the header's "*" reference reloads */
 static void st_get(uint32_t k, px_preset_t *p);
 static int st_save(uint32_t k, const px_preset_t *p);
@@ -30,6 +32,7 @@ static int st_reset(uint32_t k);
 static int st_saved(uint32_t k);
 static void save_draw(void);
 static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
+#define UI_PAGE (ui_mode == M_BLOCK || ui_mode == M_EDIT)   /* the block page has the focus */
 
 #define C_OFF  0x2124
 #define C_LINE 0x2945
@@ -44,6 +47,7 @@ static const uint16_t BLK_COL[PX_NBLK] = {
     0x7D5F,           /* MOD: lavender */
     0x47FF,           /* DLY: cyan */
     0x8FE0,           /* REV: green */
+    0xF8B2,           /* SYN: raspberry */
 };
 
 /* geometry (font heights: FT_SM 15 px, FT_MD 23 px) */
@@ -74,7 +78,7 @@ static void num3(char *b, uint32_t v)  /* number without leading zeros */
 static struct {
     int full;
     uint32_t preset, vol; char name[14];
-    uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK];
+    uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK], tile_blk[PX_NBLK], tile_mv[PX_NBLK];
     int blk, type, np, item, mode, on;
     uint8_t val[PX_NPAR];
     int hint, dirty;
@@ -110,27 +114,31 @@ static void draw_header(int force)
     }
 }
 
-/* ---- chain tiles ---- */
+/* ---- chain tiles: position i shows block PRESET.order[i] ---- */
 static uint32_t tile_x(int i) { return 4u + (uint32_t)(i % T_COLS) * T_PITCH; }
 static uint32_t tile_y(int i) { return T_Y0 + (uint32_t)(i / T_COLS) * T_DY; }
+static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
+static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 static void draw_tile(int i)
 {
+    int b = PRESET.order[i];
     uint32_t x = tile_x(i), y = tile_y(i);
-    int on = PRESET.on[i] != 0, sel = (i == (int)ui_blk);
-    uint16_t bg = on ? BLK_COL[i] : C_OFF, fg = on ? BLK : UI_DIM;
-    uint16_t ol = sel ? WHT : UI_BG;
+    int on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
+    uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : UI_DIM;   /* moving: accent tile */
+    uint16_t ol = mv ? WHT : (sel ? WHT : UI_BG);
     lcd_rect(x - 1u, y - 1u, T_W + 2u, 1, ol); lcd_rect(x - 1u, y + T_H, T_W + 2u, 1, ol);   /* 1 px outline */
     lcd_rect(x - 1u, y, 1, T_H, ol);           lcd_rect(x + T_W, y, 1, T_H, ol);
     lcd_rect(x, y, T_W, 5, bg); lcd_rect(x, y + 20u, T_W, T_H - 20u, bg);                  /* background around the text */
-    ft_box(x, y + 5u, T_W, px_block_label(i), &FT_SM, fg, bg, 1);
-    lcd_rect(x, y + T_H + 2u, T_W, 2, sel ? WHT : UI_BG);                                  /* underline below the selected tile */
-    uc.tile_on[i] = (uint8_t)on; uc.tile_sel[i] = (uint8_t)sel;
+    ft_box(x, y + 5u, T_W, px_block_label(b), &FT_SM, fg, bg, 1);
+    lcd_rect(x, y + T_H + 2u, T_W, 2, mv ? UI_ACC : (sel ? WHT : UI_BG));                  /* underline: selected / moving */
+    uc.tile_on[i] = (uint8_t)on; uc.tile_sel[i] = (uint8_t)sel; uc.tile_blk[i] = (uint8_t)b; uc.tile_mv[i] = (uint8_t)mv;
 }
 static void draw_tiles(int force)
 {
+    ui_order_fix();
     for (int i = 0; i < PX_NBLK; i++) {
-        int on = PRESET.on[i] != 0, sel = (i == (int)ui_blk);
-        if (force || uc.tile_on[i] != on || uc.tile_sel[i] != sel) draw_tile(i);
+        int b = PRESET.order[i], on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
+        if (force || uc.tile_blk[i] != b || uc.tile_on[i] != on || uc.tile_sel[i] != sel || uc.tile_mv[i] != mv) draw_tile(i);
     }
 }
 
@@ -140,14 +148,14 @@ static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 
 
 static void draw_onoff(void)
 {
-    int sel = (ui_mode != M_CHAIN && ui_item == 1u);
+    int sel = (UI_PAGE && ui_item == 1u);
     uint16_t bg = sel ? UI_PANEL : UI_BG;
     int on = PRESET.on[ui_blk] != 0;
     ft_box(186, D_Y0, 50, on ? "ON" : "OFF", &FT_SM, on ? BLK_COL[ui_blk] : UI_DIM, bg, 1);
 }
 static void draw_type(void)
 {
-    int sel = (ui_mode != M_CHAIN && ui_item == 0u), ed = sel && ui_mode == M_EDIT;
+    int sel = (UI_PAGE && ui_item == 0u), ed = sel && ui_mode == M_EDIT;
     uint16_t bg = sel ? UI_PANEL : UI_BG, fg = ed ? UI_ACC : UI_TXT;
     ft_box(0, D_TYPE, 22, sel ? "<" : "", &FT_MD, UI_ACC, bg, 1);
     ft_box(22, D_TYPE, 196, px_type_name((int)ui_blk, PRESET.type[ui_blk]), &FT_MD, fg, bg, 1);
@@ -156,7 +164,7 @@ static void draw_type(void)
 static void draw_bar(int k)            /* bar + number: the only thing that moves while adjusting */
 {
     uint32_t y = D_P0 + (uint32_t)k * D_ROW;
-    int sel = (ui_mode != M_CHAIN && (int)ui_item == k + 2), ed = sel && ui_mode == M_EDIT;
+    int sel = (UI_PAGE && (int)ui_item == k + 2), ed = sel && ui_mode == M_EDIT;
     uint16_t bg = sel ? UI_PANEL : UI_BG;
     uint32_t v = PRESET.p[ui_blk][k]; if (v > 100u) v = 100u;
     uint32_t w = v * BAR_W / 100u;
@@ -171,7 +179,7 @@ static void draw_row(int k)            /* one full parameter row, without a glob
 {
     uint32_t y = D_P0 + (uint32_t)k * D_ROW;
     if (k >= ui_np()) { lcd_rect(0, y, 240, D_ROW, UI_BG); return; }
-    int sel = (ui_mode != M_CHAIN && (int)ui_item == k + 2);
+    int sel = (UI_PAGE && (int)ui_item == k + 2);
     uint16_t bg = sel ? UI_PANEL : UI_BG;
     lcd_rect(0, y, 6, 15, bg);
     ft_box(6, y, 70, px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, sel ? WHT : UI_TXT, bg, 0);
@@ -213,8 +221,8 @@ static void draw_hint(int force)
 {
     int h = (int)ui_mode;
     if (!force && uc.hint == h) return;
-    static const char *H[3] = {"KNOB: BLOCK   PUSH: OPEN", "PUSH: EDIT   HOME: BACK", "KNOB: VALUE   PUSH: OK"};
-    ft_box(4, F_Y, 174, H[h < 3 ? h : 0], &FT_SM, UI_DIM, UI_PANEL, 0);
+    static const char *H[3] = {"PUSH: OPEN   2x: MOVE", "PUSH: EDIT   HOME: BACK", "KNOB: VALUE   PUSH: OK"};
+    ft_box(4, F_Y, 174, h == M_MOVE ? "KNOB: MOVE   PUSH: DROP" : H[h < 3 ? h : 0], &FT_SM, UI_DIM, UI_PANEL, 0);
     uc.hint = h;
 }
 
@@ -230,7 +238,6 @@ static void ui_render(void)
         lcd_rect(0, 30, 240, 1, C_LINE);
         lcd_rect(0, 31, 240, 4, UI_BG);
         lcd_rect(0, 35, 3, 2u * T_DY, UI_BG); lcd_rect(235, 35, 5, 2u * T_DY, UI_BG);
-        lcd_rect(tile_x(PX_NBLK) - 1u, tile_y(PX_NBLK) - 1u, 240u - (tile_x(PX_NBLK) - 1u), T_H + 4u, UI_BG);   /* empty cell */
         lcd_rect(0, T_Y0 + T_DY + T_H + 1u, 240, 1, UI_BG);          /* row 95: between the tiles and their underline */
         lcd_rect(0, D_Y0 - 3u, 240, 1, C_LINE); lcd_rect(0, D_Y0 - 2u, 240, 2, UI_BG);
         lcd_rect(0, D_Y0, 6, 15, UI_BG); lcd_rect(0, D_Y0 + 15u, 240, D_TYPE - D_Y0 - 15u, UI_BG);
@@ -250,10 +257,23 @@ static void ui_enter_block(uint32_t b)
     if (ui_blk == b && ui_mode != M_CHAIN) PRESET.on[b] ^= 1u;   /* 2nd press on the same button: on/off */
     ui_blk = b; ui_mode = M_BLOCK; ui_item = 0;
 }
+static uint8_t mv_orig[PX_NBLK];            /* the order before the move (HOME puts it back) */
+static void ui_move_start(void)
+{
+    ui_order_fix();
+    for (int i = 0; i < PX_NBLK; i++) mv_orig[i] = PRESET.order[i];
+    ui_mode = M_MOVE;
+}
+static void ui_move_drop(void) { ui_mode = M_CHAIN; }
+static void ui_move_cancel(void) { for (int i = 0; i < PX_NBLK; i++) PRESET.order[i] = mv_orig[i]; ui_mode = M_CHAIN; }
 static void ui_knob(int dd, int fast)
 {
-    if (ui_mode == M_CHAIN) {
-        ui_blk = (uint32_t)(((int)ui_blk + PX_NBLK + dd) % PX_NBLK);
+    if (ui_mode == M_CHAIN) {                          /* along the chain, in the preset's order */
+        ui_order_fix();
+        ui_blk = PRESET.order[(ui_pos_of(ui_blk) + PX_NBLK + dd) % PX_NBLK];
+    } else if (ui_mode == M_MOVE) {                    /* the grabbed block swaps with its neighbour */
+        int i = ui_pos_of(ui_blk), j = i + (dd > 0 ? 1 : -1);
+        if (j >= 0 && j < PX_NBLK) { uint8_t t = PRESET.order[i]; PRESET.order[i] = PRESET.order[j]; PRESET.order[j] = t; }
     } else if (ui_mode == M_BLOCK) {
         int n = ui_nitems();
         ui_item = (uint32_t)(((int)ui_item + n + dd) % n);
@@ -271,18 +291,19 @@ static void ui_knob(int dd, int fast)
 }
 static void ui_push(void)
 {
+    if (ui_mode == M_MOVE) { ui_move_drop(); return; }
     if (ui_mode == M_CHAIN) { ui_mode = M_BLOCK; ui_item = 0; }
     else if (ui_mode == M_BLOCK) {
         if (ui_item == 1u) PRESET.on[ui_blk] ^= 1u;
         else ui_mode = M_EDIT;
     } else ui_mode = M_BLOCK;
 }
-static void ui_home(void) { ui_mode = M_CHAIN; ui_item = 0; }
+static void ui_home(void) { if (ui_mode == M_MOVE) ui_move_cancel(); ui_mode = M_CHAIN; ui_item = 0; }
 
 /* ===================================================== save page ======== */
-/* hold PUSH: SAVE. KNOB picks the slot (01..42, then "FACTORY": this slot back to its factory preset), PUSH saves,
+/* hold PUSH: SAVE. KNOB picks the slot (01..52, then "FACTORY": this slot back to its factory preset), PUSH saves,
  * HOME cancels. Saving to another slot copies the sound there and moves to it. */
-#define SV_FACTORY 42u
+#define SV_FACTORY 52u
 static uint32_t sv_dest, sv_shown = ~0u;
 static void save_open(void)
 {
@@ -348,11 +369,11 @@ static void ui_preset_step(int dd)
     if (ui_mode == M_EDIT) ui_mode = M_BLOCK;
     if ((int)ui_item >= ui_nitems()) ui_item = 0;
 }
-static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> PIT -> CMP -> GT -> EQ */
+static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> SYN -> PIT -> CMP -> GT -> EQ */
 {
-    static const uint8_t FXB[6] = {PX_B_DRIVE, PX_B_SFX, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
+    static const uint8_t FXB[7] = {PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
     uint32_t nx = PX_B_DRIVE;
-    for (int i = 0; i < 6; i++) if (FXB[i] == ui_blk) nx = FXB[(i + 1) % 6];
+    for (int i = 0; i < 7; i++) if (FXB[i] == ui_blk) nx = FXB[(i + 1) % 7];
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
 }
 

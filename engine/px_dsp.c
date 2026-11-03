@@ -132,9 +132,21 @@ static void bq_hp1(px_bq *b, float fs, float f)          /* first order (RC coup
 }
 
 /* ============================================================ catalog ===== */
-static const char *const BLK_LABEL[PX_NBLK] = {"GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV"};
+static const char *const BLK_LABEL[PX_NBLK] = {"GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV",
+                                               "SYN"};
 static const char *const BLK_NAME[PX_NBLK] = {"NOISE GATE", "COMPRESSOR", "PITCH", "SPECIAL FX", "DRIVE / FUZZ",
-                                              "AMP", "CABINET", "EQUALIZER", "MODULATION", "DELAY", "REVERB"};
+                                              "AMP", "CABINET", "EQUALIZER", "MODULATION", "DELAY", "REVERB",
+                                              "SYNTH / INSTRUMENT"};
+/* default processing order (v29: each preset carries its own) */
+static const uint8_t ORDER_DEF[PX_NBLK] = {PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_SYN, PX_B_DRIVE, PX_B_AMP,
+                                           PX_B_CAB, PX_B_EQ, PX_B_MOD, PX_B_DELAY, PX_B_REVERB};
+void px_order_default(uint8_t *o) { for (int i = 0; i < PX_NBLK; i++) o[i] = ORDER_DEF[i]; }
+int px_order_valid(const uint8_t *o)
+{
+    unsigned seen = 0;
+    for (int i = 0; i < PX_NBLK; i++) { if (o[i] >= PX_NBLK || (seen >> o[i]) & 1u) return 0; seen |= 1u << o[i]; }
+    return 1;
+}
 typedef struct { const char *name; uint8_t np; const char *const *pn; } tdef;
 
 static const char *const PN_GATE[] = {"THRESH", "RELEASE"};
@@ -165,6 +177,25 @@ static const char *const PN_SYN[] = {"SWEEP", "RESO", "SUB", "MIX"};
 static const tdef T_SFX[PX_SFX_COUNT] = {
     {"ENVELOPE WAH", 4, PN_AWAH}, {"AUTO WAH", 4, PN_LWAH}, {"RING MOD", 3, PN_RING}, {"BITCRUSHER", 3, PN_CRUSH},
     {"SLICER", 3, PN_SLICE}, {"LO-FI RADIO", 3, PN_LOFI}, {"SQUARE SYNTH", 4, PN_SYN}};
+
+/* synth / instrument (v29): keyboard machines (polyphonic: octave shifters + key envelope), synths that follow
+ * the note (mono: tracker + oscillator + ladder filter) or the waveform (PWM, bass: comparator / dividers), and
+ * other guitars (12-string, acoustic, sitar, baritone) */
+static const char *const PN_ORG[] = {"16'", "8'", "4'", "PERC", "DRY"};
+static const char *const PN_CHU[] = {"16'", "8'", "4'", "2'", "DRY"};
+static const char *const PN_STR[] = {"ATTACK", "RELEASE", "OCTAVE", "TONE", "DRY"};
+static const char *const PN_CHO[] = {"ATTACK", "RELEASE", "VOWEL", "OCTAVE", "DRY"};
+static const char *const PN_MONO[] = {"WAVE", "OCTAVE", "CUTOFF", "RESO", "ENV"};
+static const char *const PN_PWM[] = {"WIDTH", "RATE", "CUTOFF", "RESO", "MIX"};
+static const char *const PN_BSY[] = {"OCT -1", "OCT -2", "CUTOFF", "ENV", "DRY"};
+static const char *const PN_12S[] = {"OCTAVE", "DETUNE", "TONE"};
+static const char *const PN_ACO[] = {"BODY", "BASS", "TREBLE", "ROOM"};
+static const char *const PN_SIT[] = {"KEY", "BUZZ", "SYMPATH", "DECAY"};
+static const char *const PN_BAR[] = {"TUNE", "TONE", "MIX"};
+static const tdef T_SYN[PX_SYN_COUNT] = {
+    {"ORGAN", 5, PN_ORG}, {"CHURCH ORGAN", 5, PN_CHU}, {"STRINGS", 5, PN_STR}, {"CHOIR", 5, PN_CHO},
+    {"MONO SYNTH", 5, PN_MONO}, {"PWM SYNTH", 5, PN_PWM}, {"BASS SYNTH", 5, PN_BSY}, {"12-STRING", 3, PN_12S},
+    {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}};
 
 /* drives: each knob has a role; the name shown comes from the role */
 enum { R_DRIVE, R_DIST, R_FUZZ, R_SUST, R_BOOST, R_TONE, R_TREBLE, R_LEVEL, R_BASS, R_VOICE, R_GATE, R_BIAS,
@@ -340,7 +371,8 @@ const char *px_block_name(int b)  { return (b >= 0 && b < PX_NBLK) ? BLK_NAME[b]
 int px_ntypes(int b)
 {
     static const uint8_t N[PX_NBLK] = {1, PX_CMP_COUNT, PX_PIT_COUNT, PX_SFX_COUNT, PX_DRV_COUNT, PX_AMP_COUNT,
-                                       PX_CAB_COUNT, PX_EQ_COUNT, PX_MOD_COUNT, PX_DLY_COUNT, PX_REV_COUNT};
+                                       PX_CAB_COUNT, PX_EQ_COUNT, PX_MOD_COUNT, PX_DLY_COUNT, PX_REV_COUNT,
+                                       PX_SYN_COUNT};
     return (b >= 0 && b < PX_NBLK) ? N[b] : 1;
 }
 static const tdef *tdef_of(int b, int t)
@@ -354,6 +386,7 @@ static const tdef *tdef_of(int b, int t)
     case PX_B_MOD: return &T_MOD[t];
     case PX_B_DELAY: return &T_DLY[t];
     case PX_B_REVERB: return &T_REV[t];
+    case PX_B_SYN: return &T_SYN[t];
     }
     return 0;
 }
@@ -402,6 +435,12 @@ static void put_int(char *b, int v, int plus)
     b[i] = 0;
 }
 static void put_str(char *b, const char *s) { int i = 0; while (s[i] && i < 7) { b[i] = s[i]; i++; } b[i] = 0; }
+static const char *const NOTE_TXT[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+static int syn_key_idx(int v) { int i = v * 12 / 101; return i < 0 ? 0 : (i > 11 ? 11 : i); }
+static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRINGS / CHOIR attack */
+static float syn_rel_ms(float x) { return 50.0f + x * x * 2950.0f; }     /* release */
+static int syn_bari_st(int v) { return -1 - (int)((float)v * 0.01f * 11.99f); }
+static int syn_oct(int v) { return v < 34 ? -1 : (v < 67 ? 0 : 1); }
 int px_param_text(int b, int t, int k, int v, char *buf)
 {
     if (v < 0) v = 0;
@@ -427,6 +466,14 @@ int px_param_text(int b, int t, int k, int v, char *buf)
     case PX_B_MOD:
         if (t == PX_MOD_DIMENSION && k == 0) { put_int(buf, 1 + (int)(x * 3.99f), 0); return 1; }
         if (t == PX_MOD_ROTARY && k == 0) { put_str(buf, v < 50 ? "SLOW" : "FAST"); return 1; }
+        break;
+    case PX_B_SYN:
+        if ((t == PX_SYN_STRINGS || t == PX_SYN_CHOIR) && k == 0) { put_int(buf, (int)(syn_att_ms(x) + 0.5f), 0); return 1; }
+        if ((t == PX_SYN_STRINGS || t == PX_SYN_CHOIR) && k == 1) { put_int(buf, (int)(syn_rel_ms(x) + 0.5f), 0); return 1; }
+        if (t == PX_SYN_MONO && k == 1) { put_int(buf, syn_oct(v), 1); return 1; }
+        if (t == PX_SYN_12STR && k == 1) { put_int(buf, (int)(x * 15.0f + 0.5f), 0); return 1; }
+        if (t == PX_SYN_SITAR && k == 0) { put_str(buf, NOTE_TXT[syn_key_idx(v)]); return 1; }
+        if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
         break;
     case PX_B_DELAY:
         if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); return 1; }
@@ -456,6 +503,8 @@ static void base_preset(px_preset_t *p)
     blk(p, PX_B_MOD,    0, PX_MOD_CHORUS, 30, 40, 40, 30, 50);
     blk(p, PX_B_DELAY,  0, PX_DLY_DIGITAL, 35, 30, 25, 50, 30);
     blk(p, PX_B_REVERB, 0, PX_REV_HALL, 50, 50, 20, 40, 0);
+    blk(p, PX_B_SYN,    0, PX_SYN_ORGAN, 50, 70, 40, 30, 0);
+    px_order_default(p->order);
 }
 static void setname(px_preset_t *p, const char *s)
 {
@@ -463,7 +512,7 @@ static void setname(px_preset_t *p, const char *s)
     for (; s[i] && i < (int)sizeof(p->name) - 1; i++) p->name[i] = s[i];
     p->name[i] = 0;
 }
-enum { NPRESETS = 42 };
+enum { NPRESETS = 52 };
 int px_preset_count(void) { return NPRESETS; }
 void px_preset_factory(px_preset_t *p, int idx)
 {
@@ -613,9 +662,49 @@ void px_preset_factory(px_preset_t *p, int idx)
     case 40: setname(p, "STONER FUZZ");
         blk(p, PX_B_DRIVE, 1, PX_DRV_FFACTORY, 75, 20, 45, 55, 0);
         blk(p, PX_B_AMP, 1, PX_AMP_ORANGE, 55, 65, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 55, 45, 50, 0, 0); break;
-    default: setname(p, "CHIME CLEAN"); p->on[PX_B_GATE] = 0;
+    case 41: setname(p, "CHIME CLEAN"); p->on[PX_B_GATE] = 0;
         blk(p, PX_B_AMP, 1, PX_AMP_MATCHLESS, 40, 50, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
         blk(p, PX_B_MOD, 1, PX_MOD_PHASE90, 20, 60, 0, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 45, 55, 20, 0, 0); break;
+    /* ---- v29: synths, keyboards and other guitars (SYN block) ---- */
+    case 42: setname(p, "B3 ORGAN"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_ORGAN, 60, 80, 55, 40, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 55, 40, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 30, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 45, 15, 0, 0); break;
+    case 43: setname(p, "CHURCH ORGAN"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_CHURCH, 60, 75, 60, 35, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_CATHEDRAL, 75, 45, 40, 0, 0); break;
+    case 44: setname(p, "MELLO STRINGS"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_STRINGS, 45, 45, 35, 45, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 60, 45, 30, 0, 0); break;
+    case 45: setname(p, "CHOIR PAD"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_CHOIR, 50, 55, 70, 25, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_AMBIENT, 55, 40, 35, 0, 0); break;
+    case 46: setname(p, "MONO LEAD"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_MONO, 15, 50, 35, 55, 60);
+        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 40, 35, 25, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
+    case 47: setname(p, "PWM SYNTH"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_PWM, 50, 35, 45, 40, 100);
+        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 25, 40, 40, 0, 0); blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 40, 35, 25, 50, 0); break;
+    case 48: setname(p, "SYNTH BASS"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_BASS, 80, 40, 30, 60, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_SVT, 30, 60, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_810SVT, 50, 50, 50, 0, 0); break;
+    case 49: setname(p, "12-STRING"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_12STR, 70, 40, 50, 0, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 55, 60, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 50, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 55, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 50, 20, 0, 0); break;
+    case 50: setname(p, "ACOUSTIC"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_ACOUSTIC, 60, 50, 60, 35, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 30, 55, 60, 0);
+        blk(p, PX_B_AMP, 0, PX_AMP_JC120, 30, 50, 50, 50, 50); blk(p, PX_B_CAB, 0, PX_CAB_DI, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 55, 18, 0, 0); break;
+    default: setname(p, "SITAR"); p->on[PX_B_GATE] = 0;
+        blk(p, PX_B_SYN, 1, PX_SYN_SITAR, 35, 60, 55, 60, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 45, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 55, 55, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 20, 0, 0); break;
     }
 }
 
@@ -1206,6 +1295,144 @@ static void rc_reverb(px_engine *e)
     e->sh_k = onepole_k(sr, 1.0f / (2.0f * PI_F * 5000.0f));
 }
 
+
+/* ---- SYN: synth / instrument ---- */
+static void syn_voice(px_engine *e, int v, float st, float W, float lvl)
+{   /* delay-line shifter voice: ratio r = 2^(st/12) -> the read tap's delay changes by (1 - r) per sample */
+    float r = expf(st * 0.05776227f);
+    e->syn_inc[v] = (1.0f - r) / W; e->syn_W[v] = W; e->syn_lvl[v] = lvl;
+    if (v >= e->syn_nv) e->syn_nv = v + 1;
+}
+static float opk(float sr, float hz) { float k = 2.0f * PI_F * hz / sr; return k > 0.9f ? 0.9f : k; }   /* one-pole */
+static void rc_syn(px_engine *e)
+{
+    const px_preset_t *p = &e->cur;
+    float sr = e->sr;
+    const uint8_t *q = p->p[PX_B_SYN];
+    int t = p->type[PX_B_SYN] % PX_SYN_COUNT;
+    float a = f01(q[0]), b = f01(q[1]), c = f01(q[2]), d = f01(q[3]), f = f01(q[4]);
+    if (t != e->syn_type) {                            /* new instrument: start from a quiet state */
+        e->syn_type = t; e->syn_kg = 0.0f; e->syn_key = 0; e->syn_ff = 1.0f; e->syn_ff2 = 1.0f; e->syn_sq = 0.0f;
+        for (int i = 0; i < 4; i++) e->syn_lad[i] = 0.0f;
+        for (int i = 0; i < 6; i++) { e->syn_cs[i] = 0.0f; e->syn_cp[i] = 0; }
+        for (int i = 0; i < 6; i++) bq_reset(&e->syn_f[i]);
+        memset(e->syn_buf, 0, sizeof e->syn_buf); memset(e->syn_cb, 0, sizeof e->syn_cb);
+        e->syn_f0 = 0.0f; e->syn_per = 0.0f; e->syn_p1 = e->syn_p2 = 0.0f;
+    }
+    e->syn_nv = 0; e->syn_dry = 0.0f; e->syn_d8 = 0.0f; e->syn_out = 1.0f; e->syn_nf = 0; e->syn_plvl = 0.0f;
+    e->syn_clk = 0.0f; e->syn_cdep[0] = e->syn_cdep[1] = 0.0f;
+    e->syn_ea = onepole_k(sr, 0.001f); e->syn_er = onepole_k(sr, 0.03f); e->syn_sr2 = onepole_k(sr, 0.15f);
+    e->syn_ea2 = onepole_k(sr, 0.02f);
+    e->syn_thr = 0.003f;
+    e->syn_ka = onepole_k(sr, 0.003f); e->syn_kr = onepole_k(sr, 0.02f);
+    e->syn_lpk = opk(sr, 3000.0f); e->syn_hpk = 0.0f;
+    e->syn_glk = onepole_k(sr, 0.012f); e->syn_fdk = expf(-1.0f / (0.35f * sr));
+    e->syn_pk = expf(-1.0f / (0.3f * sr));
+    switch (t) {
+    case PX_SYN_ORGAN: {                               /* drawbars: 16' = -12, 8' = the guitar, 4' = +12, perc = +19 */
+        float n = 1.0f / (0.35f + a + b + c);
+        syn_voice(e, 0, -12.0f, 1400.0f, a * n * 1.3f);
+        syn_voice(e, 1, 12.0f, 1000.0f, c * n);
+        e->syn_d8 = b * n;
+        if (d > 0.0f) { syn_voice(e, 2, 19.0f, 700.0f, 0.0f); e->syn_plvl = d * n * 1.6f; }
+        e->syn_clk = 0.08f; e->syn_dry = f; e->syn_out = 1.1f;
+    } break;
+    case PX_SYN_CHURCH: {                              /* pipe organ: 16' 8' 4' 2', slow speech, long release */
+        float n = 1.0f / (0.35f + a + b + c + d);
+        syn_voice(e, 0, -12.0f, 1400.0f, a * n * 1.3f);
+        syn_voice(e, 1, 12.0f, 1000.0f, c * n);
+        syn_voice(e, 2, 24.0f, 800.0f, d * n * 0.8f);
+        e->syn_d8 = b * n;
+        e->syn_ka = onepole_k(sr, 0.06f); e->syn_kr = onepole_k(sr, 0.45f);
+        e->syn_lpk = opk(sr, 2200.0f); e->syn_dry = f; e->syn_out = 1.1f;
+        e->syn_cdep[0] = 0.0006f * sr; e->syn_cdep[1] = 0.0f;          /* a little "celeste" movement */
+        e->syn_linc[0] = 0.4f / sr; e->syn_linc[1] = 5.0f / sr; e->syn_cbase = 0.008f * sr;
+    } break;
+    case PX_SYN_STRINGS: case PX_SYN_CHOIR: {          /* tape replay / string machine: swell + octave + ensemble */
+        float oct = t == PX_SYN_STRINGS ? c : d;
+        e->syn_ka = onepole_k(sr, syn_att_ms(a) * 0.001f); e->syn_kr = onepole_k(sr, syn_rel_ms(b) * 0.001f);
+        float n = 1.0f / (1.0f + oct * 0.8f + 0.3f);
+        e->syn_d8 = n;
+        syn_voice(e, 0, 12.0f, 1000.0f, oct * 0.8f * n);
+        syn_voice(e, 1, -12.0f, 1400.0f, 0.3f * n);
+        e->syn_cdep[0] = 0.0015f * sr; e->syn_cdep[1] = 0.00025f * sr;   /* ensemble: slow + fast vibrato */
+        e->syn_linc[0] = 0.6f / sr; e->syn_linc[1] = 6.0f / sr; e->syn_cbase = 0.007f * sr;
+        if (t == PX_SYN_STRINGS) {
+            e->syn_lpk = opk(sr, 1200.0f + d * d * 6000.0f);
+            e->syn_out = 0.62f;
+        } else {                                       /* vowel: "ooh" (0) .. "aah" (100) */
+            float f1 = 300.0f + c * 430.0f, f2 = 870.0f + c * 220.0f, f3 = 2240.0f + c * 200.0f;
+            bq_bandpass(&e->syn_f[0], sr, f1, 3.0f); bq_bandpass(&e->syn_f[1], sr, f2, 5.0f);
+            bq_bandpass(&e->syn_f[2], sr, f3, 7.0f); e->syn_nf = 3;
+            e->syn_lpk = opk(sr, 4000.0f);
+            e->syn_out = 0.96f;
+        }
+        e->syn_dry = f;
+    } break;
+    case PX_SYN_MONO:                                  /* one note: tracker -> oscillator -> 24 dB ladder */
+        bq_lowpass(&e->syn_f[0], sr, 110.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 110.0f, 1.31f);
+        bq_highpass(&e->syn_f[2], sr, 50.0f, 0.7f);   /* no DC / rumble in the tracker */
+        e->syn_wave = a; e->syn_mul = syn_oct(q[1]) < 0 ? 0.5f : (syn_oct(q[1]) > 0 ? 2.0f : 1.0f);
+        e->syn_cut = 60.0f * powf(150.0f, c); e->syn_res = d * 0.92f; e->syn_fenv = 0.0f; e->syn_ea2 = f;
+        e->syn_ka = onepole_k(sr, 0.002f); e->syn_kr = onepole_k(sr, 0.06f);
+        e->syn_out = 0.27f;
+        break;
+    case PX_SYN_PWM:                                   /* comparator square, its width moving: no tracking delay */
+        bq_lowpass(&e->syn_f[0], sr, 600.0f, 0.7f); bq_highpass(&e->syn_f[1], sr, 70.0f, 0.7f);
+        e->syn_pw0 = (a - 0.5f) * 0.9f; e->syn_pwd = 0.35f;
+        e->syn_linc[0] = (0.1f + b * b * 7.9f) / sr;
+        e->syn_cut = 80.0f * powf(100.0f, c); e->syn_res = d * 0.9f; e->syn_ea2 = 0.3f;
+        e->syn_ka = onepole_k(sr, 0.002f); e->syn_kr = onepole_k(sr, 0.05f);
+        e->syn_dry = 1.0f - f; e->syn_out = f * 0.27f;
+        break;
+    case PX_SYN_BASS:                                  /* dividers: -1 and -2 octaves, filter swept by the attack */
+        bq_lowpass(&e->syn_f[0], sr, 400.0f, 0.7f); bq_lowpass(&e->syn_f[1], sr, 400.0f, 0.7f);
+        e->syn_cut = 60.0f * powf(40.0f, c); e->syn_res = 0.45f; e->syn_ea2 = d;
+        e->syn_wave = a; e->syn_pwd = b;
+        e->syn_fdk = expf(-1.0f / (0.25f * sr));
+        e->syn_ka = onepole_k(sr, 0.002f); e->syn_kr = onepole_k(sr, 0.06f);
+        e->syn_dry = f; e->syn_out = 0.22f;
+        break;
+    case PX_SYN_12STR: {                               /* octave strings (+12, detuned, thin) + unison doubling */
+        float cents = b * 15.0f;
+        syn_voice(e, 0, 12.0f + cents * 0.01f, 1000.0f, a * 0.85f);
+        e->syn_hpk = opk(sr, 150.0f + c * c * 1500.0f);
+        e->syn_cdep[0] = 0.0004f * sr * b; e->syn_linc[0] = 0.35f / sr; e->syn_cbase = 0.006f * sr;
+        e->syn_dry = 1.0f; e->syn_out = 0.35f * b;     /* unison copy level */
+    } break;
+    case PX_SYN_ACOUSTIC: {                            /* magnetic pickup -> flat-top: body, top, sparkle, air */
+        float fb = 135.0f - a * 45.0f;                 /* body size: parlour .. jumbo */
+        bq_highpass(&e->syn_f[0], sr, 70.0f, 0.7f);
+        bq_peak(&e->syn_f[1], sr, fb, 1.3f, 2.0f + b * 8.0f);
+        bq_peak(&e->syn_f[2], sr, 230.0f, 1.2f, 2.5f);
+        bq_peak(&e->syn_f[3], sr, 480.0f, 1.0f, -5.0f);
+        bq_peak(&e->syn_f[4], sr, 3200.0f, 1.0f, -4.0f);   /* the pickup's own resonance, taken back out */
+        bq_highshelf(&e->syn_f[5], sr, 5000.0f, -2.0f + c * 12.0f);
+        e->syn_nf = 6; e->syn_dry = 0.0f; e->syn_out = 0.67f; e->syn_sym = d * 0.35f;
+    } break;
+    case PX_SYN_SITAR: {                               /* jawari buzz + 6 sympathetic strings tuned to KEY */
+        static const int8_t ST[6] = {0, 7, 12, 16, 14, 9};
+        float root = 130.81f * expf((float)syn_key_idx(q[0]) * 0.05776227f);   /* C3 .. B3 */
+        int base = 0;
+        for (int i = 0; i < 6; i++) {
+            float fr = root * expf((float)ST[i] * 0.05776227f);
+            int L = (int)(sr / fr + 0.5f); if (L > 340) L = 340; if (L < 8) L = 8;
+            e->syn_cl[i] = L; e->syn_c0[i] = base; base += L;
+            if (e->syn_cp[i] >= L) e->syn_cp[i] = 0;
+        }
+        e->syn_buzz = b; e->syn_sym = c * 1.2f;
+        e->syn_cfb = 0.985f + d * 0.0135f; e->syn_cdamp = 0.35f;
+        bq_bandpass(&e->syn_f[0], sr, 2800.0f, 1.3f); bq_bandpass(&e->syn_f[1], sr, 500.0f, 0.7f);
+        e->syn_dry = 1.0f; e->syn_out = 0.7f;
+    } break;
+    default: {                                         /* baritone: the whole guitar a few semitones down */
+        syn_voice(e, 0, (float)syn_bari_st(q[0]), 1400.0f, c);
+        bq_lowshelf(&e->syn_f[0], sr, 180.0f, b * 6.0f); bq_highshelf(&e->syn_f[1], sr, 3500.0f, -b * 4.0f);
+        e->syn_nf = 2; e->syn_dry = 1.0f - c; e->syn_out = 1.0f;
+    } break;
+    }
+}
+
 static void px_recalc(px_engine *e)
 {
     float sr = e->sr, osr = sr * PX_OVERSAMPLE;
@@ -1216,6 +1443,10 @@ static void px_recalc(px_engine *e)
     bq_lowpass(&e->os_up2, osr, sr * 0.47f, 1.31f);
     bq_lowpass(&e->os_dn, osr, sr * 0.47f, 0.54f);
     bq_lowpass(&e->os_dn2, osr, sr * 0.47f, 1.31f);
+    bq_lowpass(&e->osb_up, osr, sr * 0.47f, 0.54f);   /* set B: same filters, own state */
+    bq_lowpass(&e->osb_up2, osr, sr * 0.47f, 1.31f);
+    bq_lowpass(&e->osb_dn, osr, sr * 0.47f, 0.54f);
+    bq_lowpass(&e->osb_dn2, osr, sr * 0.47f, 1.31f);
     rc_drive(e);
     rc_amp(e);
     rc_cab(e);
@@ -1223,6 +1454,7 @@ static void px_recalc(px_engine *e)
     rc_mod(e);
     rc_delay(e);
     rc_reverb(e);
+    rc_syn(e);
 }
 
 void px_engine_init(px_engine *e, float sr)
@@ -1231,12 +1463,15 @@ void px_engine_init(px_engine *e, float sr)
     e->sr = sr;
     e->oct_ff = 1.0f; e->oct_ff2 = 1.0f;
     e->dly_type = -1;
+    e->syn_type = -1;
     px_preset_t p; px_preset_factory(&p, 0);
     px_engine_set(e, &p);
 }
 void px_engine_set(px_engine *e, const px_preset_t *p)
 {
     e->cur = *p;
+    if (px_order_valid(p->order)) for (int i = 0; i < PX_NBLK; i++) e->ord[i] = p->order[i];
+    else px_order_default(e->ord);
     px_recalc(e);
 }
 
@@ -1340,13 +1575,13 @@ static float ps_align(const float *buf, int w, float d_ref, float d_new)
 {                                                      /* SOLA: offset that puts the fading-in tap in phase */
     int r0 = w - (int)d_ref, best = 0;
     float bc = -1e30f;
-    for (int pass = 0; pass < 2; pass++) {
-        int lo = pass ? best - 3 : 0, hi = pass ? best + 3 : PS_OFFMAX, st = pass ? 1 : 4, b2 = best;
+    for (int pass = 0; pass < 2; pass++) {             /* coarse (every 8 offsets, every 4th sample), then fine */
+        int lo = pass ? best - 7 : 0, hi = pass ? best + 7 : PS_OFFMAX, st = pass ? 1 : 8, b2 = best, js = pass ? 2 : 4;
         if (lo < 0) lo = 0;
         for (int o = lo; o <= hi; o += st) {
             int c0 = w - (int)(d_new + (float)o);
             float acc = 0.0f, en = 1e-9f;
-            for (int j = 0; j < 64; j += 2) {
+            for (int j = 0; j < 64; j += js) {
                 float x = buf[(r0 - j) & (PX_PS_N - 1)], y = buf[(c0 - j) & (PX_PS_N - 1)];
                 acc += x * y; en += y * y;
             }
@@ -1373,6 +1608,254 @@ static inline float ps_voice_al(float *buf, int w, float *ph, float *off, float 
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
 
+
+/* ---- SYN: synth / instrument, one sample ---- */
+static inline float polyblep(float t, float dt)        /* band-limited step correction (saw / pulse edges) */
+{
+    if (t < dt) { t /= dt; return t + t - t * t - 1.0f; }
+    if (t > 1.0f - dt) { t = (t - 1.0f) / dt; return t * t + t + t + 1.0f; }
+    return 0.0f;
+}
+static inline float syn_saw(float ph, float dt) { return 2.0f * ph - 1.0f - polyblep(ph, dt); }
+static inline float syn_ladder(px_engine *e, float in, float fc)
+{   /* 4 one-poles, tanh on the feedback: a 24 dB/oct "transistor ladder" low-pass, resonant */
+    if (fc > e->sr * 0.42f) fc = e->sr * 0.42f;
+    float wc = PI_F * fc / e->sr, g = wc / (1.0f + wc);
+    float u = px_tanh(in - e->syn_res * 4.0f * e->syn_lad[3]);
+    e->syn_lad[0] += g * (u - e->syn_lad[0]);
+    e->syn_lad[1] += g * (e->syn_lad[0] - e->syn_lad[1]);
+    e->syn_lad[2] += g * (e->syn_lad[1] - e->syn_lad[2]);
+    e->syn_lad[3] += g * (e->syn_lad[2] - e->syn_lad[3]);
+    return e->syn_lad[3] * (1.0f + e->syn_res * 1.5f);
+}
+static inline float syn_tap(const px_engine *e, float d)   /* ensemble / doubler line, d samples back */
+{
+    float pos = (float)e->syn_cw - d; if (pos < 0.0f) pos += (float)PX_SYN_CB;
+    return rd_frac(e->syn_cb, PX_SYN_CB - 1, pos);
+}
+/* key gate: a "key" goes down when the string is picked, up when it has died away; the level in between is held
+ * (sustain), as on a keyboard */
+static inline float syn_keys(px_engine *e, float x)
+{
+    float a = px_abs(x);
+    e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+    e->syn_slow += (e->syn_env - e->syn_slow) * (e->syn_env > e->syn_slow ? e->syn_ea : e->syn_sr2);
+    int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr);
+    if (on && !e->syn_key) { e->syn_perc = 1.0f; e->syn_click = 1.0f; }
+    e->syn_key = on;
+    e->syn_kg += ((on ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+    if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+    float g = 0.25f / (e->syn_slow + 0.004f);
+    return x * (g > 12.0f ? 12.0f : g);
+}
+static inline float syn_shift(px_engine *e, int v)
+{
+    return ps_voice_al(e->syn_buf, e->syn_w, &e->syn_ph[v], e->syn_off[v], e->syn_inc[v], e->syn_W[v]);
+}
+/* pitch tracker: low-passed (cut-off following the note), zero crossings with hysteresis, median of 3 periods */
+static inline int syn_track(px_engine *e, float x)
+{
+    /* a steep fixed low-pass far below most notes: whatever the note, its fundamental comes out on top */
+    float b = bq_run(&e->syn_f[1], bq_run(&e->syn_f[0], bq_run(&e->syn_f[2], x))), ab = px_abs(b);
+    e->syn_sq = ab > e->syn_sq ? ab : e->syn_sq * 0.998f;
+    float h = e->syn_sq * 0.2f;
+    int trig = 0;
+    e->syn_cnt += 1.0f;
+    if (e->syn_ff < 0.0f && b > 0.0f && e->syn_prev <= 0.0f) {   /* armed (went below -h): upward zero crossing */
+        e->syn_ff = 1.0f; trig = 1;
+        float tc = e->syn_cnt - b / (b - e->syn_prev + 1e-9f);         /* sub-sample crossing time */
+        float per = tc - e->syn_per;
+        e->syn_per = tc;
+        if (per > e->sr / 1500.0f && per < e->sr / 55.0f) {
+            float m = per, p1 = e->syn_p1, p2 = e->syn_p2;          /* median of the last three */
+            if ((p1 <= m && m <= p2) || (p2 <= m && m <= p1)) { }
+            else if ((m <= p1 && p1 <= p2) || (p2 <= p1 && p1 <= m)) m = p1;
+            else m = p2;
+            e->syn_p2 = p1; e->syn_p1 = per;
+            if (m > 0.0f) {
+                e->syn_f0t = e->sr / m;
+                if (e->syn_snap || e->syn_f0 <= 0.0f) { e->syn_f0 = e->syn_f0t; e->syn_snap = 0; }   /* new note */
+            }
+        }
+        if (e->syn_cnt > 1e6f) { e->syn_cnt -= 1e6f; e->syn_per -= 1e6f; }
+    } else if (e->syn_ff > 0.0f && b < -h) e->syn_ff = -1.0f;
+    else if (e->syn_ff == 0.0f) e->syn_ff = 1.0f;
+    e->syn_prev = b;
+    return trig;
+}
+static float syn_run(px_engine *e, int t, float x)
+{
+    float y = 0.0f;
+    switch (t) {
+    case PX_SYN_ORGAN: case PX_SYN_CHURCH: {
+        float xs = syn_keys(e, x);
+        e->syn_buf[e->syn_w] = xs;
+        e->syn_lp += e->syn_lpk * (xs - e->syn_lp);
+        y = e->syn_lp * e->syn_d8 + syn_shift(e, 0) * e->syn_lvl[0] + syn_shift(e, 1) * e->syn_lvl[1];
+        if (e->syn_nv > 2) {
+            if (t != PX_SYN_ORGAN) y += syn_shift(e, 2) * e->syn_lvl[2];
+            else if (e->syn_perc > 0.002f) {           /* percussion: its voice only while it sounds */
+                y += syn_shift(e, 2) * e->syn_plvl * e->syn_perc; e->syn_perc *= e->syn_pk;
+            }
+        }
+        if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
+        if (e->syn_click > 1e-4f) {                    /* key click: a 2 ms burst */
+            e->syn_rnd = e->syn_rnd * 1664525u + 1013904223u;
+            y += ((float)(e->syn_rnd >> 8) * (2.0f / 16777216.0f) - 1.0f) * e->syn_click * e->syn_clk;
+            e->syn_click *= 0.985f;
+        }
+        if (e->syn_cdep[0] > 0.0f) {                   /* church: slow celeste */
+            e->syn_cb[e->syn_cw] = y;
+            e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+            float w = syn_tap(e, e->syn_cbase + e->syn_cdep[0] * lfo_sin(e->syn_lfo[0]));
+            if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
+            y = 0.6f * y + 0.6f * w;
+        }
+        y = px_tanh(y * 1.3f) * 0.77f;                 /* tone-wheel / pipe: no harsh peaks */
+        return y * e->syn_kg * e->syn_out + x * e->syn_dry + e->dn;
+    }
+    case PX_SYN_STRINGS: case PX_SYN_CHOIR: {
+        float xs = syn_keys(e, x);
+        e->syn_buf[e->syn_w] = xs;
+        y = xs * e->syn_d8 + syn_shift(e, 0) * e->syn_lvl[0] + syn_shift(e, 1) * e->syn_lvl[1];
+        if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
+        if (e->syn_nf) y = bq_run(&e->syn_f[0], y) + 0.6f * bq_run(&e->syn_f[1], y) + 0.35f * bq_run(&e->syn_f[2], y)
+                           + 0.12f * y;
+        e->syn_lp += e->syn_lpk * (y - e->syn_lp);
+        e->syn_hp += e->syn_lpk * (e->syn_lp - e->syn_hp);
+        e->syn_cb[e->syn_cw] = e->syn_hp;
+        e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+        e->syn_lfo[1] = wrap1(e->syn_lfo[1] + e->syn_linc[1]);
+        float w = 0.0f;
+        for (int i = 0; i < 3; i++) {                  /* ensemble: 3 taps, 120 degrees apart */
+            float o = (float)i * 0.33333f;
+            w += syn_tap(e, e->syn_cbase + e->syn_cdep[0] * lfo_sin(wrap1(e->syn_lfo[0] + o))
+                            + e->syn_cdep[1] * lfo_sin(wrap1(e->syn_lfo[1] + o)));
+        }
+        if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
+        y = px_tanh(w * 0.4f) * 2.5f;
+        return y * e->syn_kg * e->syn_out + x * e->syn_dry + e->dn;
+    }
+    case PX_SYN_MONO: {
+        float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        e->syn_slow += (e->syn_env - e->syn_slow) * e->syn_glk;           /* slower: re-attack detection */
+        int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr * 1.5f);
+        if (on && !e->syn_key) { e->syn_snap = 1; e->syn_p1 = e->syn_p2 = 0.0f; }   /* after a silence: no glide */
+        syn_track(e, x);
+        if ((on && !e->syn_key) || e->syn_env > 1.6f * e->syn_slow + e->syn_thr) e->syn_fenv = 1.0f;
+        e->syn_key = on;
+        e->syn_kg += ((on && e->syn_f0 > 0.0f ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+        if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+        e->syn_f0 += (e->syn_f0t - e->syn_f0) * e->syn_glk;
+        float fr = e->syn_f0 * e->syn_mul, dt = fr / e->sr;
+        if (dt > 0.45f) dt = 0.45f;
+        e->syn_oph += dt; if (e->syn_oph >= 1.0f) e->syn_oph -= 1.0f;
+        float saw = syn_saw(e->syn_oph, dt), o;
+        if (e->syn_wave < 0.5f) {                      /* saw -> square */
+            float ph2 = e->syn_oph + 0.5f; if (ph2 >= 1.0f) ph2 -= 1.0f;
+            float sq = saw - syn_saw(ph2, dt);
+            o = saw + (sq - saw) * (e->syn_wave * 2.0f);
+        } else {                                       /* square -> narrow pulse */
+            float pw = 0.5f - (e->syn_wave - 0.5f) * 0.8f, ph2 = e->syn_oph + pw;
+            if (ph2 >= 1.0f) ph2 -= 1.0f;
+            o = saw - syn_saw(ph2, dt);
+        }
+        e->syn_fenv *= e->syn_fdk;
+        float lv = 0.6f + 0.4f * (e->syn_env * 6.0f > 1.0f ? 1.0f : e->syn_env * 6.0f);
+        y = syn_ladder(e, o * 0.8f, e->syn_cut * (1.0f + e->syn_ea2 * e->syn_fenv * 8.0f));
+        return y * e->syn_kg * lv * e->syn_out + e->dn;
+    }
+    case PX_SYN_PWM: {
+        float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr);
+        if (on && !e->syn_key) e->syn_fenv = 1.0f;
+        e->syn_key = on;
+        e->syn_kg += ((on ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+        if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+        float b = bq_run(&e->syn_f[1], bq_run(&e->syn_f[0], x)), ab = px_abs(b);
+        e->syn_sq = ab > e->syn_sq ? ab : e->syn_sq * 0.9995f;
+        e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+        float th = e->syn_sq * (e->syn_pw0 + e->syn_pwd * lfo_sin(e->syn_lfo[0]));
+        float sq = b > th ? 1.0f : -1.0f;
+        e->syn_fenv *= e->syn_fdk;
+        y = syn_ladder(e, sq * 0.7f, e->syn_cut * (1.0f + e->syn_ea2 * e->syn_fenv * 4.0f));
+        return y * e->syn_kg * e->syn_out + x * e->syn_dry + e->dn;
+    }
+    case PX_SYN_BASS: {
+        float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        e->syn_slow += (e->syn_env - e->syn_slow) * e->syn_glk;
+        int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr);
+        if ((on && !e->syn_key) || e->syn_env > 1.6f * e->syn_slow + e->syn_thr) e->syn_fenv = 1.0f;
+        e->syn_key = on;
+        e->syn_kg += ((on ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+        if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+        float b = bq_run(&e->syn_f[1], bq_run(&e->syn_f[0], x)), ab = px_abs(b);
+        e->syn_sq = ab > e->syn_sq ? ab : e->syn_sq * 0.9995f;
+        float h = e->syn_sq * 0.2f;
+        if (e->syn_prev <= 0.0f && b > h) {            /* flip-flops: -1 and -2 octaves */
+            e->syn_prev = 1.0f; e->syn_ff = -e->syn_ff;
+            if (e->syn_ff > 0.0f) e->syn_ff2 = -e->syn_ff2;
+        } else if (e->syn_prev > 0.0f && b < -h) e->syn_prev = -1.0f;
+        float s = e->syn_ff * e->syn_wave + e->syn_ff2 * e->syn_pwd;
+        e->syn_fenv *= e->syn_fdk;
+        y = syn_ladder(e, s * 0.6f, e->syn_cut * (1.0f + e->syn_ea2 * e->syn_fenv * 12.0f));
+        return y * e->syn_kg * e->syn_out + x * e->syn_dry + e->dn;
+    }
+    case PX_SYN_12STR: {
+        e->syn_buf[e->syn_w] = x;
+        float o = syn_shift(e, 0);
+        if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
+        e->syn_hp += e->syn_hpk * (o - e->syn_hp);     /* octave strings are thin: high-pass */
+        y = x * e->syn_dry + (o - e->syn_hp) * e->syn_lvl[0];
+        if (e->syn_out > 0.0f) {                       /* the unison pairs, slightly out of tune */
+            e->syn_cb[e->syn_cw] = x;
+            e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+            y += syn_tap(e, e->syn_cbase + e->syn_cdep[0] * lfo_sin(e->syn_lfo[0])) * e->syn_out;
+            if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
+        }
+        return y + e->dn;
+    }
+    case PX_SYN_ACOUSTIC: {
+        y = x;
+        for (int i = 0; i < e->syn_nf; i++) y = bq_run(&e->syn_f[i], y);
+        e->syn_cb[e->syn_cw] = y;                      /* the body / room: a few early reflections */
+        float r = syn_tap(e, 0.0031f * e->sr) * 0.6f - syn_tap(e, 0.0053f * e->sr) * 0.45f
+                  + syn_tap(e, 0.0079f * e->sr) * 0.35f - syn_tap(e, 0.0112f * e->sr) * 0.25f;
+        if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
+        return (y + r * e->syn_sym) * e->syn_out * 1.8f + e->dn;
+    }
+    case PX_SYN_SITAR: {
+        float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        float c = e->syn_env * (1.0f - 0.85f * e->syn_buzz);      /* the string grazes the curved bridge */
+        float ex = x > c ? x - c : 0.0f;
+        float bz = bq_run(&e->syn_f[0], ex) * (2.0f + e->syn_buzz * 10.0f);
+        y = x + bz * e->syn_buzz;
+        float in_s = bq_run(&e->syn_f[1], x) * 0.04f, sum = 0.0f;
+        for (int i = 0; i < 6; i++) {                  /* sympathetic strings: damped comb resonators */
+            float *bf = e->syn_buf + e->syn_c0[i];
+            float r = bf[e->syn_cp[i]];
+            e->syn_cs[i] = r + (e->syn_cs[i] - r) * e->syn_cdamp;
+            if (e->syn_cs[i] > 4.0f) e->syn_cs[i] = 4.0f; else if (e->syn_cs[i] < -4.0f) e->syn_cs[i] = -4.0f;
+            bf[e->syn_cp[i]] = in_s + e->syn_cs[i] * e->syn_cfb;
+            if (++e->syn_cp[i] >= e->syn_cl[i]) e->syn_cp[i] = 0;
+            sum += r;
+        }
+        return (y + sum * e->syn_sym) * e->syn_out + e->dn;
+    }
+    default: {                                         /* baritone */
+        e->syn_buf[e->syn_w] = x;
+        y = x * e->syn_dry + syn_shift(e, 0) * e->syn_lvl[0];
+        if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
+        for (int i = 0; i < e->syn_nf; i++) y = bq_run(&e->syn_f[i], y);
+        return y + e->dn;
+    }
+    }
+}
+
 void px_engine_process(px_engine *e, const float *in, float *out, int n)
 {
     const px_preset_t *p = &e->cur;
@@ -1383,7 +1866,22 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
     const int mod_t = p->type[PX_B_MOD] % PX_MOD_COUNT;
     const int dly_t = p->type[PX_B_DELAY] % PX_DLY_COUNT;
     const int drv_on = p->on[PX_B_DRIVE], amp_on = p->on[PX_B_AMP], amp_os = amp_on && e->amp_n > 0;
-    const int os_on = drv_on || amp_os;
+    const int syn_t = p->type[PX_B_SYN] % PX_SYN_COUNT;
+    /* the blocks to run, in this preset's order (GATE always: it carries the anti-denormal offset) */
+    uint8_t st[PX_NBLK];
+    int ns = 0, ip_drv = -100, ip_amp = -200;
+    for (int i = 0; i < PX_NBLK; i++) {
+        int b = e->ord[i];
+        if (b != PX_B_GATE && !p->on[b]) continue;
+        if (b == PX_B_DRIVE) ip_drv = ns;
+        if (b == PX_B_AMP) ip_amp = ns;
+        st[ns++] = (uint8_t)b;
+    }
+    /* DRIVE right before AMP: one oversampled section for both (set A). Otherwise each its own: the amp keeps
+     * set A, a drive elsewhere takes set B (set A when the amp does not oversample). */
+    const int pair = drv_on && amp_on && ip_amp == ip_drv + 1;
+    px_bq *dua = (pair || !amp_os) ? &e->os_up : &e->osb_up, *dub = (pair || !amp_os) ? &e->os_up2 : &e->osb_up2;
+    px_bq *dda = (pair || !amp_os) ? &e->os_dn : &e->osb_dn, *ddb = (pair || !amp_os) ? &e->os_dn2 : &e->osb_dn2;
     /* supply sag: slow (~11 ms), its two divisions once a block (divisions are slow on the pedal's FPU) */
     const float sag_pa = 1.0f / (1.0f + e->amp_sag * e->amp_sagk), sag_pre = 1.0f / (1.0f + e->amp_sag * e->amp_sagk * 0.3f);
 
@@ -1392,332 +1890,374 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
         float x = in[k] + e->dn;
         { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
 
-        /* ---- gate ---- */
-        if (p->on[PX_B_GATE]) {
-            float a = px_abs(x);
-            e->gate_env = (a > e->gate_env) ? a : a + (e->gate_env - a) * 0.9995f;
-            float tg = (e->gate_env > e->gate_thr) ? 1.0f : 0.0f;
-            e->gate_g = (tg > e->gate_g) ? tg : tg + (e->gate_g - tg) * e->gate_rel;
-            if (e->gate_g < 1e-6f) e->gate_g = 0.0f;   /* closed: exact zero, never a denormal */
-            x *= e->gate_g;
-        }
-        x += e->dn;
-
-        /* ---- compressor ---- */
-        if (p->on[PX_B_COMP]) {
-            float a = px_abs(x);
-            float c = (a > e->cmp_env) ? e->cmp_att : e->cmp_rel;
-            e->cmp_env = a + (e->cmp_env - a) * c;
-            if (cmp_t == PX_CMP_SWELL) {
-                e->cmp_slow += (e->cmp_env - e->cmp_slow) * e->cmp_slowk;
-                if (e->cmp_env > 1.8f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack */
-                else e->cmp_sw += (1.0f - e->cmp_sw) * e->cmp_rise;
-                x *= e->cmp_sw * e->cmp_sw * e->cmp_make;
-            } else {
-                float y = x * e->cmp_make / (1.0f + e->cmp_k * e->cmp_env * 4.0f);
-                x = x + (y - x) * e->cmp_mix;
+        for (int s = 0; s < ns; s++) switch (st[s]) {
+        case PX_B_GATE:
+            /* ---- gate ---- */
+            if (p->on[PX_B_GATE]) {
+                float a = px_abs(x);
+                e->gate_env = (a > e->gate_env) ? a : a + (e->gate_env - a) * 0.9995f;
+                float tg = (e->gate_env > e->gate_thr) ? 1.0f : 0.0f;
+                e->gate_g = (tg > e->gate_g) ? tg : tg + (e->gate_g - tg) * e->gate_rel;
+                if (e->gate_g < 1e-6f) e->gate_g = 0.0f;   /* closed: exact zero, never a denormal */
+                x *= e->gate_g;
             }
-        }
-
-        /* ---- pitch ---- */
-        if (p->on[PX_B_PITCH]) {
-            if (pit_t == PX_PIT_OCTAVER) {
-                float b = bq_run(&e->oct_lp2, bq_run(&e->oct_lp, x));
-                float a = px_abs(b);
-                e->oct_env = a + (e->oct_env - a) * 0.995f;
-                if (e->oct_prev <= 0.0f && b > 0.0f && e->oct_env > 0.002f) {
-                    e->oct_ff = -e->oct_ff;
-                    if (e->oct_ff > 0.0f) e->oct_ff2 = -e->oct_ff2;
+            x += e->dn;
+        break;
+        case PX_B_COMP:
+            /* ---- compressor ---- */
+            if (p->on[PX_B_COMP]) {
+                float a = px_abs(x);
+                float c = (a > e->cmp_env) ? e->cmp_att : e->cmp_rel;
+                e->cmp_env = a + (e->cmp_env - a) * c;
+                if (cmp_t == PX_CMP_SWELL) {
+                    e->cmp_slow += (e->cmp_env - e->cmp_slow) * e->cmp_slowk;
+                    if (e->cmp_env > 1.8f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack */
+                    else e->cmp_sw += (1.0f - e->cmp_sw) * e->cmp_rise;
+                    x *= e->cmp_sw * e->cmp_sw * e->cmp_make;
+                } else {
+                    float y = x * e->cmp_make / (1.0f + e->cmp_k * e->cmp_env * 4.0f);
+                    x = x + (y - x) * e->cmp_mix;
                 }
-                e->oct_prev = b;
-                float s1 = bq_run(&e->oct_sublp, e->oct_ff * e->oct_env);
-                float s2 = bq_run(&e->oct_sublp2, e->oct_ff2 * e->oct_env);
-                float u = px_abs(bq_run(&e->oct_bp, x));
-                u = bq_run(&e->oct_uphp, u);
-                x = x * e->oct_dry + s1 * e->oct_s1 + s2 * e->oct_s2 + u * e->oct_up;
-            } else {
-                e->ps_buf[e->ps_w] = x;
-                if (pit_t == PX_PIT_WHAMMY) {
-                    e->ps_r += (e->ps_rt - e->ps_r) * e->ps_glide;
-                    e->ps_inc[0] = (1.0f - e->ps_r) * e->ps_invW;
-                }
-                float y = x * e->ps_dry;
-                for (int v = 0; v < e->ps_nv; v++)
-                    y += ps_voice_al(e->ps_buf, e->ps_w, &e->ps_ph[v], e->ps_off[v], e->ps_inc[v], e->ps_W[v]) * e->ps_lvl[v];
-                if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
-                x = y;
             }
-        }
-
-        /* ---- special fx ---- */
-        if (p->on[PX_B_SFX]) {
-            switch (sfx_t) {
-            case PX_SFX_AUTOWAH: case PX_SFX_LFOWAH: {
-                float t;
-                if (sfx_t == PX_SFX_AUTOWAH) {
+        break;
+        case PX_B_PITCH:
+            /* ---- pitch ---- */
+            if (p->on[PX_B_PITCH]) {
+                if (pit_t == PX_PIT_OCTAVER) {
+                    float b = bq_run(&e->oct_lp2, bq_run(&e->oct_lp, x));
+                    float a = px_abs(b);
+                    e->oct_env = a + (e->oct_env - a) * 0.995f;
+                    if (e->oct_prev <= 0.0f && b > 0.0f && e->oct_env > 0.002f) {
+                        e->oct_ff = -e->oct_ff;
+                        if (e->oct_ff > 0.0f) e->oct_ff2 = -e->oct_ff2;
+                    }
+                    e->oct_prev = b;
+                    float s1 = bq_run(&e->oct_sublp, e->oct_ff * e->oct_env);
+                    float s2 = bq_run(&e->oct_sublp2, e->oct_ff2 * e->oct_env);
+                    float u = px_abs(bq_run(&e->oct_bp, x));
+                    u = bq_run(&e->oct_uphp, u);
+                    x = x * e->oct_dry + s1 * e->oct_s1 + s2 * e->oct_s2 + u * e->oct_up;
+                } else {
+                    e->ps_buf[e->ps_w] = x;
+                    if (pit_t == PX_PIT_WHAMMY) {
+                        e->ps_r += (e->ps_rt - e->ps_r) * e->ps_glide;
+                        e->ps_inc[0] = (1.0f - e->ps_r) * e->ps_invW;
+                    }
+                    float y = x * e->ps_dry;
+                    for (int v = 0; v < e->ps_nv; v++)
+                        y += ps_voice_al(e->ps_buf, e->ps_w, &e->ps_ph[v], e->ps_off[v], e->ps_inc[v], e->ps_W[v]) * e->ps_lvl[v];
+                    if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
+                    x = y;
+                }
+            }
+        break;
+        case PX_B_SFX:
+            /* ---- special fx ---- */
+            if (p->on[PX_B_SFX]) {
+                switch (sfx_t) {
+                case PX_SFX_AUTOWAH: case PX_SFX_LFOWAH: {
+                    float t;
+                    if (sfx_t == PX_SFX_AUTOWAH) {
+                        float a = px_abs(x);
+                        e->sfx_env += (a - e->sfx_env) * (a > e->sfx_env ? e->sfx_a : e->sfx_b);
+                        t = e->sfx_env * e->sfx_c; if (t > 1.0f) t = 1.0f;
+                        t = 250.0f + t * t * e->sfx_d;
+                    } else {
+                        e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc);
+                        t = e->sfx_d + e->sfx_c * 0.5f * lfo_sin(e->sfx_ph);
+                        if (t < 0.0f) t = 0.0f;
+                        if (t > 1.0f) t = 1.0f;
+                        t = 350.0f + t * t * 1900.0f;
+                    }
+                    float f = 2.0f * PI_F * t / sr;
+                    float hp = x - e->sfx_lo - e->sfx_qd * e->sfx_bp;
+                    e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
+                    x = e->sfx_bp * 1.6f + e->sfx_lo * 0.15f;
+                } break;
+                case PX_SFX_RING: {
+                    e->sfx_ph2 = wrap1(e->sfx_ph2 + e->sfx_d);
+                    e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc * (1.0f + e->sfx_c * lfo_sin(e->sfx_ph2)));
+                    float c = sin_hq(e->sfx_ph);
+                    x = x * (1.0f - e->sfx_mix) + x * c * e->sfx_mix * 1.4f;
+                } break;
+                case PX_SFX_CRUSH:
+                    if (++e->crush_n >= e->crush_k) {
+                        float v = x * e->crush_q;
+                        e->crush_v = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->crush_q;
+                        e->crush_n = 0;
+                    }
+                    x = x + (e->crush_v - x) * e->sfx_mix;
+                    break;
+                case PX_SFX_SLICER: {
+                    e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc);
+                    int step = (int)(e->sfx_ph * 16.0f) & 15;
+                    float tg = ((e->sfx_pat >> (15 - step)) & 1) ? 1.0f : 1.0f - e->sfx_c;
+                    e->sfx_g += (tg - e->sfx_g) * e->sfx_a;
+                    if (e->sfx_g < 1e-6f) e->sfx_g = 0.0f;
+                    x *= e->sfx_g;
+                } break;
+                case PX_SFX_LOFI: {
+                    float y = bq_run(&e->sfx_f2, bq_run(&e->sfx_f1, x));
+                    y = px_tanh(y * e->sfx_c) * (1.5f / (1.0f + e->sfx_c * 0.2f));
+                    x = x + (y - x) * e->sfx_mix;
+                } break;
+                default: {                                 /* square synth */
                     float a = px_abs(x);
                     e->sfx_env += (a - e->sfx_env) * (a > e->sfx_env ? e->sfx_a : e->sfx_b);
-                    t = e->sfx_env * e->sfx_c; if (t > 1.0f) t = 1.0f;
-                    t = 250.0f + t * t * e->sfx_d;
-                } else {
-                    e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc);
-                    t = e->sfx_d + e->sfx_c * 0.5f * lfo_sin(e->sfx_ph);
-                    if (t < 0.0f) t = 0.0f;
-                    if (t > 1.0f) t = 1.0f;
-                    t = 350.0f + t * t * 1900.0f;
+                    float b = bq_run(&e->sfx_f1, x), h = e->sfx_env * 0.1f;
+                    if (e->sfx_prev <= 0.0f && b > h) {
+                        e->sfx_prev = 1.0f; e->sfx_ff = -e->sfx_ff;
+                    } else if (e->sfx_prev > 0.0f && b < -h) e->sfx_prev = -1.0f;
+                    float sq = e->sfx_prev * e->sfx_env, sub = e->sfx_ff * e->sfx_env;
+                    float s = sq + sub * e->sfx_d;
+                    float t = e->sfx_env * (2.0f + e->sfx_c * 30.0f); if (t > 1.0f) t = 1.0f;
+                    float f = 2.0f * PI_F * (120.0f + t * t * (300.0f + e->sfx_c * 3500.0f)) / sr;
+                    float hp = s - e->sfx_lo - e->sfx_qd * e->sfx_bp;
+                    e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
+                    x = x * (1.0f - e->sfx_mix) + e->sfx_lo * 2.0f * e->sfx_mix;
+                } break;
                 }
-                float f = 2.0f * PI_F * t / sr;
-                float hp = x - e->sfx_lo - e->sfx_qd * e->sfx_bp;
-                e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
-                x = e->sfx_bp * 1.6f + e->sfx_lo * 0.15f;
-            } break;
-            case PX_SFX_RING: {
-                e->sfx_ph2 = wrap1(e->sfx_ph2 + e->sfx_d);
-                e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc * (1.0f + e->sfx_c * lfo_sin(e->sfx_ph2)));
-                float c = sin_hq(e->sfx_ph);
-                x = x * (1.0f - e->sfx_mix) + x * c * e->sfx_mix * 1.4f;
-            } break;
-            case PX_SFX_CRUSH:
-                if (++e->crush_n >= e->crush_k) {
-                    float v = x * e->crush_q;
-                    e->crush_v = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->crush_q;
-                    e->crush_n = 0;
+            }
+        break;
+        case PX_B_SYN:
+            x = syn_run(e, syn_t, x);
+            break;
+        case PX_B_DRIVE:                               /* ---- drive (+ amp), oversampled ---- */
+            if (pair) {
+                float acc = 0.0f;
+                x = drive_pre(e, x);
+                if (amp_os) {
+                    x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
+                    x *= sag_pre;                      /* supply sag reaches the preamp too */
                 }
-                x = x + (e->crush_v - x) * e->sfx_mix;
-                break;
-            case PX_SFX_SLICER: {
-                e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc);
-                int step = (int)(e->sfx_ph * 16.0f) & 15;
-                float tg = ((e->sfx_pat >> (15 - step)) & 1) ? 1.0f : 1.0f - e->sfx_c;
-                e->sfx_g += (tg - e->sfx_g) * e->sfx_a;
-                if (e->sfx_g < 1e-6f) e->sfx_g = 0.0f;
-                x *= e->sfx_g;
-            } break;
-            case PX_SFX_LOFI: {
-                float y = bq_run(&e->sfx_f2, bq_run(&e->sfx_f1, x));
-                y = px_tanh(y * e->sfx_c) * (1.5f / (1.0f + e->sfx_c * 0.2f));
-                x = x + (y - x) * e->sfx_mix;
-            } break;
-            default: {                                 /* square synth */
-                float a = px_abs(x);
-                e->sfx_env += (a - e->sfx_env) * (a > e->sfx_env ? e->sfx_a : e->sfx_b);
-                float b = bq_run(&e->sfx_f1, x), h = e->sfx_env * 0.1f;
-                if (e->sfx_prev <= 0.0f && b > h) {
-                    e->sfx_prev = 1.0f; e->sfx_ff = -e->sfx_ff;
-                } else if (e->sfx_prev > 0.0f && b < -h) e->sfx_prev = -1.0f;
-                float sq = e->sfx_prev * e->sfx_env, sub = e->sfx_ff * e->sfx_env;
-                float s = sq + sub * e->sfx_d;
-                float t = e->sfx_env * (2.0f + e->sfx_c * 30.0f); if (t > 1.0f) t = 1.0f;
-                float f = 2.0f * PI_F * (120.0f + t * t * (300.0f + e->sfx_c * 3500.0f)) / sr;
-                float hp = s - e->sfx_lo - e->sfx_qd * e->sfx_bp;
-                e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
-                x = x * (1.0f - e->sfx_mix) + e->sfx_lo * 2.0f * e->sfx_mix;
-            } break;
-            }
-        }
-
-        /* ---- drive + amp, oversampled ---- */
-        if (os_on) {
-            float acc = 0.0f;
-            if (drv_on) x = drive_pre(e, x);
-            if (amp_os) {
-                x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
-                x *= sag_pre;                          /* supply sag reaches the preamp too */
-            }
-            for (int o = 0; o < PX_OVERSAMPLE; o++) {
-                float u = (o == 0) ? x * osg : 0.0f;
-                u = bq_run(&e->os_up, u);
-                u = bq_run(&e->os_up2, u);
-                if (drv_on) u = drive_run(e, u);
-                if (amp_os) for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, o == 0);   /* (bias: once a sample) */
-                u = bq_run(&e->os_dn, u);
-                acc = bq_run(&e->os_dn2, u);
-            }
-            x = acc;
-        }
-        if (amp_on) {
-            if (!amp_os) x = bq_run(&e->amp_tight, x);
-            x = bq_run(&e->ts_low, x);
-            x = bq_run(&e->ts_mid, x);
-            x = bq_run(&e->ts_high, x);
-            x = bq_run(&e->amp_voice, x);
-            x = bq_run(&e->amp_res, x);
-            x = bq_run(&e->amp_pres, x);
-            float a = px_abs(x);                       /* power amp + supply sag */
-            e->amp_sag += (a - e->amp_sag) * 0.002f;
-            x = px_tanh(x * e->amp_pw) * e->amp_pwn * sag_pa;
-            x = x * e->amp_out + e->dn;
-        }
-
-        /* ---- cabinet ---- */
-        if (p->on[PX_B_CAB] && e->cab_n) {
-            for (int c = 0; c < e->cab_n; c++) x = bq_run(&e->cab[c], x);
-            if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);   /* breakup, mic, back wave */
-            x *= e->cab_g;
-        }
-
-        /* ---- eq ---- */
-        if (p->on[PX_B_EQ]) for (int c = 0; c < e->eq_n; c++) x = bq_run(&e->eq[c], x);
-
-        /* ---- modulation ---- */
-        if (p->on[PX_B_MOD]) {
-            e->mod_ph = wrap1(e->mod_ph + e->mod_inc);
-            float l = lfo_sin(e->mod_ph);
-            switch (mod_t) {
-            case PX_MOD_CHORUS: case PX_MOD_DIMENSION: {
-                float tri = lfo_tri(e->mod_ph), wet;
-                e->mod_buf[e->mod_w] = x;
-                if (mod_t == PX_MOD_CHORUS) wet = mod_tap(e, e->mod_base + e->mod_sweep * (0.5f + 0.5f * tri));
-                else wet = 0.5f * (mod_tap(e, e->mod_base + e->mod_sweep * tri) + mod_tap(e, e->mod_base - e->mod_sweep * tri));
-                wet = bq_run(&e->mod_lp, wet);
-                if (++e->mod_w >= 2048) e->mod_w = 0;
-                x = x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
-            } break;
-            case PX_MOD_FLANGER: case PX_MOD_VIBRATO: {
-                float d = e->mod_base + e->mod_sweep * (0.5f + 0.5f * (mod_t == PX_MOD_FLANGER ? lfo_tri(e->mod_ph) : l));
-                float wet = mod_tap(e, d);
-                e->mod_buf[e->mod_w] = x + wet * e->mod_fb;
-                if (++e->mod_w >= 2048) e->mod_w = 0;
-                x = (mod_t == PX_MOD_VIBRATO) ? wet : x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
-            } break;
-            case PX_MOD_PHASE90: case PX_MOD_STONE: {
-                float u = 0.5f + 0.5f * l;
-                float fc = e->ph_lo + (e->ph_hi - e->ph_lo) * u * u;
-                float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
-                float s = x + e->ph_fb * e->mod_fb;
-                for (int i = 0; i < 4; i++) { float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y; }
-                e->ph_fb = s;
-                x = 0.5f * (x + s);
-            } break;
-            case PX_MOD_UNIVIBE: {
-                float tg = 0.5f + 0.5f * l;
-                e->uv_lamp += (tg - e->uv_lamp) * (tg > e->uv_lamp ? e->uv_up : e->uv_dn);
-                float fc0 = 60.0f + e->uv_lamp * e->mod_depth * 1200.0f, s = x;
-                for (int i = 0; i < 4; i++) {
-                    float fc = fc0 * e->uv_k[i]; if (fc > sr * 0.45f) fc = sr * 0.45f;
-                    float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
-                    float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y;
+                for (int o = 0; o < PX_OVERSAMPLE; o++) {
+                    float u = (o == 0) ? x * osg : 0.0f;
+                    u = bq_run(&e->os_up, u);
+                    u = bq_run(&e->os_up2, u);
+                    u = drive_run(e, u);
+                    if (amp_os) for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, o == 0);   /* (bias: once a sample) */
+                    u = bq_run(&e->os_dn, u);
+                    acc = bq_run(&e->os_dn2, u);
                 }
-                x = x * (1.0f - e->mod_mix) + s * e->mod_mix;
-            } break;
-            case PX_MOD_OPTOTREM: {
-                float tg = 1.0f - e->mod_depth * (0.5f + 0.5f * l);
-                e->trem_g += (tg - e->trem_g) * (tg < e->trem_g ? e->trem_att : e->trem_rel);
-                x *= e->trem_g;
-            } break;
-            case PX_MOD_BIASTREM: {
-                float sq = l > 0.0f ? 1.0f : -1.0f, sh = l + (sq - l) * e->mod_shape;
-                float g = 1.0f - e->mod_depth * (0.5f + 0.5f * sh);
-                x = px_tanh(x * g * 1.2f) * 0.85f;
-            } break;
-            case PX_MOD_HARMTREM: {
-                float lo = bq_run(&e->mod_lp, x), hi = x - lo;
-                float m = 0.5f + 0.5f * l;
-                x = lo * (1.0f - e->mod_depth * m) + hi * (1.0f - e->mod_depth * (1.0f - m));
-                x *= 1.0f + 0.5f * e->mod_depth;
-            } break;
-            case PX_MOD_ROTARY: {
-                e->rot_hs += (e->rot_ht - e->rot_hs) * e->rot_hk;
-                e->rot_ds += (e->rot_dt - e->rot_ds) * e->rot_dk;
-                e->rot_h = wrap1(e->rot_h + e->rot_hs / sr);
-                e->rot_d = wrap1(e->rot_d + e->rot_ds / sr);
-                float lo = bq_run(&e->mod_lp, x), hi = x - lo;
-                e->mod_buf[e->mod_w] = hi;
-                float hs = lfo_sin(e->rot_h);
-                float horn = mod_tap(e, (0.001f + 0.00044f * e->mod_depth * hs) * sr);
-                if (++e->mod_w >= 2048) e->mod_w = 0;
-                float hc = lfo_sin(wrap1(e->rot_h + 0.25f));
-                horn *= 1.0f - 0.35f * e->mod_depth * (0.5f + 0.5f * hc);
-                lo *= 1.0f - 0.25f * e->mod_depth * (0.5f + 0.5f * lfo_sin(e->rot_d));
-                x = lo * (1.5f - e->rot_bal) + horn * (0.5f + e->rot_bal);
-            } break;
-            default: break;
-            }
-        }
-
-        /* ---- delay ---- */
-        if (p->on[PX_B_DELAY]) {
-            e->dly_len += (e->dly_tgt - e->dly_len) * 0.0004f;   /* time glides (no click) */
-            float rd = e->dly_len, d, fsrc;
-            if (e->dly_wow > 0.0f || e->dly_mod > 0.0f) {
-                e->dly_ph = wrap1(e->dly_ph + e->dly_inc);
-                rd += (e->dly_wow + e->dly_mod) * (1.0f + lfo_sin(e->dly_ph));
-                if (e->dly_flut > 0.0f) { e->dly_ph2 = wrap1(e->dly_ph2 + e->dly_inc2); rd += e->dly_flut * (1.0f + lfo_sin(e->dly_ph2)); }
-            }
-            if (dly_t == PX_DLY_REVERSE) {
-                int G = (int)e->dly_len;
-                if (e->rev_cnt >= G) { e->rev_cnt = 0; e->rev_start = e->dly_w; }
-                int rp = e->rev_start - 1 - e->rev_cnt; if (rp < 0) rp += PX_DLY_N;
-                float c = (float)e->rev_cnt, wg = c * e->rev_xf, w2 = (float)(G - e->rev_cnt) * e->rev_xf;
-                if (wg > w2) wg = w2;
-                if (wg > 1.0f) wg = 1.0f;
-                d = e->dly_buf[rp] * wg;
-                e->rev_cnt++;
-                fsrc = d;
-            } else if (dly_t == PX_DLY_SPACE) {
-                float s = 0.0f;
-                if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f);
-                if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f);
-                if (e->dly_heads & 4) s += dly_tap(e, rd);
-                d = s * e->dly_hn; fsrc = s * e->dly_hf;   /* loop gain stays <= FDBK whatever the heads */
-            } else if (dly_t == PX_DLY_DUAL) {
-                float a = dly_tap(e, rd), b = dly_tap(e, rd * 0.75f);
-                d = 0.6f * (a + 0.8f * b); fsrc = a;
+                x = acc;
             } else {
-                d = dly_tap(e, rd); fsrc = d;
+                float acc = 0.0f;
+                x = drive_pre(e, x);
+                for (int o = 0; o < PX_OVERSAMPLE; o++) {
+                    float u = (o == 0) ? x * osg : 0.0f;
+                    u = bq_run(dub, bq_run(dua, u));
+                    u = drive_run(e, u);
+                    acc = bq_run(ddb, bq_run(dda, u));
+                }
+                x = acc;
             }
-            if (e->dly_q > 0.0f) {
-                float v = d * e->dly_q;
-                d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; fsrc = d;
+            break;
+        case PX_B_AMP:
+            if (!pair && amp_os) {                     /* the amp's own oversampled preamp */
+                float acc = 0.0f;
+                x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
+                x *= sag_pre;
+                for (int o = 0; o < PX_OVERSAMPLE; o++) {
+                    float u = (o == 0) ? x * osg : 0.0f;
+                    u = bq_run(&e->os_up, u);
+                    u = bq_run(&e->os_up2, u);
+                    for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, o == 0);
+                    u = bq_run(&e->os_dn, u);
+                    acc = bq_run(&e->os_dn2, u);
+                }
+                x = acc;
             }
-            float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
-            if (e->dly_sat > 0.0f) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
-            e->dly_buf[e->dly_w] = x + fbk;
-            if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
-            x = x + d * e->dly_mix;
-        }
-
-        /* ---- reverb ---- */
-        if (p->on[PX_B_REVERB]) {
-            float inr = x * 0.25f + e->sh_out, acc = 0.0f;
-            if (e->sp_on) {                            /* spring dispersion: chirpy all-pass chain */
-                float a = e->sp_a;
-                for (int i = 0; i < 6; i++) { float y = -a * inr + e->sp_z[i]; e->sp_z[i] = inr + a * y; inr = y; }
+            if (amp_on) {
+                if (!amp_os) x = bq_run(&e->amp_tight, x);
+                x = bq_run(&e->ts_low, x);
+                x = bq_run(&e->ts_mid, x);
+                x = bq_run(&e->ts_high, x);
+                x = bq_run(&e->amp_voice, x);
+                x = bq_run(&e->amp_res, x);
+                x = bq_run(&e->amp_pres, x);
+                float a = px_abs(x);                       /* power amp + supply sag */
+                e->amp_sag += (a - e->amp_sag) * 0.002f;
+                x = px_tanh(x * e->amp_pw) * e->amp_pwn * sag_pa;
+                x = x * e->amp_out + e->dn;
             }
-            for (int i = 0; i < 8; i++) {
-                float y = e->rv_c[i][e->rv_cw[i]];
-                e->rv_cs[i] = y + (e->rv_cs[i] - y) * e->rv_damp;
-                e->rv_c[i][e->rv_cw[i]] = inr + e->rv_cs[i] * e->rv_g[i];
-                if (++e->rv_cw[i] >= e->rv_cl[i]) e->rv_cw[i] = 0;
-                acc += y;
+        break;
+        case PX_B_CAB:
+            /* ---- cabinet ---- */
+            if (p->on[PX_B_CAB] && e->cab_n) {
+                for (int c = 0; c < e->cab_n; c++) x = bq_run(&e->cab[c], x);
+                if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);   /* breakup, mic, back wave */
+                x *= e->cab_g;
             }
-            acc *= 0.2f;
-            for (int i = 0; i < 4; i++) {
-                float b = e->rv_a[i][e->rv_aw[i]];
-                float o = b - e->rv_ag * acc;
-                e->rv_a[i][e->rv_aw[i]] = acc + e->rv_ag * o;
-                if (++e->rv_aw[i] >= e->rv_al[i]) e->rv_aw[i] = 0;
-                acc = o;
+        break;
+        case PX_B_EQ:
+            /* ---- eq ---- */
+            if (p->on[PX_B_EQ]) for (int c = 0; c < e->eq_n; c++) x = bq_run(&e->eq[c], x);
+        break;
+        case PX_B_MOD:
+            /* ---- modulation ---- */
+            if (p->on[PX_B_MOD]) {
+                e->mod_ph = wrap1(e->mod_ph + e->mod_inc);
+                float l = lfo_sin(e->mod_ph);
+                switch (mod_t) {
+                case PX_MOD_CHORUS: case PX_MOD_DIMENSION: {
+                    float tri = lfo_tri(e->mod_ph), wet;
+                    e->mod_buf[e->mod_w] = x;
+                    if (mod_t == PX_MOD_CHORUS) wet = mod_tap(e, e->mod_base + e->mod_sweep * (0.5f + 0.5f * tri));
+                    else wet = 0.5f * (mod_tap(e, e->mod_base + e->mod_sweep * tri) + mod_tap(e, e->mod_base - e->mod_sweep * tri));
+                    wet = bq_run(&e->mod_lp, wet);
+                    if (++e->mod_w >= 2048) e->mod_w = 0;
+                    x = x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
+                } break;
+                case PX_MOD_FLANGER: case PX_MOD_VIBRATO: {
+                    float d = e->mod_base + e->mod_sweep * (0.5f + 0.5f * (mod_t == PX_MOD_FLANGER ? lfo_tri(e->mod_ph) : l));
+                    float wet = mod_tap(e, d);
+                    e->mod_buf[e->mod_w] = x + wet * e->mod_fb;
+                    if (++e->mod_w >= 2048) e->mod_w = 0;
+                    x = (mod_t == PX_MOD_VIBRATO) ? wet : x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
+                } break;
+                case PX_MOD_PHASE90: case PX_MOD_STONE: {
+                    float u = 0.5f + 0.5f * l;
+                    float fc = e->ph_lo + (e->ph_hi - e->ph_lo) * u * u;
+                    float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
+                    float s = x + e->ph_fb * e->mod_fb;
+                    for (int i = 0; i < 4; i++) { float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y; }
+                    e->ph_fb = s;
+                    x = 0.5f * (x + s);
+                } break;
+                case PX_MOD_UNIVIBE: {
+                    float tg = 0.5f + 0.5f * l;
+                    e->uv_lamp += (tg - e->uv_lamp) * (tg > e->uv_lamp ? e->uv_up : e->uv_dn);
+                    float fc0 = 60.0f + e->uv_lamp * e->mod_depth * 1200.0f, s = x;
+                    for (int i = 0; i < 4; i++) {
+                        float fc = fc0 * e->uv_k[i]; if (fc > sr * 0.45f) fc = sr * 0.45f;
+                        float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
+                        float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y;
+                    }
+                    x = x * (1.0f - e->mod_mix) + s * e->mod_mix;
+                } break;
+                case PX_MOD_OPTOTREM: {
+                    float tg = 1.0f - e->mod_depth * (0.5f + 0.5f * l);
+                    e->trem_g += (tg - e->trem_g) * (tg < e->trem_g ? e->trem_att : e->trem_rel);
+                    x *= e->trem_g;
+                } break;
+                case PX_MOD_BIASTREM: {
+                    float sq = l > 0.0f ? 1.0f : -1.0f, sh = l + (sq - l) * e->mod_shape;
+                    float g = 1.0f - e->mod_depth * (0.5f + 0.5f * sh);
+                    x = px_tanh(x * g * 1.2f) * 0.85f;
+                } break;
+                case PX_MOD_HARMTREM: {
+                    float lo = bq_run(&e->mod_lp, x), hi = x - lo;
+                    float m = 0.5f + 0.5f * l;
+                    x = lo * (1.0f - e->mod_depth * m) + hi * (1.0f - e->mod_depth * (1.0f - m));
+                    x *= 1.0f + 0.5f * e->mod_depth;
+                } break;
+                case PX_MOD_ROTARY: {
+                    e->rot_hs += (e->rot_ht - e->rot_hs) * e->rot_hk;
+                    e->rot_ds += (e->rot_dt - e->rot_ds) * e->rot_dk;
+                    e->rot_h = wrap1(e->rot_h + e->rot_hs / sr);
+                    e->rot_d = wrap1(e->rot_d + e->rot_ds / sr);
+                    float lo = bq_run(&e->mod_lp, x), hi = x - lo;
+                    e->mod_buf[e->mod_w] = hi;
+                    float hs = lfo_sin(e->rot_h);
+                    float horn = mod_tap(e, (0.001f + 0.00044f * e->mod_depth * hs) * sr);
+                    if (++e->mod_w >= 2048) e->mod_w = 0;
+                    float hc = lfo_sin(wrap1(e->rot_h + 0.25f));
+                    horn *= 1.0f - 0.35f * e->mod_depth * (0.5f + 0.5f * hc);
+                    lo *= 1.0f - 0.25f * e->mod_depth * (0.5f + 0.5f * lfo_sin(e->rot_d));
+                    x = lo * (1.5f - e->rot_bal) + horn * (0.5f + e->rot_bal);
+                } break;
+                default: break;
+                }
             }
-            acc = bq_run(&e->rv_hp, bq_run(&e->rv_tone, acc));
-            if (e->rv_shim > 0.0f) {                   /* octave-up shifter in the feedback loop */
-                e->sh_buf[e->sh_w] = acc;
-                float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
-                if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
-                e->sh_lp += (s - e->sh_lp) * e->sh_k;
-                e->sh_out = e->sh_lp * e->rv_shim;
-            } else e->sh_out = 0.0f;
-            if (e->rv_gate) {
-                float a = px_abs(x);
-                e->rv_genv = a > e->rv_genv ? a : a + (e->rv_genv - a) * 0.999f;
-                if (e->rv_genv > 0.01f) e->rv_hold_n = (int)e->rv_hold;
-                float tg = 0.0f;
-                if (e->rv_hold_n > 0) { e->rv_hold_n--; tg = 1.0f; }
-                e->rv_gg += (tg - e->rv_gg) * (tg > e->rv_gg ? 0.05f : e->rv_gate_rel);
-                if (e->rv_gg < 1e-6f) e->rv_gg = 0.0f;
-                acc *= e->rv_gg;
+        break;
+        case PX_B_DELAY:
+            /* ---- delay ---- */
+            if (p->on[PX_B_DELAY]) {
+                e->dly_len += (e->dly_tgt - e->dly_len) * 0.0004f;   /* time glides (no click) */
+                float rd = e->dly_len, d, fsrc;
+                if (e->dly_wow > 0.0f || e->dly_mod > 0.0f) {
+                    e->dly_ph = wrap1(e->dly_ph + e->dly_inc);
+                    rd += (e->dly_wow + e->dly_mod) * (1.0f + lfo_sin(e->dly_ph));
+                    if (e->dly_flut > 0.0f) { e->dly_ph2 = wrap1(e->dly_ph2 + e->dly_inc2); rd += e->dly_flut * (1.0f + lfo_sin(e->dly_ph2)); }
+                }
+                if (dly_t == PX_DLY_REVERSE) {
+                    int G = (int)e->dly_len;
+                    if (e->rev_cnt >= G) { e->rev_cnt = 0; e->rev_start = e->dly_w; }
+                    int rp = e->rev_start - 1 - e->rev_cnt; if (rp < 0) rp += PX_DLY_N;
+                    float c = (float)e->rev_cnt, wg = c * e->rev_xf, w2 = (float)(G - e->rev_cnt) * e->rev_xf;
+                    if (wg > w2) wg = w2;
+                    if (wg > 1.0f) wg = 1.0f;
+                    d = e->dly_buf[rp] * wg;
+                    e->rev_cnt++;
+                    fsrc = d;
+                } else if (dly_t == PX_DLY_SPACE) {
+                    float s = 0.0f;
+                    if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f);
+                    if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f);
+                    if (e->dly_heads & 4) s += dly_tap(e, rd);
+                    d = s * e->dly_hn; fsrc = s * e->dly_hf;   /* loop gain stays <= FDBK whatever the heads */
+                } else if (dly_t == PX_DLY_DUAL) {
+                    float a = dly_tap(e, rd), b = dly_tap(e, rd * 0.75f);
+                    d = 0.6f * (a + 0.8f * b); fsrc = a;
+                } else {
+                    d = dly_tap(e, rd); fsrc = d;
+                }
+                if (e->dly_q > 0.0f) {
+                    float v = d * e->dly_q;
+                    d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; fsrc = d;
+                }
+                float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
+                if (e->dly_sat > 0.0f) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
+                e->dly_buf[e->dly_w] = x + fbk;
+                if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
+                x = x + d * e->dly_mix;
             }
-            x = x * (1.0f - 0.4f * e->rv_mix) + acc * e->rv_mix * 1.4f;
+        break;
+        case PX_B_REVERB:
+            /* ---- reverb ---- */
+            if (p->on[PX_B_REVERB]) {
+                float inr = x * 0.25f + e->sh_out, acc = 0.0f;
+                if (e->sp_on) {                            /* spring dispersion: chirpy all-pass chain */
+                    float a = e->sp_a;
+                    for (int i = 0; i < 6; i++) { float y = -a * inr + e->sp_z[i]; e->sp_z[i] = inr + a * y; inr = y; }
+                }
+                for (int i = 0; i < 8; i++) {
+                    float y = e->rv_c[i][e->rv_cw[i]];
+                    e->rv_cs[i] = y + (e->rv_cs[i] - y) * e->rv_damp;
+                    e->rv_c[i][e->rv_cw[i]] = inr + e->rv_cs[i] * e->rv_g[i];
+                    if (++e->rv_cw[i] >= e->rv_cl[i]) e->rv_cw[i] = 0;
+                    acc += y;
+                }
+                acc *= 0.2f;
+                for (int i = 0; i < 4; i++) {
+                    float b = e->rv_a[i][e->rv_aw[i]];
+                    float o = b - e->rv_ag * acc;
+                    e->rv_a[i][e->rv_aw[i]] = acc + e->rv_ag * o;
+                    if (++e->rv_aw[i] >= e->rv_al[i]) e->rv_aw[i] = 0;
+                    acc = o;
+                }
+                acc = bq_run(&e->rv_hp, bq_run(&e->rv_tone, acc));
+                if (e->rv_shim > 0.0f) {                   /* octave-up shifter in the feedback loop */
+                    e->sh_buf[e->sh_w] = acc;
+                    float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
+                    if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
+                    e->sh_lp += (s - e->sh_lp) * e->sh_k;
+                    e->sh_out = e->sh_lp * e->rv_shim;
+                } else e->sh_out = 0.0f;
+                if (e->rv_gate) {
+                    float a = px_abs(x);
+                    e->rv_genv = a > e->rv_genv ? a : a + (e->rv_genv - a) * 0.999f;
+                    if (e->rv_genv > 0.01f) e->rv_hold_n = (int)e->rv_hold;
+                    float tg = 0.0f;
+                    if (e->rv_hold_n > 0) { e->rv_hold_n--; tg = 1.0f; }
+                    e->rv_gg += (tg - e->rv_gg) * (tg > e->rv_gg ? 0.05f : e->rv_gate_rel);
+                    if (e->rv_gg < 1e-6f) e->rv_gg = 0.0f;
+                    acc *= e->rv_gg;
+                }
+                x = x * (1.0f - 0.4f * e->rv_mix) + acc * e->rv_mix * 1.4f;
+            }
+        break;
+        default: break;
         }
 
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
