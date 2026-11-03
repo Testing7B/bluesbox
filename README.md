@@ -35,11 +35,11 @@ Open the installer page (GitHub Pages of this repository) in **Chrome or Edge** 
 USB, press **Connect**, then **Install**. The page also takes the pedal back to the official firmware: pick the
 official `.fwsc` from the maker, it is checked in the browser.
 
-Updating OpenPocket → a newer OpenPocket from the page works on a real Pocket X (tested 2026-11-02); your saved
-presets are kept. The first install over the official firmware is still **experimental**: the official firmware's update entry has not yet
-been tried with this installer on a real Pocket X / BlackBox (it is the same JieLi update system as the M-VAVE FM-1,
-where this method is used by Felucca, CLIPPER and SLOOP). Keep a backup and the SD-card recovery at hand
-(`flash/`: fm1buddy on an ESP32-S3, `makeimage.bat`).
+On the **Donner Pocket X** the page works: updating OpenPocket → a newer OpenPocket is tested (2026-11-02, your saved
+presets are kept), and other Pocket X owners have installed it from the page. On the **M-VAVE BlackBox** it has not
+been tried yet: install at your own risk. It is the same JieLi update system as the M-VAVE FM-1, where this method is
+used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
+`makeimage.bat`).
 
 ## Build
 
@@ -93,8 +93,8 @@ mise à jour), interface couleur sans clignotement, accordeur.
 
 - **Installer** : ouvre la page d'installation dans Chrome ou Edge, branche la pédale en USB, **Connecter**, puis
   **Installer**. Retour au firmware officiel : choisis le fichier `.fwsc` officiel, il est vérifié dans le navigateur.
-  La mise à jour OpenPocket → OpenPocket par la page fonctionne sur une vraie Pocket X (testée le 2026-11-02).
-  La première installation par-dessus le firmware officiel est **expérimentale** : garde la récupération par carte SD.
+  Sur la **Pocket X**, la page fonctionne (mise à jour testée le 2026-11-02, presets gardés ; d'autres utilisateurs
+  l'ont installée). Sur la **BlackBox**, pas encore essayé : à tes risques. Garde la récupération par carte SD.
 - **Compiler** : `build.bat` (WSL + toolchain JieLi, installé une fois par `firmware/setup.sh`).
 - **Publier** : `PUBLISH-GITHUB.bat` (code source, release avec les paquets, page d'installation sur GitHub Pages).
 - **Tester sans pédale** : `tests/run_tests.sh`.

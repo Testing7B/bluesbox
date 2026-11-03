@@ -72,7 +72,18 @@ git remote remove origin *> $null
 git remote add origin "https://github.com/$full.git"
 Step "Pushing the main branch to $full"
 git push -u origin main
-if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "git push was refused ($full may have another history). Nothing was forced: PUBLISH-GITHUB.bat -Repo another-name" }
+if ($LASTEXITCODE -ne 0) {
+  # commits made on GitHub since (e.g. the README edited on the site): put this version on top of them, never force
+  Step "GitHub has changes that are not in the bundle (edits made on the site): adding this version on top of them"
+  git fetch --quiet origin main
+  git -c user.name="$Owner" -c user.email="$email" rebase origin/main
+  if ($LASTEXITCODE -ne 0) {
+    git rebase --abort *> $null
+    Pop-Location; Fail "the changes on GitHub conflict with this version (same lines edited). Nothing was forced."
+  }
+  git push -u origin main
+  if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "git push was refused ($full may have another history). Nothing was forced: PUBLISH-GITHUB.bat -Repo another-name" }
+}
 if (-not "$(git ls-remote --tags origin "refs/tags/$Tag")".Trim()) {
   git -c user.name="$Owner" -c user.email="$email" tag -a $Tag -m "OpenPocket $Tag"
   git push origin $Tag
