@@ -83,6 +83,7 @@ footer a,.note a{color:inherit}
     <h2><b>2</b><span data-t="s2"></span></h2>
     <p class="note"><span data-t="s2note"></span> <strong id="pkgver">…</strong></p>
     <p class="note warnbox" data-t="s2warn"></p>
+    <p class="msg err" id="bbwarn" hidden data-t="bbwarn"></p>
     <div class="row">
       <button class="go" id="install" disabled data-t="install"></button>
       <button class="alt" id="resume" hidden data-t="resume"></button>
@@ -145,6 +146,7 @@ const T = {
     foot1: "OpenPocket is an independent project, not affiliated with Donner or M-VAVE. Install at your own risk. Source code: GPL-3.0.",
     foot2: "Update protocol and loader from Felucca and felucca-bsp (Hügelton Instruments, GPL-3.0 / MPL-2.0). JieLi AC79 SDK files: Apache-2.0. Inter typeface: SIL OFL 1.1.",
     e_notfound: "Pedal not found. Check the cable (data), close other MIDI apps, then try again.",
+    bbwarn: "The M-VAVE BlackBox is not supported yet: with OpenPocket it restarts in a loop a moment after starting (issue #1 on GitHub). Installing on a BlackBox is disabled until this is fixed. If your BlackBox already runs OpenPocket, use step 3 to put its official firmware back.",
     e_model: "This package is not for this pedal: ", e_lost: "The pedal was disconnected. Plug it back in and press Resume.",
     e_stopped: "The pedal stopped answering. ", e_noloader: "The update loader did not appear. Replug the cable, then Resume.",
     e_noreturn: "The pedal did not come back: switch it off and on.", e_mismatch: "Written, but the pedal reports: ",
@@ -193,7 +195,9 @@ function showDev(d) {
   $("d-model").textContent = ota ? "—" : (id.model === "PocketX" ? "Donner Pocket X" : "M-VAVE BlackBox");
   $("d-fw").textContent = ota ? `${t("loader")} (${id.text})` : IS_OPENPOCKET(id) ? `${t("opfw")} v${id.version - 900} (${id.text})` : `${t("official")} ${String(id.version).padStart(3, "0")} (${id.text})`;
   $("d-port").textContent = d.name;
-  $("install").disabled = busy || ota || !manifest;
+  const bb = id.model === "BlackBox";               /* not supported yet: boot loop (issue #1) */
+  $("bbwarn").hidden = !bb;
+  $("install").disabled = busy || ota || !manifest || bb;
   $("resume").hidden = !ota;
   $("uboot").disabled = busy || !IS_OPENPOCKET(id);
   $("backoff").disabled = busy || ota || !official || official.model !== id.model || (!official.known && !$("offok").checked);
