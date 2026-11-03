@@ -1,4 +1,4 @@
-/* police 8x8 ASCII 0x20-0x7E (générée, LiberationMono-Bold) */
+/* 8x8 ASCII font 0x20-0x7E (generated, LiberationMono-Bold) */
 #ifndef FONT8X8_H
 #define FONT8X8_H
 #include <stdint.h>

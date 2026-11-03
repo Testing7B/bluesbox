@@ -1,11 +1,10 @@
 # OpenPocket
 install here "experimental version only tested on the donner pocket-x. AT YOUR OWN RISK for the m-vave blackbox" : https://isod89.github.io/openpocket/
+
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
 
 ![OpenPocket screens](docs/ui-v23.png)
-
-*[Français plus bas](#français)*
 
 ## What it does
 
@@ -27,7 +26,8 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   channel only carries noise: mixing it in was the constant hiss on high-gain amps)
 - **USB update**: the pedal shows up as a USB-MIDI device and takes updates from the [web installer](docs/index.html)
 
-Full list of models and controls (French): [docs/SONS-ET-COMMANDES.md](docs/SONS-ET-COMMANDES.md).
+Full list of models, presets and controls: [docs/SOUNDS-AND-CONTROLS.md](docs/SOUNDS-AND-CONTROLS.md).
+Development notes (how the audio path was found, what changed in each version): [docs/AUDIO-SDK.md](docs/AUDIO-SDK.md).
 
 ## Install
 
@@ -51,7 +51,8 @@ Windows: install WSL and the JieLi toolchain once (`wsl bash firmware/setup.sh`)
 - `fm1-300.bin` only if your factory backup `fm1-1.bin` is in the folder (SD-card recovery image).
 
 Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
-**`PUBLISH-GITHUB.bat`** then publishes the source, a release with the packages, and the installer on GitHub Pages.
+**`PUBLISH-GITHUB.bat`** does everything in one click: it runs `build.bat`, then publishes the source, a release with
+the packages, and the installer on GitHub Pages (with your own `git` / `gh` and GitHub login; never a forced push).
 
 ## Test (no pedal needed)
 
@@ -82,20 +83,3 @@ Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
 GPL-3.0-only. Board support and loader: MPL-2.0 (felucca-bsp). JieLi SDK files: Apache-2.0. Inter: OFL 1.1.
 See [NOTICE.md](NOTICE.md). Not affiliated with Donner or M-VAVE. Install at your own risk.
 
----
-
-## Français
-
-**OpenPocket** est un firmware multi-effets guitare open source pour la **Donner Pocket X** et la **M-VAVE BlackBox** :
-11 blocs, 118 modèles (29 amplis, 15 baffles, 27 drives/fuzz/boosts, 11 modulations, 8 delays, 8 reverbs, effets de
-hauteur et effets spéciaux), 42 emplacements de presets enregistrables (appui long sur PUSH = SAVE, gardés après une
-mise à jour), interface couleur sans clignotement, accordeur.
-
-- **Installer** : ouvre la page d'installation dans Chrome ou Edge, branche la pédale en USB, **Connecter**, puis
-  **Installer**. Retour au firmware officiel : choisis le fichier `.fwsc` officiel, il est vérifié dans le navigateur.
-  Sur la **Pocket X**, la page fonctionne (mise à jour testée le 2026-11-02, presets gardés ; d'autres utilisateurs
-  l'ont installée). Sur la **BlackBox**, pas encore essayé : à tes risques. Garde la récupération par carte SD.
-- **Compiler** : `build.bat` (WSL + toolchain JieLi, installé une fois par `firmware/setup.sh`).
-- **Publier** : `PUBLISH-GITHUB.bat` (code source, release avec les paquets, page d'installation sur GitHub Pages).
-- **Tester sans pédale** : `tests/run_tests.sh`.
-- Liste complète des sons et des commandes : [docs/SONS-ET-COMMANDES.md](docs/SONS-ET-COMMANDES.md).

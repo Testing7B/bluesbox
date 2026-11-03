@@ -96,8 +96,6 @@ ok(/PocketX_924/.test(msg), `result: ${msg}`);
 await page.waitForTimeout(1500);
 ok(/OpenPocket v24/.test(await page.textContent("#d-fw")), "the page now sees OpenPocket v24");
 await page.screenshot({ path: join(OUT, "page_3_done.png"), fullPage: true });
-await page.click('button[data-lang="en"]');
-await page.screenshot({ path: join(OUT, "page_4_en_light.png"), fullPage: true });
 ok(simLog.some((l) => /step2 rc=0/.test(l)), "the simulated pedal wrote the new app");
 await browser.close();
 sim.stdin.end();

@@ -1,4 +1,4 @@
-/* OpenPocket X — en-tête math minimal (implémentation : ../px_math.c) */
+/* OpenPocket X — minimal math header (implementation: ../px_math.c) */
 #pragma once
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

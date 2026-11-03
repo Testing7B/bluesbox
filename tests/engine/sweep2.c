@@ -1,5 +1,5 @@
-/* balaye tous les blocs x types x réglages (0/50/100) avec la libm de la pédale ; change les réglages en cours
- * de jeu (comme l'UI) ; détecte NaN/Inf/explosion */
+/* sweeps every block x type x setting (0/50/100) with the pedal's libm; changes settings while playing
+ * (like the UI); detects NaN/Inf/blow-up */
 #include <stdio.h>
 #include <string.h>
 #include "px_dsp.h"
@@ -27,18 +27,18 @@ int main(void){
       p.p[blk][0] = V[a]; p.p[blk][1] = V[b]; p.p[blk][2] = V[c]; p.p[blk][3] = V[(a+c)%3]; p.p[blk][4] = V[(b+c)%3];
       p.p[PX_B_AMP][0] = V[(a+b)%3];
       px_engine_set(&e, &p); n++;
-      if (run(30, 1.0f) | run(10, 0.0f) | run(10, 3.0f)) {   /* signal, silence, très fort */
-        bad++; if (bad < 15) printf("PROBLEME : %s / %s  p=%d %d %d\n", px_block_name(blk), px_type_name(blk,t), V[a],V[b],V[c]);
+      if (run(30, 1.0f) | run(10, 0.0f) | run(10, 3.0f)) {   /* signal, silence, very loud */
+        bad++; if (bad < 15) printf("PROBLEM: %s / %s  p=%d %d %d\n", px_block_name(blk), px_type_name(blk,t), V[a],V[b],V[c]);
         px_engine_init(&e, 44100.0f);
       }
     }
-  /* tous les blocs ensemble, tous les presets, réglages extrêmes */
+  /* all blocks together, every preset, extreme settings */
   for (int pr = 0; pr < px_preset_count(); pr++) for (int x = 0; x < 3; x++) {
       px_preset_t p; px_preset_factory(&p, pr);
       for (int z = 0; z < PX_NBLK; z++) { p.on[z] = 1; for (int k = 0; k < 5; k++) p.p[z][k] = V[(x+k+z)%3]; }
       px_engine_set(&e, &p); n++;
-      if (run(40, 1.0f) | run(20, 0.0f)) { bad++; printf("PROBLEME tout ON preset %d x%d\n", pr, x); px_engine_init(&e,44100.0f); }
+      if (run(40, 1.0f) | run(20, 0.0f)) { bad++; printf("PROBLEM all ON preset %d x%d\n", pr, x); px_engine_init(&e,44100.0f); }
   }
-  printf("%ld configurations testees, %ld problemes\n", n, bad);
+  printf("%ld configurations tested, %ld problems\n", n, bad);
   return bad != 0;
 }

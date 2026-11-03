@@ -34,35 +34,35 @@ static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 #define C_OFF  0x2124
 #define C_LINE 0x2945
 static const uint16_t BLK_COL[PX_NBLK] = {
-    0x5D9F, 0x5D9F,   /* GT, CMP : bleu (dynamique) */
-    0xC31F,           /* PIT : violet */
-    0xFB1A,           /* SFX : rose */
-    0xFE00,           /* DRV : jaune */
-    0xFB20,           /* AMP : orange */
-    0xCC4A,           /* CAB : beige */
-    0x6FE8,           /* EQ : vert clair */
-    0x7D5F,           /* MOD : lavande */
-    0x47FF,           /* DLY : cyan */
-    0x8FE0,           /* REV : vert */
+    0x5D9F, 0x5D9F,   /* GT, CMP: blue (dynamics) */
+    0xC31F,           /* PIT: purple */
+    0xFB1A,           /* SFX: pink */
+    0xFE00,           /* DRV: yellow */
+    0xFB20,           /* AMP: orange */
+    0xCC4A,           /* CAB: beige */
+    0x6FE8,           /* EQ: light green */
+    0x7D5F,           /* MOD: lavender */
+    0x47FF,           /* DLY: cyan */
+    0x8FE0,           /* REV: green */
 };
 
-/* géométrie (hauteurs des polices : FT_SM 15 px, FT_MD 23 px) */
-#define H_Y      4u                    /* en-tête */
-#define T_Y0     36u                   /* 1re rangée de tuiles */
+/* geometry (font heights: FT_SM 15 px, FT_MD 23 px) */
+#define H_Y      4u                    /* header */
+#define T_Y0     36u                   /* 1st row of tiles */
 #define T_DY     32u
 #define T_COLS   6
 #define T_PITCH  39u
 #define T_W      35u
 #define T_H      26u
-#define D_Y0     100u                  /* nom du bloc + ON/OFF */
-#define D_TYPE   118u                  /* type (gras) */
-#define D_P0     144u                  /* 1re ligne de réglage */
+#define D_Y0     100u                  /* block name + ON/OFF */
+#define D_TYPE   118u                  /* type (bold) */
+#define D_P0     144u                  /* 1st parameter row */
 #define D_ROW    16u
-#define F_Y      225u                  /* pied de page */
+#define F_Y      225u                  /* footer */
 #define BAR_X    78u
 #define BAR_W    114u
 
-static void num3(char *b, uint32_t v)  /* nombre sans zéros inutiles */
+static void num3(char *b, uint32_t v)  /* number without leading zeros */
 {
     int i = 0;
     if (v >= 100u) b[i++] = (char)('0' + v / 100u);
@@ -70,7 +70,7 @@ static void num3(char *b, uint32_t v)  /* nombre sans zéros inutiles */
     b[i++] = (char)('0' + v % 10u); b[i] = 0;
 }
 
-/* ---- cache de ce qui est affiché ---- */
+/* ---- cache of what is on screen ---- */
 static struct {
     int full;
     uint32_t preset, vol; char name[14];
@@ -81,7 +81,7 @@ static struct {
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
 
-/* ---- en-tête ---- */
+/* ---- header ---- */
 static void draw_header(int force)
 {
     if (force || uc.preset != cur_preset) {
@@ -110,7 +110,7 @@ static void draw_header(int force)
     }
 }
 
-/* ---- tuiles de la chaîne ---- */
+/* ---- chain tiles ---- */
 static uint32_t tile_x(int i) { return 4u + (uint32_t)(i % T_COLS) * T_PITCH; }
 static uint32_t tile_y(int i) { return T_Y0 + (uint32_t)(i / T_COLS) * T_DY; }
 static void draw_tile(int i)
@@ -119,11 +119,11 @@ static void draw_tile(int i)
     int on = PRESET.on[i] != 0, sel = (i == (int)ui_blk);
     uint16_t bg = on ? BLK_COL[i] : C_OFF, fg = on ? BLK : UI_DIM;
     uint16_t ol = sel ? WHT : UI_BG;
-    lcd_rect(x - 1u, y - 1u, T_W + 2u, 1, ol); lcd_rect(x - 1u, y + T_H, T_W + 2u, 1, ol);   /* contour 1 px */
+    lcd_rect(x - 1u, y - 1u, T_W + 2u, 1, ol); lcd_rect(x - 1u, y + T_H, T_W + 2u, 1, ol);   /* 1 px outline */
     lcd_rect(x - 1u, y, 1, T_H, ol);           lcd_rect(x + T_W, y, 1, T_H, ol);
-    lcd_rect(x, y, T_W, 5, bg); lcd_rect(x, y + 20u, T_W, T_H - 20u, bg);                  /* fond autour du texte */
+    lcd_rect(x, y, T_W, 5, bg); lcd_rect(x, y + 20u, T_W, T_H - 20u, bg);                  /* background around the text */
     ft_box(x, y + 5u, T_W, px_block_label(i), &FT_SM, fg, bg, 1);
-    lcd_rect(x, y + T_H + 2u, T_W, 2, sel ? WHT : UI_BG);                                  /* trait sous la tuile choisie */
+    lcd_rect(x, y + T_H + 2u, T_W, 2, sel ? WHT : UI_BG);                                  /* underline below the selected tile */
     uc.tile_on[i] = (uint8_t)on; uc.tile_sel[i] = (uint8_t)sel;
 }
 static void draw_tiles(int force)
@@ -134,9 +134,9 @@ static void draw_tiles(int force)
     }
 }
 
-/* ---- page du bloc ---- */
+/* ---- block page ---- */
 static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
-static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = réglages */
+static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = parameters */
 
 static void draw_onoff(void)
 {
@@ -153,7 +153,7 @@ static void draw_type(void)
     ft_box(22, D_TYPE, 196, px_type_name((int)ui_blk, PRESET.type[ui_blk]), &FT_MD, fg, bg, 1);
     ft_box(218, D_TYPE, 22, sel ? ">" : "", &FT_MD, UI_ACC, bg, 1);
 }
-static void draw_bar(int k)            /* jauge + chiffre : c'est la seule chose qui bouge en réglage */
+static void draw_bar(int k)            /* bar + number: the only thing that moves while adjusting */
 {
     uint32_t y = D_P0 + (uint32_t)k * D_ROW;
     int sel = (ui_mode != M_CHAIN && (int)ui_item == k + 2), ed = sel && ui_mode == M_EDIT;
@@ -167,7 +167,7 @@ static void draw_bar(int k)            /* jauge + chiffre : c'est la seule chose
     ft_box(196, y, 40, b, &FT_SM, ed ? UI_ACC : UI_TXT, bg, 2);
     uc.val[k] = (uint8_t)v;
 }
-static void draw_row(int k)            /* une ligne de réglage complète, sans effacement global */
+static void draw_row(int k)            /* one full parameter row, without a global clear */
 {
     uint32_t y = D_P0 + (uint32_t)k * D_ROW;
     if (k >= ui_np()) { lcd_rect(0, y, 240, D_ROW, UI_BG); return; }
@@ -198,7 +198,7 @@ static void draw_detail(int force)
         uc.blk = (int)ui_blk; uc.type = type; uc.np = np; uc.item = (int)ui_item; uc.mode = (int)ui_mode; uc.on = on;
         return;
     }
-    if (uc.item != (int)ui_item || uc.mode != (int)ui_mode) {   /* surbrillance déplacée : 2 lignes seulement */
+    if (uc.item != (int)ui_item || uc.mode != (int)ui_mode) {   /* highlight moved: 2 rows only */
         int old = uc.item;
         uc.item = (int)ui_item; uc.mode = (int)ui_mode;
         if (old != (int)ui_item) draw_item(old);
@@ -208,7 +208,7 @@ static void draw_detail(int force)
     for (int k = 0; k < np; k++) if (uc.val[k] != PRESET.p[ui_blk][k]) draw_bar(k);
 }
 
-/* ---- pied de page : aide (la charge DSP est dessinée par la boucle principale, à droite) ---- */
+/* ---- footer: help (the DSP load is drawn by the main loop, on the right) ---- */
 static void draw_hint(int force)
 {
     int h = (int)ui_mode;
@@ -218,19 +218,19 @@ static void draw_hint(int force)
     uc.hint = h;
 }
 
-/* ---- rendu : n'envoie à l'écran que ce qui a changé ---- */
+/* ---- render: sends only what changed to the screen ---- */
 static void ui_render(void)
 {
     if (ui_mode == M_TUNER) return;
     if (ui_mode == M_SAVE) { save_draw(); return; }
     int f = uc.full;
-    if (f) {                                                     /* changement de page : fond posé une seule fois */
+    if (f) {                                                     /* page change: background drawn only once */
         lcd_rect(0, 0, 240, H_Y, UI_BG); lcd_rect(0, H_Y + 23u, 240, 3, UI_BG);
         lcd_rect(190, H_Y, 50, 4, UI_BG); lcd_rect(190, H_Y + 19u, 50, 4, UI_BG); lcd_rect(0, H_Y, 4, 23, UI_BG);
         lcd_rect(0, 30, 240, 1, C_LINE);
         lcd_rect(0, 31, 240, 4, UI_BG);
         lcd_rect(0, 35, 3, 2u * T_DY, UI_BG); lcd_rect(235, 35, 5, 2u * T_DY, UI_BG);
-        lcd_rect(tile_x(PX_NBLK) - 1u, tile_y(PX_NBLK) - 1u, 240u - (tile_x(PX_NBLK) - 1u), T_H + 4u, UI_BG);   /* case vide */
+        lcd_rect(tile_x(PX_NBLK) - 1u, tile_y(PX_NBLK) - 1u, 240u - (tile_x(PX_NBLK) - 1u), T_H + 4u, UI_BG);   /* empty cell */
         lcd_rect(0, T_Y0 + T_DY + T_H + 1u, 240, 1, UI_BG);          /* row 95: between the tiles and their underline */
         lcd_rect(0, D_Y0 - 3u, 240, 1, C_LINE); lcd_rect(0, D_Y0 - 2u, 240, 2, UI_BG);
         lcd_rect(0, D_Y0, 6, 15, UI_BG); lcd_rect(0, D_Y0 + 15u, 240, D_TYPE - D_Y0 - 15u, UI_BG);
@@ -247,7 +247,7 @@ static void ui_render(void)
 /* ---- actions ---- */
 static void ui_enter_block(uint32_t b)
 {
-    if (ui_blk == b && ui_mode != M_CHAIN) PRESET.on[b] ^= 1u;   /* 2e appui sur le même bouton : on/off */
+    if (ui_blk == b && ui_mode != M_CHAIN) PRESET.on[b] ^= 1u;   /* 2nd press on the same button: on/off */
     ui_blk = b; ui_mode = M_BLOCK; ui_item = 0;
 }
 static void ui_knob(int dd, int fast)
@@ -348,7 +348,7 @@ static void ui_preset_step(int dd)
     if (ui_mode == M_EDIT) ui_mode = M_BLOCK;
     if ((int)ui_item >= ui_nitems()) ui_item = 0;
 }
-static void ui_fx_cycle(void)          /* FX : DRV -> SFX -> PIT -> CMP -> GT -> EQ */
+static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> PIT -> CMP -> GT -> EQ */
 {
     static const uint8_t FXB[6] = {PX_B_DRIVE, PX_B_SFX, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
     uint32_t nx = PX_B_DRIVE;
@@ -356,7 +356,7 @@ static void ui_fx_cycle(void)          /* FX : DRV -> SFX -> PIT -> CMP -> GT ->
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
 }
 
-/* ===================================================== accordeur ======== */
+/* ===================================================== tuner ======== */
 static const char *NOTE_N[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static int tn_last_note = -2, tn_last_x = -1, tn_last_c = 1000, tn_last_lv = 0x7FFF;
 /* "IN L -82  R -84 dB": input level of each I2S channel, dB below full scale (24-bit, v26 diagnostic) */
@@ -395,12 +395,12 @@ static void tuner_open(void)
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
 static void tuner_close(void) { ui_mode = M_CHAIN; ui_invalidate(); lcd_rect(0, 0, 240, 240, UI_BG); lcd_rect(0, 224, 240, 16, UI_PANEL); }
-static void tuner_draw(float hz)       /* hz <= 0 : pas de note */
+static void tuner_draw(float hz)       /* hz <= 0: no note */
 {
     int note = -1, c = 0; float cents = 0.0f;
     tuner_level();
     if (hz > 20.0f) {
-        float st = 12.0f * logf(hz / 440.0f) * 1.44269504f;   /* demi-tons depuis A4 = 440 Hz */
+        float st = 12.0f * logf(hz / 440.0f) * 1.44269504f;   /* semitones from A4 = 440 Hz */
         int r = (int)(st + (st >= 0 ? 0.5f : -0.5f));
         cents = (st - (float)r) * 100.0f;
         note = ((r % 12) + 12 + 9) % 12;                      /* A = 9 */
@@ -421,7 +421,7 @@ static void tuner_draw(float hz)       /* hz <= 0 : pas de note */
     }
     int x = -1;
     if (note >= 0) { x = 120 + c * 2; if (x < 22) x = 22; if (x > 216) x = 216; }
-    if (x != tn_last_x) {                                     /* aiguille : effacer l'ancienne, poser la nouvelle */
+    if (x != tn_last_x) {                                     /* needle: erase the old one, draw the new one */
         if (tn_last_x >= 0) {
             lcd_rect((uint32_t)tn_last_x - 2u, TN_BAR_Y, 5, 10, C_OFF);
             if (tn_last_x >= 116 && tn_last_x <= 124) lcd_rect(119, TN_BAR_Y - 8u, 2, 26, UI_TXT);

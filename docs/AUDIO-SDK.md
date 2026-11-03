@@ -1,171 +1,153 @@
-# Audio via le SDK officiel JieLi (AC79 / WL82) — Apache 2.0
+# Audio through the official JieLi SDK (AC79 / WL82) — development notes
 
-Source : SDK officiel JieLi `fw-AC79_AIoT_SDK` V1.2.0 (Gitee : gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK).
-Licence Apache 2.0 → réutilisable dans openpocket (GPL-3.0 compatible dans ce sens).
+Source: JieLi's official SDK `fw-AC79_AIoT_SDK` V1.2.0 (Gitee: gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK).
+Apache 2.0 licence → reusable in OpenPocket (compatible with GPL-3.0 in that direction).
 
-## Ce qu'on a
-- `include_lib/driver/cpu/wl82/asm/iis.h` — API I2S (ALNK) : `iis_open`, `iis_set_sample_rate`,
-  `iis_set_enc_data_handler` (entrée), `iis_set_dec_data_handler` (sortie), `iis_irq_handler`.
-- `include_lib/driver/cpu/wl82/asm/WL82.h` — carte officielle des registres (ALNK0 0x12E00,
-  ALNK1 0x15100, IOMAP 0x51000+, CLOCK 0x10000, ANA 0x11900).
-- `cpu/wl82/liba/cpu.a` → `iis.c.o` = **bitcode LLVM** produit par clang 4.0.1 (= notre toolchain).
-  Compile tel quel : `clang -target pi32v2 -Os -c -x ir iis.bc -o iis.o` (~5 Ko).
-  Dépendances à fournir : malloc/free, memset, gpio_direction_input/output, gpio_set_die,
-  gpio_set_pull_up/down, log_print/printf (no-op), log_tag_const_{d,e,i}_AUDIO_IIS (u8 = 0),
-  os_current_task_rom, cpu_assert_debug, config_asser, P33_SYSTEM_RESET.
-  L'IRQ n'est pas enregistrée par le pilote : à nous d'appeler `iis_irq_handler(0)` depuis l'ISR ALNK0.
-- Le pilote règle lui-même la famille d'horloge audio (44.1k / 48k) via CLK_CON2 (0x10014) et ANA.
+## What the SDK gives us
+- `include_lib/driver/cpu/wl82/asm/iis.h` — I2S (ALNK) API: `iis_open`, `iis_set_sample_rate`,
+  `iis_set_enc_data_handler` (input), `iis_set_dec_data_handler` (output), `iis_irq_handler`.
+- `include_lib/driver/cpu/wl82/asm/WL82.h` — the official register map (ALNK0 0x12E00, ALNK1 0x15100,
+  IOMAP 0x51000+, CLOCK 0x10000, ANA 0x11900).
+- `cpu/wl82/liba/cpu.a` → `iis.c.o` = **LLVM bitcode** produced by clang 4.0.1 (= our toolchain).
+  Compiles as is: `clang -target pi32v2 -Os -c -x ir iis.bc -o iis.o` (~5 KB).
+  Dependencies we provide: malloc/free, memset, gpio_direction_input/output, gpio_set_die, gpio_set_pull_up/down,
+  log_print/printf (no-op), log_tag_const_{d,e,i}_AUDIO_IIS (u8 = 0), os_current_task_rom, cpu_assert_debug,
+  config_asser, P33_SYSTEM_RESET.
+  The driver does not register its IRQ: we call `iis_irq_handler(0)` from the ALNK0 ISR.
+- The driver sets the audio clock family (44.1k / 48k) itself through CLK_CON2 (0x10014) and ANA.
 
-## Broches I2S (datasheets AC791x du SDK)
-| Groupe | MCK | SCLK | LRCK | DAT0 | DAT1 | DAT2 | DAT3 |
+## I2S pins (AC791x datasheets in the SDK)
+| Group | MCK | SCLK | LRCK | DAT0 | DAT1 | DAT2 | DAT3 |
 |---|---|---|---|---|---|---|---|
 | IIS_PORTA (B1) | PA4 | PA5 | PA6 | PA7 | PA8 | PA9 | PA10 |
 | IIS_PORTC (A)  | PC0 | PC1 | PC2 | PC3 | PC4 | PC5 | PC6 |
 
-Pocket X : PC0/PC1 = encodeur, PC7 = écran, PA0-PA3 = boutons, PA10 = knob MASTER (analogique)
-→ **IIS_PORTA, données sur PA7/PA8/PA9** (DAT3/PA10 inutilisable). Lequel = entrée / sortie : à tester.
+Pocket X: PC0/PC1 = encoder, PC7 = screen, PA0–PA3 = buttons, PA10 = MASTER knob (analog)
+→ **IIS_PORTA, data on PA7/PA8/PA9** (DAT3/PA10 not usable).
 
-## Inconnues restantes
-1. Le codec externe de la Pocket X (référence de la puce) : configuration I2C nécessaire ou non ?
-   Sur la FM-1 (Felucca), le codec ne demande que des GPIO (pas d'I2C).
-2. Quelle ligne DAT = sortie, laquelle = entrée guitare.
-3. Lignes de contrôle du codec (reset/mute) sur la Pocket X.
+## Finding the audio path on the pedal
+- **v10 (2026-11-01)**: `I2S OK`. **Guitar input = I2S ALNK0, DAT1 = PA8** (IIS_PORTA, master, MCLK on PA4,
+  44.1 kHz). DAT0 (PA7) and DAT2 (PA9) idle. No sound out on DAT0/DAT2.
+- Output hypothesis: **internal DAC (DACL pin)** → **SGM8905** line amp (which has a shutdown pin), like JieLi's
+  QFN48 reference board (`board_7911B.c`: DACL, hw_channel 0x01, amp mute).
+- **v11**: internal DAC through `sdk/dac.bc` (IRQ_AUDIO = 13) + a search for the amp enable pin (weak pull-up /
+  pull-down on 23 candidate pins, one at a time).
+- **v11** on the pedal: `I2S OK`, `DAC OK`, but no sound, and **the button LEDs stay off** under OpenPocket → nobody
+  drives the **74HC595**. Hypothesis: it drives the LEDs **and** the SGM8905 enable.
+- **v12**: automatic search for the 595's pins (DS, SHCP+STCP, OE), weak pulls only; witness = LEDs blinking.
+  The Pocket X has no knob LEDs (button LEDs only); the 595 search was judged too indirect.
+- **v13**: direct sweep, each candidate pin driven 3.3 V then 0 V (1.5 s each), one at a time, with a continuous
+  beep on the internal DAC: listen for when the sound comes out.
+- **v13** on the pedal: **a click in the output when PA9 changes state** (first sign of life of the output).
+- **v14**: PA9 (AMP) and PA7 (MOD) set by hand: free / 3.3 V / 0 V / I2S data; simultaneous beep on the internal
+  DAC and on I2S.
 
-## Plan
-- Photo de la carte → référence du codec → datasheet.
-- Build de test « AUDIO PROBE » : bip successivement sur DAT0/1/2 (l'écran indique lequel),
-  puis vumètre d'entrée par ligne pendant que tu joues → on identifie entrée et sortie à l'oreille.
-- Ensuite : passthrough guitare → moteur DSP (`engine/px_dsp.c`) dans le callback I2S.
-
-## Résultats sur la pédale
-- **v10 (2026-11-01)** : `I2S OK`. **ENTREE guitare = I2S ALNK0, DAT1 = PA8** (IIS_PORTA, maître, MCLK sur PA4,
-  44,1 kHz, 16 bits). DAT0 (PA7) et DAT2 (PA9) inactifs. Aucun son en sortie sur DAT0/DAT2.
-- Hypothèse sortie : **DAC interne (broche DACL)** -> ampli de ligne **SGM8905** (qui a une broche d'arrêt),
-  comme la carte de référence QFN48 de JieLi (`board_7911B.c` : DACL, hw_channel 0x01, mute ampli).
-- **v11** : DAC interne via `sdk/dac.bc` (IRQ_AUDIO = 13) + recherche de la broche d'activation de l'ampli
-  (pull-up/pull-down faibles sur 23 broches candidates, HAUT/BAS sur une seule à la fois).
-- **v11** sur la pédale : `I2S OK`, `DAC OK`, mais aucun son (broches en Z / pull-up / pull-down), et **les LED
-  des boutons restent éteintes** avec openpocket -> le **74HC595** n'est piloté par personne. Hypothèse : il commande
-  les LED **et** l'activation de l'ampli SGM8905.
-- **v12** : recherche automatique des broches du 595 (DS, SHCP+STCP, OE) par essais aléatoires de rôles,
-  en pulls faibles uniquement ; témoin = les LED clignotent ; puis affinage broche par broche (oui/non au footswitch).
-- **v12** : la Pocket X n'a pas de LED de knob (LED des boutons seulement) ; recherche 595 jugée trop indirecte.
-- **v13** : balayage direct, chaque broche candidate pilotée 3,3 V puis 0 V (1,5 s chacun), une à la fois,
-  bip en continu sur le DAC interne : on écoute quand le son sort.
-- **v13** sur la pédale : **craquement dans la sortie quand PA9 change d'état** (premier signe de vie de la sortie).
-- **v14** : PA9 (AMP) et PA7 (MOD) réglables à la main : libre / 3,3 V / 0 V / données I2S ; balayage des
-  autres broches en option ; bip simultané sur le DAC interne et l'I2S.
-
-## ✅ CHAINE AUDIO COMPLETE (v14, 2026-11-01)
-| Rôle | Broche | Détail |
+## ✅ Audio path complete (v14, 2026-11-01)
+| Role | Pin | Detail |
 |---|---|---|
-| MCLK | PA4 | sortie (mclk_output = 1) |
-| SCLK / LRCK | PA5 / PA6 | JieLi maître |
-| **Entrée guitare** | **PA8 = DAT1** | I2S ALNK0, 24 bits stéréo (16 bits jusqu'à la v25), 44,1 kHz (ADC externe) |
-| **Sortie** | **PA7 = DAT0** | I2S ALNK0 -> DAC externe « 344C » -> ampli SGM8905 -> OUT + casque |
-| **Activation ampli** | **PA9 = 3,3 V** | GPIO sortie haute (craquement = mise en marche de l'ampli) |
-Le DAC interne (DACL) n'est PAS utilisé par la Pocket X. Passthrough guitare -> sortie : propre.
-Config pilote : `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), maître, MCLK, sr_points 128,
-puis `iis_set_sample_rate(44100)`, `iis_channel_on`, IRQ ALNK0 = 11 -> `iis_irq_handler(0)`.
+| MCLK | PA4 | output (mclk_output = 1) |
+| SCLK / LRCK | PA5 / PA6 | JieLi is master |
+| **Guitar input** | **PA8 = DAT1** | I2S ALNK0, 24-bit stereo (16-bit up to v25), 44.1 kHz (external ADC); guitar on the **left** channel only |
+| **Output** | **PA7 = DAT0** | I2S ALNK0 → external DAC "344C" → SGM8905 amp → OUT + headphones |
+| **Amp enable** | **PA9 = 3.3 V** | GPIO output high (the click = the amp powering up) |
 
-## v15 : le moteur DSP dans le chemin audio
-- `firmware/px_audio.h` : I2S (in PA8 / out PA7), ampli PA9, moteur `engine/px_dsp.c` dans l'IRQ ALNK0
-  (blocs de 128 trames), garde-fou : > 85 % de charge 8 blocs d'affilée -> BYPASS. Charge affichée « CPU xx% ».
-- Float sur FPU matériel : `-mcpu=r3 -mfprev1` (options du SDK JieLi pour la WL82). Sans elles, clang émet des
-  appels logiciels (`__addsf3`...). `firmware/px_math.c` = mini libm (sin/cos/exp/log/pow/sqrt, erreur ~1e-6).
-- Moteur (~250 Ko) dans la zone RAM `POOL` 0x01C20000 (0x54000 o), comme CLIPPER. PX_OVERSAMPLE = 2 pour commencer.
-- **v15** sur la pédale : **BYPASS** (moteur > 85 % du temps réel).
-- **v16** : moteur optimisé sans changer le son (écart -120 dB vérifié sur PC, 8 presets) : baffle en produit
-  scalaire linéaire (historique doublé, déroulé x4), plus de modulo dans delay/reverb, anti-dénormaux ±1e-15.
-  + écran de mesures au démarrage (vitesse INT/FLOAT, % temps réel par configuration du moteur).
-- **v16** sur la pédale : **CPU 52 %**, temps réel OK. Mais son trop aigu, manque de grave.
-- **v17** (son) : mesure sur PC (corde pincée, bandes d'octave) -> bande 100-200 Hz à -20 dB sur 5150/Djent.
-  Causes : (1) coupe-bas avant disto cumulés (serrage 200 Hz + étages 90/110/130 Hz) ; (2) baffle = réponse de
-  6 filtres TRONQUÉE à 256 points (5,8 ms) -> la bosse de grave ~100 Hz disparaissait.
-  Corrections : baffle jouée directement en 6 biquads (réponse exacte, ~8x moins de calcul), coupe-bas d'étages et
-  serrage abaissés (5150 : 35/50/70 Hz, serrage 100 Hz), shelf de grave du 5150/Uber monté à 170-180 Hz,
-  résonance x10 dB, présence x6 dB, pics de présence des baffles réduits. Résultat : +10 dB à 100-200 Hz.
-  Suréchantillonnage de l'ampli remonté à x4 (marge CPU libérée par la baffle).
-  NB : le simulateur navigateur (sim/) n'a pas encore ces changements (parité à refaire).
+The internal DAC (DACL) is NOT used by the Pocket X. Guitar → output passthrough: clean.
+Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), master, MCLK, then
+`iis_set_sample_rate(44100)`, `iis_channel_on`, ALNK0 IRQ = 11 → `iis_irq_handler(0)`.
 
-## v18 : écran en SPI matériel + DSP sur le 2e cœur
-- **Écran** : SPI1 matériel, groupe A (PB6 = CLK, PB7 = DO, IOMAP_CON1 bit 4 = 0, d'après `spi.h` du SDK),
-  registres et CON = 0x4021 repris de `fm1_lcd_hw.h` (Felucca), horloge 20 MHz (BAUD 2), pixels envoyés par DMA
-  avec double tampon de 1024 pixels. `LCD_HW 0` dans openpocket.c = retour au SPI logiciel.
-- **2e cœur** : `fm1_cpu1.h` de Felucca, démarré au début de app_main. Le bloc N part sur CPU1 à la fin de l'IRQ N,
-  l'IRQ N+1 le récupère (même latence). `FM1_CPU1_FALLBACK 1` : en cas d'échec, CPU0 reprend seul.
-  Affichage en bas à droite : `C1 xx%` (2e cœur) ou `C0 xx%` (repli). `DSP_CPU1 0` = tout sur CPU0.
-- CORDIC du SDK (`tanh_float`) étudié : instruction `copex` + division -> pas plus rapide que notre tanh rationnel.
-- **v17 sur la pédale : PLUS DE SON.** Cause trouvée par simulation PC avec NOTRE libm (px_math.c) : `cosf` = sin(x+pi/2)
-  avec ~4e-6 d'erreur ; les coupe-bas abaissés (30-35 Hz) calculés à 176,4 kHz (x4) demandent cos(w) avec w ~ 1e-3 :
-  biquads instables -> NaN -> silence permanent (pas de BYPASS : le temps de calcul reste normal). Sur PC avec la
-  libm standard, invisible.
-- **v19** : sin/cos réécrits (réduction à [-pi/4, pi/4], pi/2 en deux morceaux, polynômes séparés) ; 4860 combinaisons
-  ampli x baffle x réglages extrêmes testées avec px_math.c : 0 NaN. Filet de sécurité : NaN/Inf détecté en sortie ->
-  silence + moteur réinitialisé par la boucle principale. Écran SPI matériel (LCD_HW) et 2e cœur (DSP_CPU1) présents
-  mais DÉSACTIVÉS dans v19 (à activer une fois le son confirmé). LEÇON : toujours simuler avec px_math.c, pas la libm.
-- **v20** = v19 + écran SPI matériel (LCD_HW 1) + DSP sur le 2e cœur (DSP_CPU1 1). Interrupteurs de repli dans
-  openpocket.c : `LCD_HW 0` (écran logiciel), `DSP_CPU1 0` (tout sur CPU0) ; build.sh n'assemble fm1_cpu1.S que si
-  DSP_CPU1 vaut 1.
+## v15: the DSP engine in the audio path
+- `firmware/px_audio.h`: I2S (in PA8 / out PA7), amp PA9, engine `engine/px_dsp.c` in the ALNK0 IRQ (blocks of 128
+  frames), guard: > 85 % load for 8 blocks in a row → BYPASS. Load shown as "CPU xx%".
+- Float on the hardware FPU: `-mcpu=r3 -mfprev1` (the JieLi SDK's options for the WL82). Without them clang emits
+  software calls (`__addsf3`...). `firmware/px_math.c` = a small libm (sin/cos/exp/log/pow/sqrt, error ~1e-6).
+- Engine (~250 KB) in the RAM area `POOL` 0x01C20000 (0x54000 bytes), like CLIPPER. PX_OVERSAMPLE = 2 to begin with.
+- **v15** on the pedal: **BYPASS** (engine > 85 % of real time).
+- **v16**: engine optimised without changing the sound (−120 dB difference checked on the PC, 8 presets): cabinet as
+  a linear dot product (doubled history, unrolled ×4), no more modulo in delay/reverb, anti-denormal ±1e-15, plus a
+  measurement screen at boot (INT/FLOAT speed, % of real time per engine configuration).
+- **v16** on the pedal: **CPU 52 %**, real time OK. But the sound was too bright, lacking lows.
+- **v17** (sound): measured on the PC (plucked string, octave bands) → the 100–200 Hz band at −20 dB on 5150/Djent.
+  Causes: (1) cumulated low cuts before the distortion (200 Hz tightness + 90/110/130 Hz stages); (2) cabinet = the
+  response of 6 filters TRUNCATED at 256 taps (5.8 ms) → the ~100 Hz low bump disappeared.
+  Fixes: cabinet run directly as 6 biquads (exact response, ~8× less work), lower stage low cuts and tightness
+  (5150: 35/50/70 Hz, tightness 100 Hz), 5150/Uber low shelf raised to 170–180 Hz, resonance ×10 dB, presence
+  ×6 dB, cabinet presence peaks reduced. Result: +10 dB at 100–200 Hz. Amp oversampling back to ×4 (CPU freed by
+  the cabinet).
 
-## v21–v23 : contenu
-- **v21** : moteur v2 (10 blocs, 13 amplis), UI « chaîne + page bloc » sans clignotement. **v22** : police Inter, plus
-  d'écran de mesures au démarrage.
-- **v23** : moteur v3, 11 blocs (ajout PITCH et SPECIAL FX), 118 modèles voicés d'après des analyses de circuits ;
-  UI en anglais ; valeurs lisibles (`+5TH`, ms, dB). Correctifs trouvés sur PC : nombres dénormalisés en silence
-  numérique (le biais des étages d'ampli avalait le décalage anti-dénormaux), décaleurs de hauteur alignés en phase
-  (SOLA), delays à saturation normalisés (auto-oscillation seulement au-dessus de FDBK ≈ 90). Banc de mesure
-  (`BENCH_AT_BOOT 1`) mis à jour : preset GROOVE METAL (5150 III, 4 étages) et blocs les plus lourds.
+## v18–v20: hardware SPI screen + DSP on the second core
+- **Screen**: hardware SPI1, group A (PB6 = CLK, PB7 = DO, IOMAP_CON1 bit 4 = 0, from the SDK's `spi.h`), registers
+  and CON = 0x4021 taken from `fm1_lcd_hw.h` (Felucca), 20 MHz clock (BAUD 2), pixels sent by DMA with a double
+  buffer of 1024 pixels. `LCD_HW 0` in openpocket.c = back to software SPI.
+- **Second core**: Felucca's `fm1_cpu1.h`, started at the beginning of app_main. Block N goes to CPU1 at the end of
+  IRQ N, IRQ N+1 collects it (same latency). `FM1_CPU1_FALLBACK 1`: if it fails, CPU0 takes over alone.
+  Bottom right: `C1 xx%` (second core) or `C0 xx%` (fallback). `DSP_CPU1 0` = everything on CPU0.
+- The SDK's CORDIC (`tanh_float`) was studied: a `copex` instruction + a division → no faster than our rational tanh.
+- **v17 on the pedal: NO SOUND.** Cause found by simulating on the PC with OUR libm (px_math.c): `cosf` = sin(x+pi/2)
+  with ~4e-6 error; the lowered low cuts (30–35 Hz) computed at 176.4 kHz (×4) need cos(w) with w ~ 1e-3: unstable
+  biquads → NaN → permanent silence (no BYPASS: the computing time stays normal). Invisible on the PC with the
+  standard libm.
+- **v19**: sin/cos rewritten (reduction to [−pi/4, pi/4], pi/2 in two parts, separate polynomials); 4,860
+  amp × cabinet × extreme-setting combinations tested with px_math.c: 0 NaN. Safety net: NaN/Inf detected at the
+  output → silence + engine reset by the main loop. LESSON: always simulate with px_math.c, not the system libm.
+- **v20** = v19 + hardware SPI screen (LCD_HW 1) + DSP on the second core (DSP_CPU1 1). Fallback switches in
+  openpocket.c: `LCD_HW 0` (software screen), `DSP_CPU1 0` (everything on CPU0); build.sh only assembles fm1_cpu1.S
+  when DSP_CPU1 is 1.
 
-## v24 : mise à jour par USB
-- USB-MIDI (felucca-bsp `chip/usb.c`, sondé par TIMER5 à 2 kHz) et l'entrée de mise à jour M-UPGRADE (`chip/ota.c`) :
-  le chargeur du paquet est mis de côté en 0xE0000 (5 × 4 Kio), puis la pédale redémarre dedans.
-- Chargeur (`loader/`) : felucca-bsp adapté à la Pocket X : zone de l'application [0x4000, 0xA3000) comme PocketX_016,
-  tête de flash jamais écrite, enregistrements de mise à jour effacés entre 0xA3000 et 0xFF000.
-- Paquets (`tools/pxpkg.py`) : reconstruisent la zone de l'application officielle PocketX_016 à l'octet près.
+## v21–v23: content
+- **v21**: engine v2 (10 blocks, 13 amps), "chain + block page" UI without flicker. **v22**: Inter font, no more
+  measurement screen at boot.
+- **v23**: engine v3, 11 blocks (PITCH and SPECIAL FX added), 118 models voiced from circuit analyses; English UI;
+  readable values (`+5TH`, ms, dB). Fixes found on the PC: denormal numbers in digital silence (the amp stages' bias
+  swallowed the anti-denormal offset), phase-aligned pitch shifters (SOLA), normalised saturating delays
+  (self-oscillation only above FDBK ≈ 90). Benchmark (`BENCH_AT_BOOT 1`) updated: GROOVE METAL preset (5150 III,
+  4 stages) and the heaviest blocks.
 
-## v25 : presets en flash, baffles et ampli plus fins
-- Presets (`firmware/px_store.h`) : 42 emplacements de 96 o, deux copies A/B (0xF0000 / 0xF2000, deux secteurs de
-  4 Kio chacune), en-tête « OPPS » écrit en dernier (séquence + CRC16), relecture après écriture. Octets 0xF00..0xF7F
-  de chaque secteur toujours effacés (zone lue par le chargeur pour ses enregistrements). Pendant l'écriture :
-  sortie muette, IRQ ALNK0 masquée, 2e cœur entre deux blocs (sa boucle tourne en RAM).
-- Baffle : FIR de 128 points après les biquads (résonances du cône 1,2–6 kHz tirées par modèle, peigne du micro hors
-  axe, réflexion arrière des baffles ouverts), normalisé à l'unité en basses fréquences.
-- Ampli : triode asymétrique `u≥0 ? 0.7·tanh(u/0.7) : tanh(u)`, décalage de polarisation par enveloppe (100 ms,
-  0,45 pour ≥4 étages, 0,35 sinon), sag aussi sur le préampli (×0,3). `px_trim.h` recalibré (29 amplis à 0,160 RMS).
-- Mémoire : 327 724 o sur 344 064 dans POOL.
+## v24: USB update
+- USB-MIDI (felucca-bsp `chip/usb.c`, polled by TIMER5 at 2 kHz) and the M-UPGRADE update entry (`chip/ota.c`): the
+  package's loader is staged at 0xE0000 (5 × 4 KiB), then the pedal restarts into it.
+- Loader (`loader/`): felucca-bsp adapted to the Pocket X: app area [0x4000, 0xA3000) like PocketX_016, flash
+  header never written, update records erased between 0xA3000 and 0xFF000.
+- Packages (`tools/pxpkg.py`): rebuild the official PocketX_016 app area byte for byte.
 
-## v26 : entrée et sortie en 24 bits (souffle des amplis à gros gain)
-- Constat : souffle constant (« shhh ») sur les amplis high-gain, même sans câble branché, absent avec le firmware
-  officiel. Cause : l'entrée était lue en 16 bits ; le bruit de quantification, multiplié par le gain de l'ampli
-  (~60 dB), devenait audible.
-- Firmware officiel (PocketX_016, désassemblé) : même ALNK0, mêmes broches, maître, 64 SCLK par trame, mais
-  - chaque canal est mis en **24 bits** (fonction 0x0200664A : `CON1 |= 1 << (4*ch + 2)`, le bit `data_width` du SDK) ;
-  - LEN = 128 et demi-tampon de 512 o traité comme 64 trames de 8 o : en 24 bits, LEN compte des mots de 32 bits ;
-  - entrée lue par `(mot << 8) >> 7` : 24 bits alignés à droite (bit 23 = signe), canal gauche seul, ×2 ;
-  - sortie écrite en entiers 24 bits écrêtés à ±8 388 600 sur les deux mots de la trame.
-- OpenPocket v26 : `data_width = BIT(0) | BIT(1)`, `sr_points = 256` (128 trames par bloc, comme avant), tas de
-  4 096 o pour les tampons du pilote (2 canaux × 8 × 256). Entrée = (G + D) / 2 en 24 bits : même niveau qu'avant,
-  les réglages des amplis ne changent pas. Sortie en 24 bits (le volume MASTER ne coûte plus de résolution).
-- Diagnostic : l'écran de l'accordeur affiche `IN L -xx R -xx dB`, le niveau de chaque canal d'entrée (dBFS),
-  pour vérifier où arrive la guitare et le plancher de bruit.
+## v25: presets in flash, finer cabinets and amps
+- Presets (`firmware/px_store.h`): 42 slots of 96 bytes, two A/B copies (0xF0000 / 0xF2000, two 4 KiB sectors
+  each), "OPPS" header written last (sequence + CRC16), read back after writing. Bytes 0xF00..0xF7F of each sector
+  always left erased (the loader reads that area for its records). While writing: output muted, ALNK0 IRQ masked,
+  second core between two blocks (its loop runs from RAM).
+- Cabinet: 128-tap FIR after the biquads (cone resonances 1.2–6 kHz drawn per model, off-axis mic comb, rear wave of
+  open-back cabinets), normalised to unity at low frequencies. (Replaced in v27, see below.)
+- Amp: asymmetric triode `u≥0 ? 0.7·tanh(u/0.7) : tanh(u)`, bias shift driven by an envelope (100 ms, 0.45 for
+  ≥4 stages, 0.35 otherwise), sag on the preamp too (×0.3). `px_trim.h` recalibrated (29 amps at 0.160 RMS).
+- Memory: 327,724 of 344,064 bytes in POOL.
 
-## v27 : charge processeur (DOOM SLUDGE en BYP à 89 % sur la v26)
-- Le FIR de 128 points des baffles (v25) coûtait cher sur le FPU de la pédale (128 multiplications par échantillon).
-  Remplacé par la même réponse calculée autrement : quelques prises éparses (son direct, peigne du micro, onde
-  arrière) + les résonances du cône en résonateurs à 2 pôles (h[k] = A·dec^k·sin(kw), exactement ce que le FIR
-  additionnait), les 6 plus fortes des 10 tirages : écart avec la v26 de 0,5 dB RMS, 1,9 dB au pire sur les petits pics.
-- Ampli : la courbe de triode repliée en une seule fraction rationnelle (identique à 2e-7 près), l'enveloppe de
-  polarisation pré-multipliée par sa profondeur, et les deux divisions de l'affaissement d'alimentation calculées une
-  fois par bloc de 64 échantillons au lieu de chaque échantillon.
-- Instructions par échantillon (PC, sans vectorisation) : DOOM SLUDGE v24 1 936 / v26 2 655 / v27 2 240 ;
-  GROOVE METAL 1 430 / 2 151 / 1 744. Estimation sur la pédale : DOOM SLUDGE ~75 % (au lieu de 89 %).
-- Moteur : 326 612 o dans POOL (v26 : 327 724).
+## v26: 24-bit input and output
+- Symptom: constant hiss ("shhh") on high-gain amps, even with no cable plugged in, absent with the official
+  firmware. First hypothesis: the 16-bit input (quantization noise × the amp's ~60 dB of gain). It did not fix the
+  hiss (the real cause was found in v28), but 24 bits is what the official firmware uses and is kept.
+- Official firmware (PocketX_016, disassembled): same ALNK0, same pins, master, 64 SCLK per frame, but
+  - every channel is set to **24 bits** (function 0x0200664A: `CON1 |= 1 << (4*ch + 2)`, the SDK's `data_width` bit);
+  - LEN = 128 and a 512-byte half-buffer processed as 64 frames of 8 bytes: in 24-bit mode LEN counts 32-bit words;
+  - input read as `(word << 8) >> 7`: 24 bits right-justified (bit 23 = sign), **left channel only**, ×2;
+  - output written as 24-bit integers clipped at ±8,388,600 into both words of the frame.
+- OpenPocket v26: `data_width = BIT(0) | BIT(1)`, `sr_points = 256` (still 128 frames per block), 4,096-byte heap for
+  the driver's buffers (2 channels × 8 × 256). Output in 24 bits (the MASTER volume no longer costs resolution).
+- Diagnostic: the tuner screen shows `IN L -xx R -xx dB`, the level of each input channel (dBFS).
 
-## v28 : la guitare sur le canal gauche seul (le souffle venait du canal droit)
-- Mesure sur la pédale (écran de l'accordeur, v26) : rien de branché, L -76 à -91 dBFS, R -77 dBFS stable ;
-  en grattant fort, L -17 dBFS, R toujours -77 dBFS. La guitare n'arrive que sur le canal gauche ; le droit ne porte
-  qu'un bruit constant, 14 dB au-dessus du plancher du gauche.
-- La moyenne (G + D) / 2 ajoutait ce bruit au son : rapport signal/bruit 60 dB (-17 contre -77). Canal gauche seul,
-  comme le firmware officiel : 74 dB (-17 contre -91), soit jusqu'à 14 dB de souffle en moins, amplifié d'autant
-  par les amplis à gros gain. Entrée = G × 0,5 : même niveau qu'avant, réglages inchangés.
+## v27: CPU load (DOOM SLUDGE in BYP at 89 % on v26)
+- v25's 128-tap cabinet FIR was expensive on the pedal's FPU (128 multiplications per sample). Replaced by the same
+  response computed another way: a few sparse taps (direct sound, mic comb, rear wave) + the cone's resonances as
+  2-pole resonators (h[k] = A·dec^k·sin(kw), exactly what the FIR summed), the 6 strongest of the 10 draws:
+  0.5 dB RMS from v26, 1.9 dB at worst on the small peaks.
+- Amp: the triode curve folded into a single rational function (identical to 2e-7), the bias envelope pre-scaled
+  by its depth, and the two supply-sag divisions computed once per 64-sample block instead of every sample.
+- Instructions per sample (PC, no vectorisation): DOOM SLUDGE v24 1,936 / v26 2,655 / v27 2,240;
+  GROOVE METAL 1,430 / 2,151 / 1,744.
+- Engine: 326,612 bytes in POOL.
+
+## v28: the guitar from the left channel only (the hiss came from the right channel)
+- Measured on the pedal (tuner screen, v26): nothing plugged in, L −76 to −91 dBFS, R −77 dBFS steady; strumming
+  hard, L −17 dBFS, R still −77 dBFS. The guitar only reaches the left channel; the right one only carries a
+  constant noise, 14 dB above the left channel's floor.
+- The (L + R) / 2 mix put that noise into the sound: signal-to-noise 60 dB (−17 vs −77). Left channel only, like the
+  official firmware: 74 dB (−17 vs −91), up to 14 dB less hiss, amplified just as much by the high-gain amps.
+  Input = L × 0.5: same level as before, settings unchanged. Confirmed on the pedal: the hiss is gone.

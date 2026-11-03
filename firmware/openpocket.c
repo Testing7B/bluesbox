@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * OpenPocket X — Jalon 1 (boot + ecran) — Donner Pocket X.
- * ECRAN (reverse-engineere du firmware d'origine) : SPI LOGICIEL sur le PORT B
- *   CS = PB1, D/C = PB5, CLK = PB6, DO = PB7   (+ PC7 pilote, reset/retroeclairage ?)
- * (la FM-1 utilisait le port C : c'etait la cause de l'ecran noir.)
- * Sequence d'init + offset 40 lignes : extraits exacts du firmware Pocket X.
- * Filet : 2 boots rates -> UBOOT (re-flashable), + backup fm1-1.bin.
+ * OpenPocket X — Milestone 1 (boot + screen) — Donner Pocket X.
+ * SCREEN (reverse-engineered from the stock firmware): SOFTWARE SPI on PORT B
+ *   CS = PB1, D/C = PB5, CLK = PB6, DO = PB7   (+ PC7 driven, reset/backlight?)
+ * (the FM-1 used port C: that was the cause of the black screen.)
+ * Init sequence + 40-line offset: taken verbatim from the Pocket X firmware.
+ * Safety net: 2 failed boots -> UBOOT (re-flashable), + backup fm1-1.bin.
  */
 #include <stdint.h>
-#define AUDIO_PROBE 0      /* 1 = test audio (trouver IN/OUT sur l'I2S) au lieu de l'UI */
-#define DSP_CPU1 1         /* 1 = moteur DSP sur le 2e cœur (repli automatique sur CPU0 en cas de souci) */
+#define AUDIO_PROBE 0      /* 1 = audio test (find IN/OUT on the I2S) instead of the UI */
+#define DSP_CPU1 1         /* 1 = DSP engine on the 2nd core (automatic fallback to CPU0 on trouble) */
 #if DSP_CPU1 && !AUDIO_PROBE
-#define FM1_CPU1 1         /* fm1_irq.h confie les fautes du 2e cœur à fm1_cpu1.h */
+#define FM1_CPU1 1         /* fm1_irq.h hands 2nd-core faults to fm1_cpu1.h */
 #define FM1_CPU1_FALLBACK 1
 #else
 #undef DSP_CPU1
@@ -27,7 +27,7 @@
 #include "font8x8.h"
 #include "libc.c"           /* memset / memcpy / memcmp (felucca-bsp, MPL-2.0): also used by the JieLi I2S driver */
 
-/* ---- GPIO port B/C (base 0x50000 + port*0x40 ; OUT +0x00, DIR +0x08 ; DIR 0=sortie) ---- */
+/* ---- GPIO port B/C (base 0x50000 + port*0x40 ; OUT +0x00, DIR +0x08 ; DIR 0=output) ---- */
 #define PB_OUT (*(volatile uint32_t *)0x50040u)
 #define PB_DIR (*(volatile uint32_t *)0x50048u)
 #define PC_OUT (*(volatile uint32_t *)0x50080u)
@@ -48,14 +48,14 @@ static volatile struct { uint32_t magic, pending, failed; } guard __attribute__(
 
 static uint32_t ms_now(void) { return (uint32_t)(fm1_ticks() / (FM1_TICKS_PER_US * 1000u)); }
 
-/* ---- liaison écran : SPI1 MATERIEL + DMA (LCD_HW 1) ou SPI logiciel (LCD_HW 0, l'ancien code, filet) ----
- * PB6 = SPI1_CLK(A), PB7 = SPI1_DO(A) d'après les datasheets AC791x du SDK JieLi ; IOMAP_CON1 bit 4 = 0 -> groupe A
- * (comme SPI1_PLATFORM_DATA du SDK). PB5 (D/C) reste un GPIO, comme le D/C de la FM-1 sur la broche DI du groupe B.
- * Registres SPI1 et réglage CON = 0x4021 : pilote écran de Felucca (bsp/boards/fm1/fm1_lcd_hw.h). */
+/* ---- screen link: HARDWARE SPI1 + DMA (LCD_HW 1) or software SPI (LCD_HW 0, the old code, fallback) ----
+ * PB6 = SPI1_CLK(A), PB7 = SPI1_DO(A) per the AC791x datasheets in the JieLi SDK; IOMAP_CON1 bit 4 = 0 -> group A
+ * (as in the SDK's SPI1_PLATFORM_DATA). PB5 (D/C) stays a GPIO, like the FM-1's D/C on the group B DI pin.
+ * SPI1 registers and CON = 0x4021 setting: Felucca's screen driver (bsp/boards/fm1/fm1_lcd_hw.h). */
 #ifndef LCD_HW
 #define LCD_HW 1
 #endif
-#define LCD_BAUD 2u                     /* horloge SPI1 = LSB / (BAUD + 1) : 60 MHz / 3 = 20 MHz */
+#define LCD_BAUD 2u                     /* SPI1 clock = LSB / (BAUD + 1): 60 MHz / 3 = 20 MHz */
 #if LCD_HW
 #define LSPI_CON  (*(volatile uint32_t *)0x11D00u)
 #define LSPI_BAUD (*(volatile uint32_t *)0x11D04u)
@@ -64,24 +64,24 @@ static uint32_t ms_now(void) { return (uint32_t)(fm1_ticks() / (FM1_TICKS_PER_US
 #define LSPI_CNT  (*(volatile uint32_t *)0x11D10u)
 #define IOMAP_CON1 (*(volatile uint32_t *)0x51020u)
 static uint32_t lcd_timeouts;
-static int lspi_busy;                   /* un transfert DMA est en cours */
+static int lspi_busy;                   /* a DMA transfer is in progress */
 static void lspi_wait(void)
 {
     uint32_t n;
     if (!lspi_busy) return;
     for (n = 0; n < 2000000u && !(LSPI_CON & 0x8000u); n++) ;
     if (n == 2000000u) lcd_timeouts++;
-    LSPI_CON |= 0x4000u;                /* efface le drapeau de fin */
+    LSPI_CON |= 0x4000u;                /* clear the done flag */
     lspi_busy = 0;
 }
 static void lspi_init(void)
 {
-    IOMAP_CON1 &= ~0x10u;               /* SPI1 sur le groupe A : PB6/PB7 */
+    IOMAP_CON1 &= ~0x10u;               /* SPI1 on group A: PB6/PB7 */
     LSPI_CON = 0x4021u;
     LSPI_BAUD = LCD_BAUD;
     lspi_busy = 0;
 }
-static inline void spi_byte(uint8_t b)  /* un octet, attendu */
+static inline void spi_byte(uint8_t b)  /* one byte, blocking */
 {
     lspi_wait();
     LSPI_CON |= 0x4000u;
@@ -89,7 +89,7 @@ static inline void spi_byte(uint8_t b)  /* un octet, attendu */
     lspi_busy = 1;
     lspi_wait();
 }
-static void lspi_dma(const void *p, uint32_t n)   /* lance n octets depuis la RAM (ne pas attendre) */
+static void lspi_dma(const void *p, uint32_t n)   /* start n bytes from RAM (does not wait) */
 {
     lspi_wait();
     LSPI_CON |= 0x4000u;
@@ -104,7 +104,7 @@ static inline void spi_byte(uint8_t b)
     for (i = 0; i < 8; i++) {
         if (b & 0x80u) PB_OUT |= DO; else PB_OUT &= ~DO;
         PB_OUT &= ~CLK;
-        PB_OUT |= CLK;             /* front montant */
+        PB_OUT |= CLK;             /* rising edge */
         b = (uint8_t)(b << 1);
     }
     PB_OUT &= ~CLK;
@@ -113,17 +113,17 @@ static inline void spi_byte(uint8_t b)
 static void lcd_cmd(uint8_t c, const uint8_t *data, uint32_t n)
 {
     PB_OUT &= ~CS;                 /* select */
-    PB_OUT &= ~DC;                 /* commande */
+    PB_OUT &= ~DC;                 /* command */
     spi_byte(c);
     if (n) {
         uint32_t i;
-        PB_OUT |= DC;              /* donnees */
+        PB_OUT |= DC;              /* data */
         for (i = 0; i < n; i++) spi_byte(data[i]);
     }
     PB_OUT |= CS;                  /* deselect */
 }
 
-static const uint8_t PX_INIT[] = {   /* sequence EXACTE du firmware Pocket X (21 commandes) */
+static const uint8_t PX_INIT[] = {   /* EXACT sequence from the Pocket X firmware (21 commands) */
     0x01,0, 0x11,0,
     0x2A,4, 0x00,0x00,0x00,0xEF,
     0x2B,4, 0x00,0x28,0x01,0x17,
@@ -135,16 +135,16 @@ static const uint8_t PX_INIT[] = {   /* sequence EXACTE du firmware Pocket X (21
     0xE0,14, 0xD0,0x0D,0x14,0x0B,0x0B,0x07,0x3A,0x44,0x50,0x08,0x13,0x13,0x2D,0x32,
     0xE1,14, 0xD0,0x0D,0x14,0x0B,0x0B,0x07,0x3A,0x44,0x50,0x08,0x13,0x13,0x2D,0x32,
     0x36,1, 0x00, 0x3A,1, 0x55, 0xE7,1, 0x00,
-    0x51,1, 0xFF,                  /* luminosite max */
+    0x51,1, 0xFF,                  /* max brightness */
     0x21,0, 0x29,0,                /* INVON, DISPON */
 };
 static void lcd_init(void)
 {
     const uint8_t *p = PX_INIT, *end = PX_INIT + sizeof PX_INIT;
-    PB_DIR &= ~(CS | DC | CLK | DO);   /* sorties */
+    PB_DIR &= ~(CS | DC | CLK | DO);   /* outputs */
     PC_DIR &= ~PC7;
-    PB_OUT |= CS; PB_OUT &= ~CLK;      /* CS haut, CLK bas */
-    PC_OUT |= PC7;                     /* PC7 haut (reset relache / retroeclairage ?) */
+    PB_OUT |= CS; PB_OUT &= ~CLK;      /* CS high, CLK low */
+    PC_OUT |= PC7;                     /* PC7 high (reset released / backlight?) */
 #if LCD_HW
     lspi_init();
 #endif
@@ -157,26 +157,26 @@ static void lcd_init(void)
         else if (cmd == 0x11) fm1_delay_ms(120);
     }
 }
-/* tampons de pixels pour le DMA (2 : on remplit l'un pendant que l'autre part) */
+/* DMA pixel buffers (2: fill one while the other is being sent) */
 #define LBUF_PX 1024u
 #if LCD_HW
 static uint8_t lbuf[2][LBUF_PX * 2u] __attribute__((aligned(4)));
 static uint32_t lb_i;
 #endif
 static uint32_t lb_n;
-/* rectangle plein (coord 16 bits + offset 40 lignes) */
+/* filled rectangle (16-bit coords + 40-line offset) */
 static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t rgb)
 {
     if (w == 0u || h == 0u || x >= 240u || y >= 240u) return;   /* v23: a negative size (huge unsigned) used to */
     if (x + w > 240u) w = 240u - x;                            /* stream 4 billion pixels = black screen forever */
     if (y + h > 240u) h = 240u - y;
     uint8_t a[4]; uint32_t i, yo = y + PX_ROW_OFFSET, x1 = x + w - 1u, y1 = yo + h - 1u, px = w * h;
-    uint16_t sw = rgb;   /* envoi high-byte first, pas de swap */
+    uint16_t sw = rgb;   /* sent high byte first, no swap */
     a[0]=(uint8_t)(x>>8);  a[1]=(uint8_t)x;  a[2]=(uint8_t)(x1>>8); a[3]=(uint8_t)x1;  lcd_cmd(0x2A,a,4);
     a[0]=(uint8_t)(yo>>8); a[1]=(uint8_t)yo; a[2]=(uint8_t)(y1>>8); a[3]=(uint8_t)y1;  lcd_cmd(0x2B,a,4);
-    PB_OUT &= ~CS; PB_OUT &= ~DC; spi_byte(0x2C); PB_OUT |= DC;   /* RAMWR, puis donnees */
+    PB_OUT &= ~CS; PB_OUT &= ~DC; spi_byte(0x2C); PB_OUT |= DC;   /* RAMWR, then data */
 #if LCD_HW
-    {   /* un tampon rempli de la couleur, renvoyé autant de fois que nécessaire (contenu constant) */
+    {   /* one buffer filled with the colour, resent as many times as needed (constant contents) */
         uint8_t *b = lbuf[0];
         uint32_t fill = px < LBUF_PX ? px : LBUF_PX;
         for (i = 0; i < fill; i++) { b[2u * i] = (uint8_t)(sw >> 8); b[2u * i + 1u] = (uint8_t)sw; }
@@ -192,18 +192,18 @@ static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t rg
     for (i = 0; i < px; i++) {
         spi_byte((uint8_t)(sw >> 8));
         spi_byte((uint8_t)sw);
-        if ((i & 0x3FFu) == 0) fm1_wdt_feed();   /* nourrir le watchdog pendant les gros remplissages */
+        if ((i & 0x3FFu) == 0) fm1_wdt_feed();   /* feed the watchdog during large fills */
     }
 #endif
     PB_OUT |= CS;
 }
 
-/* ================= UI OpenPocket (éditeur de son embarqué) ================= */
-/* palette (RGB565) façon simulateur : fond sombre + accent orange */
+/* ================= OpenPocket UI (on-device sound editor) ================= */
+/* palette (RGB565) matching the simulator: dark background + orange accent */
 enum { UI_BG=0x0841, UI_PANEL=0x18E3, UI_SEL=0xFB00, UI_ACC=0xFD20,
        UI_TXT=0xEF7D, UI_DIM=0x8410, UI_OK=0x4E6B, UI_OFF=0x2124 };
 
-/* fenêtre d'écriture + flux de pixels (CS reste bas entre les pixels) */
+/* write window + pixel stream (CS stays low between pixels) */
 static void lcd_win(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
     uint8_t a[4]; uint32_t yo=y+PX_ROW_OFFSET, x1=x+w-1u, y1=yo+h-1u;
@@ -216,7 +216,7 @@ static void lcd_win(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 static void lb_flush(void)
 {
     if (!lb_n) return;
-    lspi_dma(lbuf[lb_i], lb_n * 2u);    /* attend le transfert précédent (l'autre tampon), puis lance celui-ci */
+    lspi_dma(lbuf[lb_i], lb_n * 2u);    /* waits for the previous transfer (the other buffer), then starts this one */
     lb_i ^= 1u; lb_n = 0;
 }
 static inline void lcd_px(uint16_t c)
@@ -231,15 +231,15 @@ static inline void lcd_px(uint16_t c){ spi_byte((uint8_t)(c>>8)); spi_byte((uint
 static inline void lcd_end(void){ PB_OUT |= CS; }
 #endif
 
-/* ================= texte LISSÉ (police Inter, alpha 4 bits) =================
- * ft_box(x, y, w, ...) dessine une boîte de largeur fixe w et de la hauteur de la police : marge + texte + marge,
- * en un seul flux de pixels (fond compris). Rien n'est effacé avant : pas de clignotement. align 0 = gauche,
- * 1 = centré, 2 = droite. Le texte trop long est coupé. */
+/* ================= ANTI-ALIASED text (Inter font, 4-bit alpha) =================
+ * ft_box(x, y, w, ...) draws a box of fixed width w and of the font's height: padding + text + padding,
+ * in a single pixel stream (background included). Nothing is cleared first: no flicker. align 0 = left,
+ * 1 = centre, 2 = right. Text that is too long is clipped. */
 #include "fonts.h"
 static int ft_glyph(const op_font *f, char c)
 {
     for (int i = 0; i < f->n; i++) if (f->chars[i] == c) return i;
-    return 0;                                          /* inconnu -> 1er caractère (espace) */
+    return 0;                                          /* unknown -> 1st character (space) */
 }
 static uint32_t ft_width(const op_font *f, const char *s)
 {
@@ -260,7 +260,7 @@ static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const 
     uint8_t gi[40]; uint32_t n = 0, tw = 0;
     if (x >= 240u || w == 0u) return 0;
     if (x + w > 240u) w = 240u - x;
-    while (s[n] && n < 40u) {                          /* caractères qui tiennent dans la boîte */
+    while (s[n] && n < 40u) {                          /* characters that fit in the box */
         int g = ft_glyph(f, s[n]);
         if (tw + f->adv[g] > w) break;
         gi[n] = (uint8_t)g; tw += f->adv[g]; n++;
@@ -284,7 +284,7 @@ static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const 
     return tw;
 }
 
-/* un caractère (échelle sx,sy), fg sur bg */
+/* one character (scale sx,sy), fg on bg */
 static void lcd_char(uint32_t x, uint32_t y, char ch, uint16_t fg, uint16_t bg, uint32_t s)
 {
     if (ch < 0x20 || ch > 0x7E) ch = ' ';
@@ -302,11 +302,11 @@ static void lcd_text(uint32_t x, uint32_t y, const char *str, uint16_t fg, uint1
 {
     while (*str) { lcd_char(x, y, *str++, fg, bg, s); x += 8u*s; }
 }
-/* ---- preset : la structure du moteur v2 (engine/px_dsp.h), éditée directement par l'UI ---- */
+/* ---- preset: the v2 engine's struct (engine/px_dsp.h), edited directly by the UI ---- */
 #include "px_dsp.h"
 static px_preset_t PRESET;
 static uint32_t cur_preset = 0;
-static uint32_t master_vol = 80;        /* 0..100, suit le knob MASTER (ADC canal 2) */
+static uint32_t master_vol = 80;        /* 0..100, follows the MASTER knob (ADC channel 2) */
 static void st_get(uint32_t k, px_preset_t *p);   /* px_store.h: the saved preset of slot k, else the factory one */
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 
@@ -314,9 +314,9 @@ static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 void fm1_timer5_irq(void) { }
 #endif
 #if !AUDIO_PROBE
-void op_audio_irq(void) { }           /* DAC interne : pas utilisé par la Pocket X */
+void op_audio_irq(void) { }           /* internal DAC: not used by the Pocket X */
 #endif
-/* écran de crash lisible : vecteur, PC, retour, registre d'erreur bus — puis reboot */
+/* readable crash screen: vector, PC, return address, bus error register — then reboot */
 static void hex8(char *b, uint32_t v){ static const char H[]="0123456789ABCDEF";
     for (int i=0;i<8;i++) b[i]=H[(v>>(28-4*i))&15u]; b[8]=0; }
 static void fm1_fault(const fm1_crash_t *c)
@@ -334,8 +334,8 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
-/* ---- Entrées : encodeur rotatif (PC0/PC1) + bouton poussoir (PA2) ----
- * Reverse-engineeré du firmware d'origine (ISR timer lisant PC_IN & 0x3). */
+/* ---- Inputs: rotary encoder (PC0/PC1) + push button (PA2) ----
+ * Reverse-engineered from the stock firmware (timer ISR reading PC_IN & 0x3). */
 #define PA_IN   (*(volatile uint32_t *)0x50004u)
 #define PA_DIR  (*(volatile uint32_t *)0x50008u)
 #define PA_DIE  (*(volatile uint32_t *)0x5000Cu)
@@ -347,55 +347,55 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PC_DIR  (*(volatile uint32_t *)0x50088u)
 #define PC_DIE  (*(volatile uint32_t *)0x5008Cu)
 #define PC_PU   (*(volatile uint32_t *)0x50090u)
-/* port H (index 7) : déclaré par Felucca et lu par le firmware d'origine. PAS de port D sur cette puce. */
+/* port H (index 7): declared by Felucca and read by the stock firmware. NO port D on this chip. */
 #define PH_IN   (*(volatile uint32_t *)0x501C4u)
 #define PH_DIE  (*(volatile uint32_t *)0x501CCu)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
 #define OP_VERSION_NUM "28"
-#define OP_VERSION "v" OP_VERSION_NUM   /* affiché au démarrage : change à chaque build livré */
-#define PROBE 0            /* 1 = diagnostic GPIO : affiche en bas les broches qui changent */
-#define ADC_PROBE 0        /* 1 = diagnostic ADC : affiche en bas les canaux qui bougent (C2:512) */
+#define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
+#define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
+#define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
-/* ---- Contrôles mappés sur la vraie pédale (diagnostic) ----
- * "appuyé" = différent de l'état au repos mémorisé au démarrage (marche quelle que soit la polarité) */
+/* ---- Controls mapped on the real pedal (diagnostic) ----
+ * "pressed" = differs from the idle state captured at boot (works whatever the polarity) */
 #define PA_FX     (1u<<0)
 #define PA_HOME   (1u<<1)
-#define PA_FS_UP  (1u<<2)              /* footswitch droit ▲ */
-#define PA_FS_DN  (1u<<3)              /* footswitch gauche ▼ */
-#define PH_PUSH   ((1u<<4)|(1u<<6))    /* push du knob PARA */
+#define PA_FS_UP  (1u<<2)              /* right footswitch ▲ */
+#define PA_FS_DN  (1u<<3)              /* left footswitch ▼ */
+#define PH_PUSH   ((1u<<4)|(1u<<6))    /* PARA knob push */
 #define PH_MOD    ((1u<<7)|(1u<<8))
 #define PH_AMP    (1u<<9)
 #define PA_KNOWN  (PA_FX|PA_HOME|PA_FS_UP|PA_FS_DN)
 #define PH_KNOWN  (PH_PUSH|PH_MOD|PH_AMP)
-#define PA_MASTER (1u<<10)             /* knob MASTER = potentiomètre analogique sur PA10 */
+#define PA_MASTER (1u<<10)             /* MASTER knob = analog pot on PA10 */
 
-static uint32_t base_pa, base_ph;      /* état au repos */
+static uint32_t base_pa, base_ph;      /* idle state */
 
 static void input_init(void)
 {
-    PC_DIR |= ENC_MASK; PC_DIE |= ENC_MASK; PC_PU |= ENC_MASK;   /* encodeur */
-    PA_DIR |= PA_KNOWN; PA_DIE |= PA_KNOWN; PA_PU |= PA_KNOWN;   /* boutons confirmés */
+    PC_DIR |= ENC_MASK; PC_DIE |= ENC_MASK; PC_PU |= ENC_MASK;   /* encoder */
+    PA_DIR |= PA_KNOWN; PA_DIE |= PA_KNOWN; PA_PU |= PA_KNOWN;   /* confirmed buttons */
     PH_DIR |= PH_KNOWN; PH_DIE |= PH_KNOWN; PH_PU |= PH_KNOWN;
 #if PROBE
-    /* broches inconnues : lecture numérique + pull-up seulement (on ne touche pas au sens) */
+    /* unknown pins: digital input + pull-up only (direction left untouched) */
     PA_DIE |= 0xFFFFu; PA_PU |= 0xFFFFu;
-    PC_DIE |= 0xFF7Cu; PC_PU |= 0xFF7Cu;                       /* hors PC0/1 (encodeur), PC7 (écran) */
+    PC_DIE |= 0xFF7Cu; PC_PU |= 0xFF7Cu;                       /* except PC0/1 (encoder), PC7 (screen) */
     PH_DIE |= 0xFFFFu; PH_PU |= 0xFFFFu;
-    PB_DIE |= 0xFF1Du; PB_PU |= 0xFF1Du;                       /* hors PB1/5/6/7 (écran) */
+    PB_DIE |= 0xFF1Du; PB_PU |= 0xFF1Du;                       /* except PB1/5/6/7 (screen) */
 #endif
-    PC_DIR &= ~PC7; PC_OUT |= PC7;      /* PC7 pilote l'écran : toujours sortie à 1 */
+    PC_DIR &= ~PC7; PC_OUT |= PC7;      /* PC7 drives the screen: always an output at 1 */
 }
 static void input_baseline(void)
 {
-    fm1_delay_ms(30);                   /* laisser les pull-ups se stabiliser */
+    fm1_delay_ms(30);                   /* let the pull-ups settle */
     base_pa = PA_IN & 0xFFFFu; base_ph = PH_IN & 0xFFFFu;
 }
 
 #if PROBE
-/* Diagnostic 16 broches/port : affiche le NOM des broches qui changent (ex. "PA12 PH4"). "--" = rien. */
+/* 16-pins/port diagnostic: shows the NAME of the pins that change (e.g. "PA12 PH4"). "--" = none. */
 static uint32_t probe_base[4], probe_prev[4], probe_t = 0;
 static const uint32_t PROBE_MASK[4] = { 0xFFFFu, 0xFF1Du, 0xFF7Cu, 0xFFFFu };
 static void probe_capture(void)
@@ -427,29 +427,29 @@ static void probe_line(uint32_t now)
 }
 #endif
 
-/* ---- Entrées analogiques (SARADC) ----
- * Driver de Felucca (MPL-2.0, même puce). NE PAS appeler fm1_adc_init() :
- * il passe PB1/PB6 en analogique, et sur la Pocket X ce sont des broches de l'écran. */
+/* ---- Analog inputs (SARADC) ----
+ * Felucca's driver (MPL-2.0, same chip). DO NOT call fm1_adc_init():
+ * it switches PB1/PB6 to analog, and on the Pocket X those are screen pins. */
 #include "fm1_adc.h"
-#define ADC_CH_MASTER 2      /* knob MASTER (PA10) : 0..1023 */
-#define ADC_CH_KEYS   9      /* clavier analogique : CAB ~617, DLY ~706, REV ~788 (mesuré) */
+#define ADC_CH_MASTER 2      /* MASTER knob (PA10): 0..1023 */
+#define ADC_CH_KEYS   9      /* analog keypad: CAB ~617, DLY ~706, REV ~788 (measured) */
 enum { KEY_NONE = 0, KEY_CAB, KEY_DLY, KEY_REV };
 static int32_t keys_idle = -1;
 static void adc_pins_analog(void)
-{   /* PA7/PA8 (clavier analogique possible), PA10 (MASTER) : entrées analogiques, sans pull */
+{   /* PA7/PA8 (possible analog keypad), PA10 (MASTER): analog inputs, no pull */
     uint32_t m = (1u<<7) | (1u<<8) | PA_MASTER;
     PA_DIE &= ~m; PA_PU &= ~m; PA_PD &= ~m; PA_DIR |= m;
 }
-/* lecture ADC "propre" : une 1re conversion jetée (le condensateur d'échantillonnage garde
- * la tension du canal précédent — effet fantôme), puis la vraie */
+/* "clean" ADC read: a 1st conversion is discarded (the sampling capacitor still holds
+ * the previous channel's voltage — ghosting), then the real one */
 static int32_t adc_read2(uint32_t ch)
 {
     (void)fm1_adc_read(ch);
     return fm1_adc_read(ch);
 }
-#define KEY_DEBUG 0          /* 1 = affiche la valeur brute du canal 9 en bas à droite (K####) */
-/* reconnaît le bouton du clavier analogique par la valeur la plus proche (fenêtre ±42),
- * sans dépendre de l'état au repos */
+#define KEY_DEBUG 0          /* 1 = shows the raw value of channel 9 at the bottom right (K####) */
+/* identifies the analog keypad button by the nearest value (±42 window),
+ * independent of the idle state */
 static int keys_decode(int32_t v)
 {
     static const int32_t REF[3] = { 617, 706, 788 };   /* CAB, DLY, REV */
@@ -462,7 +462,7 @@ static void keys_capture_idle(void)
 {
     fm1_delay_ms(20);
     keys_idle = fm1_adc_read(ADC_CH_KEYS);
-    /* si un bouton était tenu au démarrage (valeur proche d'un bouton), on suppose le repos à 1023 */
+    /* if a button was held at boot (value close to a button's), assume idle is 1023 */
     static const int32_t REF[3] = { 617, 706, 788 };
     for (int i = 0; i < 3 && keys_idle >= 0; i++) {
         int32_t e = keys_idle - REF[i]; if (e < 0) e = -e;
@@ -474,7 +474,7 @@ static void keys_capture_idle(void)
 static int32_t adc_base[ADC_NCH];
 static uint32_t adc_t = 0;
 static char adc_last[40];
-static int adc_skip(uint32_t ch) { return ch == 3u || ch == 4u; }   /* PB1/PB6 = écran */
+static int adc_skip(uint32_t ch) { return ch == 3u || ch == 4u; }   /* PB1/PB6 = screen */
 static void adc_capture(void)
 {
     fm1_delay_ms(20);
@@ -504,7 +504,7 @@ static void adc_line(uint32_t now)
     s[n] = 0;
     static uint32_t drawn_t = 0;
     int same = 1; for (int i = 0; i <= n; i++) if (s[i] != adc_last[i]) { same = 0; break; }
-    if (same && (now - drawn_t) < 1000u) return;   /* redessine si changement, ou chaque seconde */
+    if (same && (now - drawn_t) < 1000u) return;   /* redraw on change, or every second */
     drawn_t = now;
     for (int i = 0; i <= n; i++) adc_last[i] = s[i];
     lcd_rect(0,224,240,16,UI_PANEL);
@@ -512,7 +512,7 @@ static void adc_line(uint32_t now)
 }
 #endif
 
-/* anti-rebond générique : renvoie 1 au front d'appui */
+/* generic debounce: returns 1 on the press edge */
 typedef struct { uint8_t stab, last, cnt; } dbn_t;
 static int dbn_press(dbn_t *d, int raw)
 {
@@ -536,7 +536,7 @@ static void op_stage(uint32_t s, const char *txt)
     (void)txt;
 }
 
-/* table quadrature standard : index = (ancien<<2)|nouveau -> -1/0/+1 */
+/* standard quadrature table: index = (old<<2)|new -> -1/0/+1 */
 static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #if AUDIO_PROBE
 #include "audio_probe.h"
@@ -563,11 +563,11 @@ static void app_main(void)
     uint32_t push_t = 0;
     int32_t master_raw = -100;
 #if DSP_CPU1
-    fm1_cpu1_bar_build(27u);             /* un nouveau build redonne sa chance au 2e cœur */
-    fm1_cpu1_start();                    /* au démarrage, avant l'audio et les interruptions (Felucca) */
+    fm1_cpu1_bar_build(27u);             /* a new build gives the 2nd core another chance */
+    fm1_cpu1_start();                    /* at boot, before audio and interrupts (Felucca) */
 #endif
     lcd_init();
-    /* écran de démarrage avec la version : permet de vérifier quelle image tourne */
+    /* boot screen with the version: shows which image is running */
     lcd_rect(0,0,240,240,UI_BG);
     ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
     ft_box(0, 126, 240, OP_VERSION, &FT_SM, UI_DIM, UI_BG, 1);
@@ -627,7 +627,7 @@ static void app_main(void)
     a_hold = 1;                          /* DSP bypassed until the UI is up and 1.5 s have passed */
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
-    audio_start();                       /* guitare -> moteur DSP -> sortie, ampli activé */
+    audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 224, 240, 16, UI_PANEL);
@@ -641,8 +641,8 @@ static void app_main(void)
         fm1_wdt_feed();
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
-        audio_poll(now);                 /* le son suit l'UI (preset, réglages, volume) */
-        if (ui_mode != M_TUNER) {        /* charge du DSP en bas à droite : « C1 42% » (2e cœur), « C0 » ou BYP */
+        audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
+        if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "C0" or BYP */
             static uint32_t t_cpu;
             if (now - t_cpu >= 500u) {
                 t_cpu = now;
@@ -673,8 +673,8 @@ static void app_main(void)
         }
 #endif
 
-        int any = 0;                     /* une commande a été utilisée (sert aussi à quitter l'accordeur) */
-        /* --- encodeur (sens inversé : on soustrait) ; rotation rapide = pas de 5 --- */
+        int any = 0;                     /* a control was used (also used to exit the tuner) */
+        /* --- encoder (direction inverted: subtract); fast rotation = steps of 5 --- */
         uint8_t s = (uint8_t)(PC_IN & ENC_MASK);
         if (s != enc_last) {
             accum -= QDEC[(enc_last << 2) | s];
@@ -687,9 +687,9 @@ static void app_main(void)
                 any = 1;
             }
         }
-        /* --- boutons (appuyé = différent de l'état au repos) --- */
+        /* --- buttons (pressed = differs from the idle state) --- */
         uint32_t pa = (PA_IN & 0xFFFFu) ^ base_pa, ph = (PH_IN & 0xFFFFu) ^ base_ph;
-        /* PUSH : appui court = action habituelle (au relâchement), appui long (0,8 s) = SAVE */
+        /* PUSH: short press = usual action (on release), long press (0.8 s) = SAVE */
         dbn_press(&btn[B_PUSH], (ph & PH_PUSH) != 0);
         int push_now = btn[B_PUSH].stab != 0, p_push = 0, p_save = 0;
         if (push_now && !push_down) { push_down = 1; push_long = 0; push_t = now; }
@@ -700,7 +700,7 @@ static void app_main(void)
         int p_fx = dbn_press(&btn[B_FX], (pa & PA_FX) != 0);
         int p_mod = dbn_press(&btn[B_MOD], (ph & PH_MOD) != 0);
         int p_amp = dbn_press(&btn[B_AMP], (ph & PH_AMP) != 0);
-        /* HOME : appui court = retour à la chaîne, appui long (0,7 s) = accordeur */
+        /* HOME: short press = back to the chain, long press (0.7 s) = tuner */
         dbn_press(&bhome, (pa & PA_HOME) != 0);
         int home_now = bhome.stab != 0, p_home = 0, p_tuner = 0;
         if (home_now && !home_down) { home_down = 1; home_long = 0; home_t = now; }
@@ -709,7 +709,7 @@ static void app_main(void)
 
         int p_cab = 0, p_dly = 0, p_rev = 0;
         int32_t mv = -1;
-        if (now - adc_tick >= 10u) {     /* clavier analogique CAB/DLY/REV + knob MASTER, toutes les 10 ms */
+        if (now - adc_tick >= 10u) {     /* analog keypad CAB/DLY/REV + MASTER knob, every 10 ms */
             adc_tick = now;
             int k = keys_decode(adc_read2(ADC_CH_KEYS));
             p_cab = dbn_press(&btn[B_CAB], k == KEY_CAB);
@@ -743,7 +743,7 @@ static void app_main(void)
         (void)any;
 #endif
         if (mv >= 0) {
-            /* lissage (moyenne glissante x16, ~160 ms) puis hystérésis de 2 sur le volume 0..100 */
+            /* smoothing (x16 moving average, ~160 ms) then hysteresis of 2 on the 0..100 volume */
             master_raw = (master_raw < 0) ? mv * 16 : master_raw + mv - master_raw / 16;
             int32_t avg = master_raw / 16;
             uint32_t nv;
@@ -754,7 +754,7 @@ static void app_main(void)
             if (dv >= 2 || (nv == 0u && master_vol != 0u) || (nv == 100u && master_vol != 100u)) master_vol = nv;
         }
 #if !AUDIO_PROBE
-        ui_render();                     /* ne redessine que ce qui a changé */
+        ui_render();                     /* redraws only what changed */
 #endif
     }
 }

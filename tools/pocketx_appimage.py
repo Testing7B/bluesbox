@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Empaquette un app .bin (ex. openpocket.bin) en image flash 1 Mo flashable via UBOOT/Recover.
-   pocketx_appimage.py DUMP_1Mo.bin APP.bin OUT.bin
-Remplace app.bin dans la zone app du dump par APP (complété en 0xFF à la taille d'origine),
-reconstruit les CRC JLFS (app.bin + app_area_head) et ré-encrypte le SFC. Tout le reste
-(bootloader, cabs, presets, données d'unité) est conservé tel quel."""
+"""Packs an app .bin (e.g. openpocket.bin) into a 1 MB flash image, flashable via UBOOT/Recover.
+   pocketx_appimage.py DUMP_1MB.bin APP.bin OUT.bin
+Replaces app.bin in the dump's app area with APP (padded with 0xFF to the original size),
+rebuilds the JLFS CRCs (app.bin + app_area_head) and re-encrypts the SFC. Everything else
+(bootloader, cabs, presets, unit data) is kept as is."""
 import sys, os, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pocketx_fw as fw
@@ -11,17 +11,17 @@ import pocketx_fw as fw
 def build(dump_path, app_path, out_path):
     raw = bytearray(open(dump_path, 'rb').read())
     if len(raw) != 0x100000:
-        raise SystemExit(f"dump doit faire 1 Mo, pas {len(raw)}")
+        raise SystemExit(f"dump must be 1 MB, not {len(raw)}")
     dec = bytearray(fw.flash_decrypt(bytes(raw)))
     dec_orig = bytes(dec)
     ents = fw.flash_parse(dec)
     app = ents[1]
     if app['name'] != 'app.bin':
-        raise SystemExit(f"2e entree JLFS != app.bin ({app['name']})")
+        raise SystemExit(f"2nd JLFS entry != app.bin ({app['name']})")
     lo, ln, o = 0x4000 + app['addr'], app['len'], app['o']
     newapp = open(app_path, 'rb').read()
     if len(newapp) > ln:
-        raise SystemExit(f"app trop gros: {len(newapp)} > {ln}")
+        raise SystemExit(f"app too big: {len(newapp)} > {ln}")
     dec[lo:lo+ln] = newapp + b'\xff' * (ln - len(newapp))
     struct.pack_into("<H", dec, o + 2, fw.crc16(dec[lo:lo+ln]))        # app.bin data crc
     struct.pack_into("<H", dec, o, fw.crc16(dec[o+2:o+32]))            # app.bin entry crc
@@ -40,8 +40,8 @@ if __name__ == '__main__':
     if len(sys.argv) != 4:
         print(__doc__); sys.exit(2)
     nblk, used, ln = build(*sys.argv[1:4])
-    print(f"OK -> {sys.argv[3]} : app {used} o (sur {ln}), {nblk} blocs SFC ré-encryptés")
-    # auto-vérif
+    print(f"OK -> {sys.argv[3]}: app {used} B (of {ln}), {nblk} SFC blocks re-encrypted")
+    # self-check
     dec = fw.flash_decrypt(open(sys.argv[3], 'rb').read())
     bad = [k for k, v in fw.flash_checks(dec, fw.flash_parse(dec)).items() if not v]
-    print("auto-vérif CRC: TOUT OK" if not bad else f"ECHEC: {bad}")
+    print("CRC self-check: ALL OK" if not bad else f"FAILED: {bad}")

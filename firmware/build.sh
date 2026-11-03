@@ -8,13 +8,13 @@ TC="${JIELI_TOOLCHAIN:-$HOME/.jieli/toolchain}"
 echo "Toolchain : $TC"
 echo "BSP       : $BSP"
 if [ ! -x "$TC/pi32v2/bin/clang" ]; then
-  echo "ERREUR : pas de toolchain JieLi dans $TC"
-  echo "  -> c'est celui que tu utilises deja pour compiler CLIPPER."
-  echo "  -> relance avec :  JIELI_TOOLCHAIN=/chemin/vers/toolchain wsl bash build.sh"
+  echo "ERROR: no JieLi toolchain in $TC"
+  echo "  -> it is the one you already use to build CLIPPER."
+  echo "  -> run again with:  JIELI_TOOLCHAIN=/path/to/toolchain wsl bash build.sh"
   exit 1
 fi
 if [ ! -x "$TC/pi32v2/bin/ld" ]; then
-  echo "ERREUR : linker '$TC/pi32v2/bin/ld' manquant (toolchain incomplet)."
+  echo "ERROR: linker '$TC/pi32v2/bin/ld' missing (incomplete toolchain)."
   exit 1
 fi
 O="$HERE/build"; rm -rf "$O"; mkdir -p "$O"
@@ -22,12 +22,12 @@ CC="$TC/pi32v2/bin/clang -target pi32v2"
 $CC -c "$BSP/chip/crt0.S"    -o "$O/crt0.o"
 $CC -c "$BSP/chip/fm1_vec.S" -o "$O/vec.o"
 $CC -c "$BSP/chip/fm1_isr.S" -o "$O/isr.o"
-# 2e cœur (entrée + piles, Felucca) : seulement si openpocket.c l'active (#define DSP_CPU1 1)
+# 2nd core (entry + stacks, Felucca): only if openpocket.c enables it (#define DSP_CPU1 1)
 CPU1OBJ=""
 if grep -q "^#define DSP_CPU1 1" "$HERE/openpocket.c"; then
   $CC -c "$BSP/chip/fm1_cpu1.S" -o "$O/cpu1.o"; CPU1OBJ="$O/cpu1.o"
 fi
-# FPU matériel de l'AC791N (mêmes options que le SDK JieLi pour la WL82) + moteur DSP à 44,1 kHz
+# AC791N hardware FPU (same options as the JieLi SDK for the WL82) + DSP engine at 44.1 kHz
 FP="-mcpu=r3 -mfprev1"
 DSPDEF="-DPX_SR=44100.0f -DPX_OVERSAMPLE=4"
 INC="-I$HERE/inc -I$HERE/../engine"
@@ -35,10 +35,10 @@ $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF 
     -I"$BSP/chip" -I"$BSP/boards/fm1" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
 $CC $FP -O2 -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_dsp.o"
 $CC $FP -O2 -fno-builtin -c "$HERE/px_math.c" -o "$O/px_math.o"
-# pilote I2S officiel JieLi (bitcode LLVM du SDK AC79, Apache-2.0) -> objet pi32v2
+# official JieLi I2S driver (LLVM bitcode from the AC79 SDK, Apache-2.0) -> pi32v2 object
 $CC -Os -c -x ir "$HERE/sdk/iis.bc" -o "$O/iis.o"
 "$TC/pi32v2/bin/ld" -T "$HERE/app.ld" "$O/crt0.o" "$O/vec.o" "$O/isr.o" $CPU1OBJ "$O/openpocket.o" "$O/px_dsp.o" "$O/px_math.o" "$O/iis.o" -o "$O/openpocket.elf"
-# carte des symboles : sert à traduire une adresse de crash (PC) en nom de fonction
+# symbol map: used to translate a crash address (PC) into a function name
 "$TC/common/bin/objdump" -t "$O/openpocket.elf" 2>/dev/null | sort > "$O/symbols.txt" || true
 "$TC/common/bin/objcopy" -O binary -j .text     "$O/openpocket.elf" "$O/text.bin"
 "$TC/common/bin/objcopy" -O binary -j .data     "$O/openpocket.elf" "$O/data.bin"
@@ -54,10 +54,10 @@ assert start==0x02000120,hex(start or 0)
 img=bytearray(open(f"{out}/text.bin","rb").read())
 for at,part in sorted([(rt_load,open(f"{out}/rt.bin","rb").read()),(load,open(f"{out}/data.bin","rb").read())]):
     if part:
-        assert at-0x02000120>=len(img),"sections se chevauchent"
+        assert at-0x02000120>=len(img),"sections overlap"
         img+=b"\xff"*(at-0x02000120-len(img))+part
 img+=b"\xff"*(-len(img)%4)
-open(dest,"wb").write(img); print(f"OK -> openpocket.bin : {len(img)} octets")
+open(dest,"wb").write(img); print(f"OK -> openpocket.bin: {len(img)} bytes")
 PY
 
 # ---- update loader (loader/, felucca-bsp's, Pocket X layout) -> build/loader/ota.bin ----
@@ -73,7 +73,7 @@ import sys
 for ln in sys.stdin:
     p = ln.split()
     if len(p) > 4 and p[1].startswith(".") and int(p[2], 16) and int(p[3], 16) >= 0x02000000:
-        sys.exit("ERREUR : section " + p[1] + " du loader hors RAM")'
+        sys.exit("ERROR: loader section " + p[1] + " outside RAM")'
 
 python3 "$HERE/../tools/mkloader.py" "$L/loader.bin" "$L/ota.bin"
 

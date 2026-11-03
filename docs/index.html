@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -19,9 +19,6 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
 h1{margin:0;font-size:clamp(28px,6vw,40px);font-weight:800;letter-spacing:-.02em;line-height:1.05;text-wrap:balance}
 h1 span{color:var(--acc)}
 .tag{margin:6px 0 0;color:var(--dim);max-width:60ch}
-.lang{display:flex;gap:4px}
-.lang button{font:600 12px/1 Inter,sans-serif;letter-spacing:.06em;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--dim);cursor:pointer}
-.lang button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .card h2{margin:0;font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:10px}
 .card h2 b{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ink);color:var(--panel);font-size:12px;letter-spacing:0}
@@ -62,7 +59,6 @@ footer a,.note a{color:inherit}
       <h1>Open<span>Pocket</span></h1>
       <p class="tag" data-t="tag"></p>
     </div>
-    <div class="lang"><button data-lang="fr">FR</button><button data-lang="en">EN</button></div>
   </header>
 
   <section class="card" id="nomidi" hidden>
@@ -128,32 +124,6 @@ import { Updater, IS_OTA, IS_OPENPOCKET, OUR_LOADER, MODELS } from "./pxota.js";
 import { productOf, logicalImage, checkOfficial } from "./pxpkg.js";
 
 const T = {
-  fr: {
-    tag: "Installe OpenPocket, le firmware guitare open source, sur une Donner Pocket X ou une M-VAVE BlackBox — depuis le navigateur, par le câble USB.",
-    nomidi: "Ce navigateur ne gère pas le Web MIDI. Utilise Chrome ou Edge sur ordinateur (Windows, macOS, Linux, ChromeOS).",
-    s1: "Connecter la pédale", s1note: "Allume la pédale, branche-la en USB (câble de données) et ferme toute autre application qui l'utilise. Le navigateur demandera l'accès MIDI : accepte.",
-    connect: "Connecter", idle: "en attente", searching: "recherche…", found: "pédale trouvée", none: "aucune pédale", busy: "en cours…",
-    pedal: "Pédale", firmware: "Firmware", port: "Port MIDI",
-    official: "officiel", opfw: "OpenPocket", loader: "mode mise à jour (chargeur)",
-    s2: "Installer OpenPocket", s2note: "Version disponible :",
-    s2warn: "Pendant l'installation (environ 1 à 2 minutes) : ne débranche pas, n'éteins pas la pédale, garde l'onglet ouvert. Rien n'est écrit tant que la pédale n'a pas vérifié le paquet. Première installation depuis le firmware officiel : garde ta sauvegarde (carte SD / fm1buddy) à portée de main.",
-    install: "Installer", resume: "Reprendre la mise à jour",
-    st_start: "début", st_verify: "vérification", st_loader: "chargeur", st_write: "écriture", st_reboot: "redémarrage", st_done: "terminé",
-    done: "Terminé : la pédale tourne maintenant sous ", sameok: "OpenPocket est à jour.",
-    s3: "Revenir au firmware officiel", s3note: "Choisis le fichier officiel (.fwsc) de ta pédale, téléchargé chez Donner / M-VAVE. Il est vérifié ici, dans ton navigateur, et n'est envoyé à aucun serveur.",
-    backoff: "Revenir au firmware officiel", offknown: "Fichier officiel vérifié : ", offunknown: "Fichier officiel bien formé mais inconnu de cette page : ",
-    unknownok: "J'ai compris : ce fichier n'a pas été testé avec cette page. Je veux l'installer quand même.",
-    rescue: "Secours et options avancées",
-    rescuenote: "Si la pédale reste en mode mise à jour, reconnecte-la : le bouton « Reprendre » apparaît. Le bouton ci-dessous met une pédale sous OpenPocket dans le mode UBOOT de la puce, pour une récupération par carte SD (fm1buddy).",
-    uboot: "Passer en mode UBOOT", logt: "Journal",
-    foot1: "OpenPocket est un projet indépendant, sans lien avec Donner ou M-VAVE. Installation à tes risques. Code source : GPL-3.0.",
-    foot2: "Protocole de mise à jour et chargeur repris de Felucca et felucca-bsp (Hügelton Instruments, GPL-3.0 / MPL-2.0). Fichiers du SDK JieLi AC79 : Apache-2.0. Police Inter : SIL OFL 1.1.",
-    e_notfound: "Pédale introuvable. Vérifie le câble (données), ferme les autres applications MIDI, puis réessaie.",
-    e_model: "Ce paquet n'est pas pour cette pédale : ", e_lost: "La pédale a été déconnectée. Rebranche-la et appuie sur « Reprendre ».",
-    e_stopped: "La pédale a arrêté de répondre. ", e_noloader: "Le chargeur de mise à jour n'est pas apparu. Rebranche le câble puis « Reprendre ».",
-    e_noreturn: "La pédale n'est pas revenue : éteins-la et rallume-la.", e_mismatch: "Écrit, mais la pédale indique : ",
-    e_foreign: "La pédale est dans le mode mise à jour d'un autre firmware : ", e_pkg: "Paquet OpenPocket introuvable sur ce site : ",
-  },
   en: {
     tag: "Install OpenPocket, the open-source guitar firmware, on a Donner Pocket X or an M-VAVE BlackBox — from the browser, over the USB cable.",
     nomidi: "This browser has no Web MIDI. Use Chrome or Edge on a computer (Windows, macOS, Linux, ChromeOS).",
@@ -181,20 +151,14 @@ const T = {
     e_foreign: "The pedal is in the update mode of another firmware: ", e_pkg: "OpenPocket package missing on this site: ",
   },
 };
-let lang = (navigator.language || "fr").slice(0, 2) === "fr" ? "fr" : "en";
-try { const s = localStorage.getItem("op-lang"); if (s === "fr" || s === "en") lang = s; } catch (_) {}
+const lang = "en";
 const stored = (k, d) => { try { return localStorage.getItem(k) || d; } catch (_) { return d; } };
 const t = (k) => (T[lang] && T[lang][k]) || T.en[k] || k;
 function applyLang() {
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
-  document.querySelectorAll(".lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
   drawSteps();
 }
-document.querySelectorAll(".lang button").forEach((b) => b.onclick = () => {
-  lang = b.dataset.lang; try { localStorage.setItem("op-lang", lang); } catch (_) {}
-  applyLang(); if (lastDev) showDev(lastDev);
-});
 
 const $ = (id) => document.getElementById(id);
 const logEl = $("log");

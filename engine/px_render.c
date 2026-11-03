@@ -1,10 +1,10 @@
-/* px_render.c — passe un WAV guitare (DI mono/stéréo) dans le moteur OpenPocket
- * et écrit un WAV traité. Sert à ENTENDRE tes vrais tons sur ta propre guitare.
+/* px_render.c — runs a guitar WAV (DI mono/stereo) through the OpenPocket engine
+ * and writes the processed WAV. Lets you HEAR your actual tones on your own guitar.
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- *   px_render in.wav out.wav [preset 1..42] [amp 1..29] [gain 0..100]   (liste : docs/SONS-ET-COMMANDES.md)
+ *   px_render in.wav out.wav [preset 1..42] [amp 1..29] [gain 0..100]   (list: docs/SOUNDS-AND-CONTROLS.md)
  *
- * Compile hôte : cc -O2 px_render.c px_dsp.c -lm -o px_render
+ * Host build: cc -O2 px_render.c px_dsp.c -lm -o px_render
  */
 #include "px_dsp.h"
 #include <stdio.h>
@@ -12,7 +12,7 @@
 #include <string.h>
 #include <stdint.h>
 
-/* --- WAV minimal (PCM16 ou float32, mono/stéréo) --- */
+/* --- minimal WAV (PCM16 or float32, mono/stereo) --- */
 static int rd_u32(FILE *f, uint32_t *v){ uint8_t b[4]; if(fread(b,1,4,f)!=4) return 0; *v=b[0]|b[1]<<8|b[2]<<16|(uint32_t)b[3]<<24; return 1;}
 static int rd_u16(FILE *f, uint16_t *v){ uint8_t b[2]; if(fread(b,1,2,f)!=2) return 0; *v=b[0]|b[1]<<8; return 1;}
 static void wr_u32(FILE *f,uint32_t v){ uint8_t b[4]={v,v>>8,v>>16,v>>24}; fwrite(b,1,4,f);}
@@ -20,7 +20,7 @@ static void wr_u16(FILE *f,uint16_t v){ uint8_t b[2]={v,v>>8}; fwrite(b,1,2,f);}
 
 static float *load_wav(const char *fn, int *n, float *sr)
 {
-    FILE *f = fopen(fn, "rb"); if(!f){ fprintf(stderr,"ouverture %s\n",fn); return 0; }
+    FILE *f = fopen(fn, "rb"); if(!f){ fprintf(stderr,"cannot open %s\n",fn); return 0; }
     char id[4]; uint32_t sz; fread(id,1,4,f); rd_u32(f,&sz); fread(id,1,4,f); /* RIFF....WAVE */
     uint16_t fmt=1, ch=1, bits=16; uint32_t rate=48000, datasz=0; long datapos=0;
     for(;;){ char ck[4]; uint32_t cs; if(fread(ck,1,4,f)!=4) break; if(!rd_u32(f,&cs)) break;
@@ -62,7 +62,7 @@ int main(int argc, char **argv)
     int npreset = argc>3 ? atoi(argv[3]) - 1 : 0;
     int n; float sr;
     float *in = load_wav(argv[1], &n, &sr);
-    if(!in){ fprintf(stderr,"WAV illisible\n"); return 1; }
+    if(!in){ fprintf(stderr,"unreadable WAV\n"); return 1; }
 
     static px_engine e; px_engine_init(&e, sr);
     px_preset_t p; px_preset_factory(&p, npreset);

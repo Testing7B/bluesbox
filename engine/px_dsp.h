@@ -1,15 +1,15 @@
-/* OpenPocket — moteur de son guitare pour la Donner Pocket X / M-Vave (JieLi AC791N)
+/* OpenPocket — guitar sound engine for the Donner Pocket X / M-Vave (JieLi AC791N)
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * px_dsp.h — v3 : un preset = 11 blocs ; chaque bloc a un TYPE, un état ON/OFF et 5 réglages 0..100.
- * L'UI et le moteur partagent exactement cette structure.
+ * px_dsp.h — v3: a preset = 11 blocks; each block has a TYPE, an ON/OFF state and 5 settings 0..100.
+ * The UI and the engine share exactly this structure.
  *
  *   IN -> GATE -> COMP -> PITCH -> SFX -> [ DRIVE -> AMP ] (x4) -> CAB -> EQ -> MOD -> DELAY -> REVERB -> OUT
  *
- * Les modèles sont voicés d'après des analyses de circuits publiées (ElectroSmash, Electric Druid, Rob Robinette,
- * Duncan Amps, datasheets Celestion/Jensen, manuels Boss/Roland/Ampeg...) — voir docs/SONS-ET-COMMANDES.md.
- * Les noms évoquent les modèles dont ils s'inspirent, sans reprendre de marque.
- * Float simple précision (FPU de l'AC791N) ; libm minimale : sinf/cosf/expf/logf/powf/sqrtf (firmware/px_math.c).
+ * Models are voiced from published circuit analyses (ElectroSmash, Electric Druid, Rob Robinette,
+ * Duncan Amps, Celestion/Jensen datasheets, Boss/Roland/Ampeg manuals...) — see docs/SOUNDS-AND-CONTROLS.md.
+ * Names evoke the models they are inspired by, without using any brand.
+ * Single-precision float (AC791N FPU); minimal libm: sinf/cosf/expf/logf/powf/sqrtf (firmware/px_math.c).
  */
 #ifndef PX_DSP_H
 #define PX_DSP_H
@@ -28,7 +28,7 @@ extern "C" {
 #endif
 #define PX_MAX_BLOCK 64
 
-/* ---------------------------------------------------------------- blocs --- */
+/* --------------------------------------------------------------- blocks --- */
 enum { PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_DRIVE, PX_B_AMP, PX_B_CAB, PX_B_EQ, PX_B_MOD,
        PX_B_DELAY, PX_B_REVERB, PX_NBLK };
 #define PX_NPAR 5
@@ -64,7 +64,7 @@ typedef struct {
     uint8_t p[PX_NBLK][PX_NPAR];   /* 0..100 */
 } px_preset_t;
 
-/* ---------------------------------------------------------- catalogue UI --- */
+/* ------------------------------------------------------------ UI catalog --- */
 const char *px_block_label(int blk);
 const char *px_block_name(int blk);
 int         px_ntypes(int blk);
@@ -76,13 +76,13 @@ int         px_param_text(int blk, int type, int k, int v, char *buf8);
 int         px_preset_count(void);
 void        px_preset_factory(px_preset_t *p, int idx);
 
-/* ----------------------------------------------------------------- état --- */
+/* ---------------------------------------------------------------- state --- */
 typedef struct { float b0, b1, b2, a1, a2, z1, z2; } px_bq;
 typedef struct { float b0, b1, a1, z; } px_op;      /* first-order section (RC) */
 
-#define PX_PS_N 2048                   /* tampon des décaleurs de hauteur (46 ms) */
-#define PX_DLY_N 48000                 /* 1,09 s de delay */
-#define PX_RV_C 2800                   /* combs de reverb */
+#define PX_PS_N 2048                   /* pitch shifter buffer (46 ms) */
+#define PX_DLY_N 48000                 /* 1.09 s of delay */
+#define PX_RV_C 2800                   /* reverb combs */
 #define PX_RV_A 1100
 #define PX_CABM 6                      /* cabinet detail: cone breakup modes (2-pole resonators) */
 #define PX_CABT 8                      /* cabinet detail: sparse taps (mic comb, back wave) */
