@@ -45,8 +45,9 @@ the pedal was switched off and on ([issue #1](https://github.com/isod89/openpock
 turns the chip's **long-press reset** off as its very first step (P33 `PINR_CON = 0`); OpenPocket did not, and on the
 BlackBox a pin sits at its active level, so the chip reset itself 4 s after each start. Right after an install the
 setting was still the official firmware's (it survives a warm reset), so the pedal worked until the next power cycle.
-**v31 turns it off at start.** It also sets the power supplies the way the official firmware does (v30), and the boot
-screen shows `PWR ...` and `RST <reset source> PINR <value found>`. Being tested on the BlackBox. For a pedal that
+**v31 turns it off at start** (confirmed on the BlackBox). The boot screen shows `RST <reset source> PINR <value found>`.
+(v30 to v32 also set the power supplies the way the official firmware does; it was not needed, and on a Pocket X it made
+the DSP slower and crackle, so v33 leaves them as the boot loader does again.) Being tested on the BlackBox. For a pedal that
 restarts in a loop, the page has a **rescue mode** (step 2): tick it, press Connect, plug the pedal in; the install
 starts the moment the pedal answers and halts its DSP at once. A BlackBox can always go back to its official firmware from the page (step 3). It is the same JieLi update system as the M-VAVE FM-1, where this method is
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,

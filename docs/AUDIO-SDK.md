@@ -211,3 +211,11 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - Slots: `SLOT_PUT` changes `st_slot` in RAM; `COMMIT` (or bit 1) writes the whole store once (`st_commit`): an import
   of 52 presets is one flash write. `BLK_COL` moved to `ui_colors.h` for `CAT_BLOCK`.
 - `tests/edsim.c` compiles px_editor.h + px_store.h + the engine catalogue on the PC (stdin / stdout like devsim).
+
+## v33: the supplies back to the boot loader's levels
+- On a Pocket X with v32: DOOM SLUDGE C1 77 % (61 % on v28/v29, same engine), SMOOTH LEAD in BYP (92 %), crackles on
+  nearly every sound. The engine code has not changed since v29; v30 added the stock power settings (VDC14 7,
+  SYSVDD 15, CON6 / CON9 bits, the 1.3 V supply on the DC-DC, CON5 0x74). They were not what fixed issue #1 (the
+  long-press reset, v31, was), so v33 removes them: the boot screen only shows the levels found (`PWR 3 11`).
+- Not proven yet: the Pocket X test of v33 (C1 % back to ~61 %, no crackle) decides. If it does not, the next suspect is
+  the code cache (the DSP runs from XIP: px_engine_process 17 KB, the hot path ~20 KB, shared with CPU0).

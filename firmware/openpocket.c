@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "32"
+#define OP_VERSION_NUM "33"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -591,9 +591,7 @@ static void app_main(void)
 #if !AUDIO_PROBE
     {   /* the supplies as found -> as set (fm1_cstart): "PWR 3>7 11>15 DCDC" */
         char l[32]; l[0] = 0;
-        b_str(l, "PWR "); b_num(l, op_pwr.vdc0); b_str(l, ">"); b_num(l, op_pwr.vdc1);
-        b_str(l, " "); b_num(l, op_pwr.sys0); b_str(l, ">"); b_num(l, op_pwr.sys1);
-        b_str(l, op_pwr.dcdc ? " DCDC OFF>ON" : " DCDC ON");
+        b_str(l, "PWR "); b_num(l, op_pwr.vdc0); b_str(l, " "); b_num(l, op_pwr.sys0); b_str(l, " (BOOT LEVELS)");
         ft_box(0, 150, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
         char h[9]; l[0] = 0;
         b_str(l, "RST "); rst_names(l, op_pwr.rst); b_str(l, " PINR "); hex8(h, op_pwr.pinr); b_str(l, h + 6);
@@ -820,18 +818,13 @@ void fm1_cstart(void)
     pinr0 = fm1_p33_read(0x94u);
     fm1_p33_write(0x94u, 0);
     fm1_wdt_arm(0x0D);
-    /* v30, issue #1: the supplies M-VAVE's firmware sets as it starts (BlackBox_020 and PocketX_016 alike, their
-     * power init: P3_ANA_CON6 [2:0] = 7, CON9 [3:0] = 15, the 1.3 V supply on the DC-DC, CON7 0xA5, CON8 0x96).
-     * The boot loader leaves VDC14 1.40 V and SYSVDD 1.26 V; the always-on P33 keeps the stock levels across a
-     * warm reset, so OpenPocket ran fine right after an install, then reset under DSP load after a power cycle. */
+    /* v33: the supplies stay as the boot loader leaves them (VDC14 3, SYSVDD 11, LDO), as up to v29. v30 set them as
+     * the stock firmware does (VDC14 7, SYSVDD 15, the 1.3 V supply on the DC-DC): it was not what fixed issue #1
+     * (the long-press reset was), and with it a Pocket X ran its DSP ~25 % slower (DOOM SLUDGE 61 % -> 77 %) and
+     * crackled. Only read, for the boot screen. */
     vdc0 = fm1_vdc14();
     sys0 = fm1_sysvdd();
-    fm1_vdc14_raise(7u);
-    fm1_p33_or(FM1_P3_ANA_CON6, 0x08u);         /* as stock: CON6 = 0x0F */
-    fm1_p33_or(FM1_P3_ANA_CON9, 0x10u);         /* SYSVDD_VOL_HD_SEL: the core supply's strong drive, as stock */
-    fm1_sysvdd_raise(15u);
-    dcdc = (uint32_t)fm1_power_stock();
-    fm1_p33_write(FM1_P3_ANA_CON5, 0x74u);      /* VDDIOM 4, VDDIOW 3, VDDIO drive 1: stock's final value */
+    dcdc = 0;
     fm1_wdt_feed();
     if (guard.magic != 0x48575431u || guard.pending > 1u || guard.failed > 1u) {
         guard.magic = 0x48575431u; guard.failed = 0; guard.pending = 0;
