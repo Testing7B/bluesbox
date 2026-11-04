@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "30"
+#define OP_VERSION_NUM "31"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -529,7 +529,7 @@ static const char *const ST_NAME[ST_N] = {"?", "INPUTS", "PRESET", "ENGINE INIT"
                                           "UI DRAW", "FIRST 6 S", "OK"};
 volatile struct { uint32_t magic, stage, blocks, load, peak, nans, c1, loops, crash_seen, safe; } op_diag
     __attribute__((section(".noinit")));
-static struct { uint8_t vdc0, vdc1, sys0, sys1, dcdc; } op_pwr;   /* the supplies at boot (fm1_cstart) */
+static struct { uint8_t vdc0, vdc1, sys0, sys1, dcdc, rst, pinr; } op_pwr;   /* supplies, reset source, pin reset (fm1_cstart) */
 static void op_stage(uint32_t s, const char *txt)
 {
     op_diag.stage = s;
@@ -550,6 +550,16 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
 #endif
+
+/* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
+static void rst_names(char *l, uint32_t r)
+{
+    static const char *const N[7] = {"POWER-ON", "VDDIO LOW", "WATCHDOG", "VCM", "LONG PRESS", "1.2V", "SOFT"};
+    int any = 0;
+    for (int i = 0; i < 7; i++)
+        if (r & (1u << i)) { if (any) b_str(l, "+"); b_str(l, N[i]); any = 1; }
+    if (!any) b_str(l, "NONE");
+}
 
 static void app_main(void)
 {
@@ -580,6 +590,9 @@ static void app_main(void)
         b_str(l, " "); b_num(l, op_pwr.sys0); b_str(l, ">"); b_num(l, op_pwr.sys1);
         b_str(l, op_pwr.dcdc ? " DCDC OFF>ON" : " DCDC ON");
         ft_box(0, 150, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
+        char h[9]; l[0] = 0;
+        b_str(l, "RST "); rst_names(l, op_pwr.rst); b_str(l, " PINR "); hex8(h, op_pwr.pinr); b_str(l, h + 6);
+        ft_box(0, 170, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
     }
 #endif
     for (int i = 0; i < 6; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
@@ -599,6 +612,10 @@ static void app_main(void)
             ft_box(0, 6, 240, "LAST BOOT FAILED", &FT_MD, RED, UI_BG, 1);
             l[0] = 0; b_str(l, "STOPPED AT: "); b_str(l, ST_NAME[st]);
             ft_box(0, 40, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+            if (!crashed) {
+                l[0] = 0; b_str(l, "RESET BY: "); rst_names(l, op_pwr.rst);
+                ft_box(0, 62, 240, l, &FT_SM, UI_ACC, UI_BG, 1);
+            }
             if (crashed) {
                 l[0] = 0; b_str(l, "CRASH  PC "); hex8(h, fm1_crash.pc); b_str(l, h);
                 ft_box(0, 62, 240, l, &FT_SM, UI_ACC, UI_BG, 1);
@@ -788,8 +805,15 @@ static void app_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
-    uint32_t vdc0, sys0, dcdc;
+    uint32_t vdc0, sys0, dcdc, rst0, pinr0;
     fm1_time_init();
+    /* v31, issue #1: the stock firmware's first act is P3_PINR_CON = 0, the long-press reset off (BlackBox_020
+     * f_0200698a). Left on, a pin held at its active level resets the chip every 4 s (the SDK offers 4 or 8 s):
+     * Megal's BlackBox reset every 4.3 s after a power cycle, never after an install (the always-on P33 kept the
+     * stock firmware's 0 across the warm reset). Read first, so the boot screen can show it. */
+    rst0 = fm1_p33_read(FM1_P3_RST_SRC);
+    pinr0 = fm1_p33_read(0x94u);
+    fm1_p33_write(0x94u, 0);
     fm1_wdt_arm(0x0D);
     /* v30, issue #1: the supplies M-VAVE's firmware sets as it starts (BlackBox_020 and PocketX_016 alike, their
      * power init: P3_ANA_CON6 [2:0] = 7, CON9 [3:0] = 15, the 1.3 V supply on the DC-DC, CON7 0xA5, CON8 0x96).
@@ -816,6 +840,7 @@ void fm1_cstart(void)
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++) *d = *s;
     op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
     op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
+    op_pwr.rst = (uint8_t)rst0; op_pwr.pinr = (uint8_t)pinr0;
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;

@@ -187,3 +187,16 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - Boot OK now at 6 s (4.5 s of DSP), so a pedal that resets under load is caught by the guard and the safe mode.
 - Installer: rescue mode (packages fetched beforehand; the install starts the moment a pedal answers; the upgrade
   command halts the DSP and the second core at once). BlackBox install allowed again, with a note.
+
+## v31: the long-press reset (issue #1, the real cause)
+- v30 on the BlackBox: `PWR 3>7 11>15 DCDC OFF>ON` (supplies set), and still a reset: "LAST BOOT FAILED, STOPPED AT
+  FIRST 6 S", no crash, BLOCKS 976 (2.8 s of audio), LOAD 40 %, NAN 0. The .noinit diagnostics survived, so a chip
+  reset, not a power loss; no CPU exception.
+- The period, ~4.3 s, matches the long-press reset (P3_PINR_CON, 0x94: the SDK's `struct long_press` offers 4 s or
+  8 s, rising or falling edge, on one wake-up pin) + the boot. BlackBox_020's app entry (`f_0200698a`) writes
+  PINR_CON = 0 before anything else; OpenPocket never touched it. The always-on P33 keeps 0 across a warm reset (an
+  install), not across a power cycle: then the boot loader / power-on value applies, and on the BlackBox the pin
+  sits at its active level (the Pocket X's does not).
+- `fm1_cstart` now reads P3_RST_SRC and PINR_CON, then writes PINR_CON = 0, first thing. The boot screen shows
+  `RST <source> PINR <found>`, and "LAST BOOT FAILED" shows "RESET BY: ..." (P3_RST_SRC bits: 0 power-on,
+  1 VDDIO low, 2 watchdog, 3 VCM, 4 long press, 5 1.2 V, 6 soft).
