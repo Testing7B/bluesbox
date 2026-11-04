@@ -219,3 +219,6 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   long-press reset, v31, was), so v33 removes them: the boot screen only shows the levels found (`PWR 3 11`).
 - Not proven yet: the Pocket X test of v33 (C1 % back to ~61 %, no crackle) decides. If it does not, the next suspect is
   the code cache (the DSP runs from XIP: px_engine_process 17 KB, the hot path ~20 KB, shared with CPU0).
+- Confirmed on both pedals with v31's boot line: a Pocket X starts with `PINR 08` (bit 0, the enable, clear: the
+  long-press reset off), Megal's BlackBox with `PINR 09` (bit 0 set: on). Bit 0 is the enable in the SDK's
+  `long_press_reset_enable` (cpu.a power_wakeup.c: P33 0x94 bit 0, and 0x95 bit 0).
