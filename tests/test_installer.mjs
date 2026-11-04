@@ -161,6 +161,36 @@ ok(productOf(px) === "PocketX_924" && productOf(bb) === "BlackBox_924", "package
   ok(err && err.code === "pkg", "rescue: no package for the pedal's model -> refused, nothing sent");
 }
 
+// 6b. the presets survive an update: the store [0xF0000, 0xF4000) is never erased, even sectors that end like an
+// update record (the loader's record scan must skip it)
+{
+  const src = join(TMP, "flash_store.bin"), dump = join(TMP, "store_after.bin");
+  py(`
+import sys
+f = bytearray(open(sys.argv[1], "rb").read())
+def crc(b, c=0):
+    for x in b:
+        c ^= x << 8
+        for _ in range(8): c = ((c << 1) ^ 0x1021 if c & 0x8000 else c << 1) & 0xFFFF
+    return c
+for s in range(0xF0000, 0xF4000, 0x1000):
+    f[s:s + 0x1000] = bytes((i * 7 + s // 0x1000) & 0xFF for i in range(0x1000))
+    r = bytearray(f[s + 0xF00:s + 0xF00 + 80]); r[6:8] = (0x5441).to_bytes(2, "little")
+    r[0:2] = crc(r[2:80]).to_bytes(2, "little"); f[s + 0xF00:s + 0xF00 + 80] = r
+open(sys.argv[2], "wb").write(f)`, join(TMP, "flash_old.bin"), src);
+  const sim = simAccess([src, "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  let res = null, err = null;
+  try { res = await u.install(logicalImage(px), "PocketX_924", () => {}); } catch (e) { err = e; }
+  await sim.end();
+  const same = py(`
+import sys
+a = open(sys.argv[1], "rb").read()[0xF0000:0xF4000]; b = open(sys.argv[2], "rb").read()[0xF0000:0xF4000]
+print("same" if a == b else "changed")`, src, dump);
+  ok(!err && res === "PocketX_924" && same === "same", `presets: an update leaves the preset store untouched (${same})`);
+}
+
 // 6. the way back, step 1 with the real official package (when given): checkOfficial, then OpenPocket's ota.c checks
 //    and stages the official loader (its boot area must be valid)
 const off = process.argv[2];
