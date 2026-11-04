@@ -1,6 +1,6 @@
 # OpenPocket
 install here "for the Donner Pocket X. NOT for the M-VAVE BlackBox yet (boot loop, issue #1)" : https://isod89.github.io/openpocket/
-
+NEW WEB EDITOR : https://isod89.github.io/openpocket/editor.html
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
 
