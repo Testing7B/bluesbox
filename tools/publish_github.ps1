@@ -94,7 +94,7 @@ Pop-Location
 $pk = @(Get-ChildItem "docs\firmware\*.fwsc" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 if ($pk.Count -eq 0) { Fail "no package in docs\firmware: run build.bat first" }
 $notes = Join-Path $work "notes.md"
-$text = "OpenPocket $Tag`n`nInstall from the browser (Chrome / Edge): $pages`n`nPackages: PocketX_9$ver.fwsc (Donner Pocket X), BlackBox_9$ver.fwsc (M-VAVE BlackBox)."
+$text = "OpenPocket $Tag`n`nInstall from the browser (Chrome / Edge): $pages`nPreset editor (v32 and newer): ${pages}editor.html`n`nPackages: PocketX_9$ver.fwsc (Donner Pocket X), BlackBox_9$ver.fwsc (M-VAVE BlackBox)."
 [IO.File]::WriteAllText($notes, $text, (New-Object Text.UTF8Encoding $false))
 gh release view $Tag --repo $full *> $null
 if ($LASTEXITCODE -eq 0) {
@@ -127,3 +127,4 @@ Write-Host ""
 Write-Host "Repository:  https://github.com/$full" -ForegroundColor Green
 Write-Host "Release:     https://github.com/$full/releases/tag/$Tag" -ForegroundColor Green
 Write-Host "Installer:   $pages   (the first time, GitHub takes a minute or two)" -ForegroundColor Green
+Write-Host "Editor:      ${pages}editor.html" -ForegroundColor Green

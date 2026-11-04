@@ -21,4 +21,7 @@ $CC -O1 -Wall -Wno-unused-function -o build/devsim tests/devsim.c
 if [ -n "$1" ]; then echo "== packages"; python3 tests/test_pxpkg.py "$1"; fi
 echo "== installer"
 node tests/test_installer.mjs "$1"
-if node -e "require('playwright')" 2>/dev/null; then echo "== page"; node tests/test_page.mjs build/page; else echo "(Playwright not installed: page test skipped)"; fi
+echo "== editor"
+$CC -O1 -Wall -Wno-unused-function -o build/edsim tests/edsim.c engine/px_dsp.c firmware/px_math.c -lm
+node tests/test_editor.mjs
+if node -e "require('playwright')" 2>/dev/null; then echo "== page"; node tests/test_page.mjs build/page; echo "== editor page"; node tests/test_editor_page.mjs build/editor; else echo "(Playwright not installed: page tests skipped)"; fi

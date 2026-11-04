@@ -200,3 +200,14 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - `fm1_cstart` now reads P3_RST_SRC and PINR_CON, then writes PINR_CON = 0, first thing. The boot screen shows
   `RST <source> PINR <found>`, and "LAST BOOT FAILED" shows "RESET BY: ..." (P3_RST_SRC bits: 0 power-on,
   1 VDDIO low, 2 watchdog, 3 VCM, 4 long press, 5 1.2 V, 6 soft).
+
+## v32: the web editor
+- `firmware/px_editor.h`: SysEx `F0 7D 4F 50 cmd ... F7` (docs/EDITOR-PROTOCOL.md), frames from usb.c's `sx_frame`
+  (`ota_frame_get`), handled in the main loop before `ota_service` (which takes any frame), replies through
+  `ota_wire_send`, as Felucca's editor.c. It edits `PRESET` directly: `audio_poll` applies, `ui_render` redraws.
+- Pushes: while watched, a hash of PRESET + slot + focused block + `st_gen`; a change made by the editor itself updates
+  the hash, so only the pedal's own changes are pushed (40 ms apart at most). The watch ends 5 s after the last request
+  (the page pings every second; PING also returns the DSP load).
+- Slots: `SLOT_PUT` changes `st_slot` in RAM; `COMMIT` (or bit 1) writes the whole store once (`st_commit`): an import
+  of 52 presets is one flash write. `BLK_COL` moved to `ui_colors.h` for `CAT_BLOCK`.
+- `tests/edsim.c` compiles px_editor.h + px_store.h + the engine catalogue on the PC (stdin / stdout like devsim).

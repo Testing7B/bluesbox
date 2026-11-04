@@ -127,6 +127,7 @@ static void px_audio_halt(void)                 /* before any flash write: nothi
     a_c1 = 0;
 #endif
 }
+static void ed_service(uint32_t now);
 static void px_usb_service(uint32_t now)        /* every main-loop pass */
 {
     usb_retry(now);
@@ -140,6 +141,7 @@ static void px_usb_service(uint32_t now)        /* every main-loop pass */
         fm1_delay_ms(30);
         fm1_enter_uboot();
     }
+    ed_service(now);                            /* the web editor (px_editor.h): its frames first */
     ota_service();                              /* the installer's handshake */
     if (usb.ota_req) {                          /* its upgrade command: commits and resets, or comes back */
         usb.ota_req = 0;

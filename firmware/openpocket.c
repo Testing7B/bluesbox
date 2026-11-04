@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "31"
+#define OP_VERSION_NUM "32"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -549,6 +549,11 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "ui.h"
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
+#if !AUDIO_PROBE
+static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
+static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
+#include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
+#endif
 #endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */

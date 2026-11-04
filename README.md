@@ -52,6 +52,14 @@ starts the moment the pedal answers and halts its DSP at once. A BlackBox can al
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
 
+## Preset editor
+
+From OpenPocket **v32**, the **Preset editor** page (`editor.html`, linked from the installer) edits the pedal live over
+USB, in Chrome or Edge: the 52 presets (load, save, save as, move up / down, back to factory), the current sound (every
+block, type and setting, on / off, the block order by dragging the tiles, the name), and preset files (export one or
+all 52 as JSON, import one to try it or many back into their slots). What you change on the page plays at once, and
+what you change on the pedal shows on the page. The protocol: [`docs/EDITOR-PROTOCOL.md`](docs/EDITOR-PROTOCOL.md).
+
 ## Build
 
 Windows: install WSL and the JieLi toolchain once (`wsl bash firmware/setup.sh`), then run **`build.bat`**. It makes:
@@ -76,6 +84,9 @@ the packages, and the installer on GitHub Pages (with your own `git` / `gh` and 
   `ldr_core.c`) on a simulated flash: update, install over the official firmware, wrong model refused, damaged package
   refused before anything is erased, way back to the official firmware (its loader staged and checked);
 - the page itself in headless Chromium (Playwright), clicking Connect and Install.
+- the preset editor against a simulated pedal that runs the pedal's real editor code (`px_editor.h`) and preset store
+  on a simulated flash: every command, pushes both ways, a power cycle; then the editor page in Chromium (sliders,
+  drag and drop, save, move, export / import).
 
 ## Layout
 

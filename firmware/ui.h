@@ -36,19 +36,7 @@ static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 
 #define C_OFF  0x2124
 #define C_LINE 0x2945
-static const uint16_t BLK_COL[PX_NBLK] = {
-    0x5D9F, 0x5D9F,   /* GT, CMP: blue (dynamics) */
-    0xC31F,           /* PIT: purple */
-    0xFB1A,           /* SFX: pink */
-    0xFE00,           /* DRV: yellow */
-    0xFB20,           /* AMP: orange */
-    0xCC4A,           /* CAB: beige */
-    0x6FE8,           /* EQ: light green */
-    0x7D5F,           /* MOD: lavender */
-    0x47FF,           /* DLY: cyan */
-    0x8FE0,           /* REV: green */
-    0xF8B2,           /* SYN: raspberry */
-};
+#include "ui_colors.h"                 /* BLK_COL: the blocks' colours (also the web editor's, px_editor.h) */
 
 /* geometry (font heights: FT_SM 15 px, FT_MD 23 px) */
 #define H_Y      4u                    /* header */
