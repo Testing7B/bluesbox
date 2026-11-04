@@ -169,3 +169,21 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   (v25..v28) is converted at boot; the first save writes format 2 to the other copy.
 - Instructions per sample (PC, scalar): B3 ORGAN 2,329 (the heaviest new preset, as heavy as DOOM SLUDGE 2,311);
   others 709–1,795. Engine 339,660 bytes in POOL (344,064).
+
+## v30: the power supplies at start (issue #1, BlackBox boot loop)
+- Report: OpenPocket on a BlackBox worked for an hour after the install, then, after the power switch, restarted every
+  ~4.3 s (USB up 2.9 s, down 1.3 s), on battery and on USB alike.
+- BlackBox_020 and PocketX_016 drive the hardware identically (same pins, same register values, same `isd_config`);
+  both run the same power init at start (BB `f_0200698a`, PX `f_0200664a`): P3_ANA_CON0 LDO on → DC-DC on → LDO off
+  (1 ms apart), CON1 0x20, CON5 0x40 → [3:0] 4 → [5:4] 3 (0x74), CON6 12 → [2:0] 7, CON7 0xA5, CON8 0x96,
+  CON9 |= 0x10 (SYSVDD_VOL_HD_SEL) → [3:0] 15, CON0 |= 0x80, ANA_KEEP [5:0] 0, CON2 |= 0x40.
+- OpenPocket did none of it (the BSP had `fm1_vdc14_raise`, `fm1_sysvdd_raise`, `fm1_power_stock`, never called). The
+  always-on P33 keeps these across a warm reset, so after an install (the official firmware ran last) the levels
+  were the stock ones; after a power cycle, the boot loader's (VDC14 3 = 1.40 V, SYSVDD 11 = 1.26 V, LDO), too low
+  for both cores at full load on some units.
+- `fm1_cstart` now raises VDC14 to 7 and SYSVDD to 15 (a level per 100 us), sets the stock CON6 / CON9 bits, moves
+  the 1.3 V supply onto the DC-DC, CON5 0x74, before anything else runs. The boot screen shows `PWR a>b c>d DCDC ...`
+  (as found > as set).
+- Boot OK now at 6 s (4.5 s of DSP), so a pedal that resets under load is caught by the guard and the safe mode.
+- Installer: rescue mode (packages fetched beforehand; the install starts the moment a pedal answers; the upgrade
+  command halts the DSP and the second core at once). BlackBox install allowed again, with a note.

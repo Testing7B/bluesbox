@@ -353,7 +353,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "29"
+#define OP_VERSION_NUM "30"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -526,9 +526,10 @@ static int dbn_press(dbn_t *d, int raw)
 #define OPD_MAGIC 0x4F504442u
 enum { ST_NONE, ST_INPUTS, ST_PRESET, ST_ENG_INIT, ST_ENG_SET, ST_I2S, ST_UI, ST_RUN, ST_OK, ST_N };
 static const char *const ST_NAME[ST_N] = {"?", "INPUTS", "PRESET", "ENGINE INIT", "ENGINE SET", "I2S START",
-                                          "UI DRAW", "FIRST 2 S", "OK"};
+                                          "UI DRAW", "FIRST 6 S", "OK"};
 volatile struct { uint32_t magic, stage, blocks, load, peak, nans, c1, loops, crash_seen, safe; } op_diag
     __attribute__((section(".noinit")));
+static struct { uint8_t vdc0, vdc1, sys0, sys1, dcdc; } op_pwr;   /* the supplies at boot (fm1_cstart) */
 static void op_stage(uint32_t s, const char *txt)
 {
     op_diag.stage = s;
@@ -572,6 +573,15 @@ static void app_main(void)
     lcd_rect(0,0,240,240,UI_BG);
     ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
     ft_box(0, 126, 240, OP_VERSION, &FT_SM, UI_DIM, UI_BG, 1);
+#if !AUDIO_PROBE
+    {   /* the supplies as found -> as set (fm1_cstart): "PWR 3>7 11>15 DCDC" */
+        char l[32]; l[0] = 0;
+        b_str(l, "PWR "); b_num(l, op_pwr.vdc0); b_str(l, ">"); b_num(l, op_pwr.vdc1);
+        b_str(l, " "); b_num(l, op_pwr.sys0); b_str(l, ">"); b_num(l, op_pwr.sys1);
+        b_str(l, op_pwr.dcdc ? " DCDC OFF>ON" : " DCDC ON");
+        ft_box(0, 150, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
+    }
+#endif
     for (int i = 0; i < 6; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
     /* --- report of the previous boot, if it did not finish (or crashed) --- */
     int safe = 0;
@@ -660,7 +670,7 @@ static void app_main(void)
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
 #endif
-        if (!boots_ok && now > 2000u) { boots_ok = 1; guard.pending = 0; guard.failed = 0; op_diag.stage = ST_OK; }
+        if (!boots_ok && now > 6000u) {   /* 4.5 s of DSP first: a pedal that resets under load is caught */ boots_ok = 1; guard.pending = 0; guard.failed = 0; op_diag.stage = ST_OK; }
 #if !AUDIO_PROBE
         if (a_hold && !safe && now > 1500u) a_hold = 0;   /* DSP on */
         {
@@ -778,8 +788,22 @@ static void app_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
+    uint32_t vdc0, sys0, dcdc;
     fm1_time_init();
     fm1_wdt_arm(0x0D);
+    /* v30, issue #1: the supplies M-VAVE's firmware sets as it starts (BlackBox_020 and PocketX_016 alike, their
+     * power init: P3_ANA_CON6 [2:0] = 7, CON9 [3:0] = 15, the 1.3 V supply on the DC-DC, CON7 0xA5, CON8 0x96).
+     * The boot loader leaves VDC14 1.40 V and SYSVDD 1.26 V; the always-on P33 keeps the stock levels across a
+     * warm reset, so OpenPocket ran fine right after an install, then reset under DSP load after a power cycle. */
+    vdc0 = fm1_vdc14();
+    sys0 = fm1_sysvdd();
+    fm1_vdc14_raise(7u);
+    fm1_p33_or(FM1_P3_ANA_CON6, 0x08u);         /* as stock: CON6 = 0x0F */
+    fm1_p33_or(FM1_P3_ANA_CON9, 0x10u);         /* SYSVDD_VOL_HD_SEL: the core supply's strong drive, as stock */
+    fm1_sysvdd_raise(15u);
+    dcdc = (uint32_t)fm1_power_stock();
+    fm1_p33_write(FM1_P3_ANA_CON5, 0x74u);      /* VDDIOM 4, VDDIOW 3, VDDIO drive 1: stock's final value */
+    fm1_wdt_feed();
     if (guard.magic != 0x48575431u || guard.pending > 1u || guard.failed > 1u) {
         guard.magic = 0x48575431u; guard.failed = 0; guard.pending = 0;
     }
@@ -790,6 +814,8 @@ void fm1_cstart(void)
     for (d = _bss_start; d < _bss_end; d++) *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++) *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++) *d = *s;
+    op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
+    op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;

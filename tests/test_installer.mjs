@@ -137,6 +137,30 @@ ok(productOf(px) === "PocketX_924" && productOf(bb) === "BlackBox_924", "package
      "damaged package: nothing in the app area erased");
 }
 
+// 6a. rescue mode (issue #1): the first pedal that answers gets the package of its model at once
+{
+  const dump = join(TMP, "rescue.bin");
+  const sim = simAccess([join(TMP, "flash_old.bin"), "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  const asked = [];
+  const pick = (m) => { asked.push(m); return m === "PocketX" ? { image: logicalImage(px), product: "PocketX_924" } : null; };
+  let res = null, err = null;
+  try { res = await u.rescue(pick, () => {}); } catch (e) { err = e; }
+  await sim.end();
+  ok(!err && res === "PocketX_924" && asked.join() === "PocketX", `rescue: the pedal answers, its model's package is written ${err ? "(" + err.code + ")" : ""}`);
+  ok(py(appOf, dump, join(ROOT, "tools")) === "PocketX_924 CRC-OK", "rescue: flash holds app PocketX_924, every CRC right");
+}
+{
+  const sim = simAccess([join(TMP, "flash_old.bin")]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  let err = null;
+  try { await u.rescue(() => null, () => {}); } catch (e) { err = e; }
+  await sim.end();
+  ok(err && err.code === "pkg", "rescue: no package for the pedal's model -> refused, nothing sent");
+}
+
 // 6. the way back, step 1 with the real official package (when given): checkOfficial, then OpenPocket's ota.c checks
 //    and stages the official loader (its boot area must be valid)
 const off = process.argv[2];

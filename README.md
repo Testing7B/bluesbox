@@ -1,5 +1,5 @@
 # OpenPocket
-install here "for the Donner Pocket X. NOT for the M-VAVE BlackBox yet (boot loop, issue #1)" : https://isod89.github.io/openpocket/
+install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v30 has the fix for issue #1, being tested)
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
@@ -40,10 +40,15 @@ USB, press **Connect**, then **Install**. The page also takes the pedal back to 
 official `.fwsc` from the maker, it is checked in the browser.
 
 On the **Donner Pocket X** the page works: updating OpenPocket → a newer OpenPocket is tested (2026-11-02, your saved
-presets are kept), and other Pocket X owners have installed it from the page. The **M-VAVE BlackBox is not supported
-yet**: on a BlackBox, OpenPocket restarts in a loop a moment after starting ([issue #1](https://github.com/isod89/openpocket/issues/1)),
-so the page does not install it there; a BlackBox that runs OpenPocket can be taken back to its official firmware
-from the page (step 3). It is the same JieLi update system as the M-VAVE FM-1, where this method is
+presets are kept), and other Pocket X owners have installed it from the page. On the **M-VAVE BlackBox**, OpenPocket up to v29 restarted in a loop after
+the pedal was switched off and on ([issue #1](https://github.com/isod89/openpocket/issues/1)): it never set the power
+supplies the way M-VAVE's own firmware does at start (core 1.26 → 1.38 V, VDC14 1.40 → 1.60 V, the DC-DC on). Right
+after an install the pedal still had the levels the official firmware left (they survive a warm reset), so it worked;
+after a power cycle it ran on the boot loader's lower levels and reset under DSP load. **v30 sets them at start**,
+on both pedals, and shows them on the boot screen (`PWR 3>7 11>15 ...`). It is being tested on the BlackBox. For a
+pedal that restarts in a loop, the page has a **rescue mode** (step 2): tick it, press Connect, plug the pedal in;
+the install starts the moment the pedal answers, and the upgrade command stops its DSP, so it holds still long
+enough. A BlackBox can always go back to its official firmware from the page (step 3). It is the same JieLi update system as the M-VAVE FM-1, where this method is
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
 
