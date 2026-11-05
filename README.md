@@ -1,5 +1,9 @@
 # OpenPocket
-install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
+
+!!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
+
+Install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
+NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · What's new since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
@@ -85,6 +89,10 @@ Windows: install WSL and the JieLi toolchain once (`wsl bash firmware/setup.sh`)
 Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
 **`PUBLISH-GITHUB.bat`** does everything in one click: it runs `build.bat`, then publishes the source, a release with
 the packages, and the installer on GitHub Pages (with your own `git` / `gh` and GitHub login; never a forced push).
+GitHub's `main` becomes exactly this folder's files (v36): the version history from `openpocket.bundle` is merged in,
+edits made on the GitHub site stay underneath, and the tag `vNN` points at that commit. **`PUBLISH-SOURCE.bat`**
+publishes the source only, without building. Edit the README in this folder rather than on the site: the next publish
+replaces the files with this folder's.
 
 ## Test (no pedal needed)
 
