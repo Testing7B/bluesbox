@@ -207,6 +207,7 @@ export class Editor {
 export function presetToJSON(q, cat, slot) {
   return {
     slot: slot === undefined ? undefined : slot + 1,
+    v: 35,                                                       // v35 scales (delay TIME up to 2 s)
     name: q.name,
     blocks: cat.blocks.map((b, i) => ({ block: b.label, on: !!q.on[i], type: b.types[q.type[i]] ? b.types[q.type[i]].name : q.type[i], params: [...q.p[i]] })),
     order: q.order.map((i) => cat.blocks[i] ? cat.blocks[i].label : i),
@@ -217,6 +218,9 @@ export function filePresets(presets) { return { format: "openpocket-presets", ve
 // v34: amps, drives and cabs were replaced by fitted models (docs/FITTED-MODELS.md); a preset file from v32 / v33
 // names the old types: each one -> the nearest new type, the same choice the pedal makes for its saved presets (px_type_v34)
 export const V33_TYPES = {"AMP": {"TWIN CLEAN": "TWIN", "DELUXE 65": "TWIN", "PRINCETONE": "TWIN", "TWEED 59": "SHIRLEY", "TWEED CHAMP": "AC15 TB", "AC 30 TB": "AC15 TB", "AC 15": "AC15 TB", "JTM 45": "SHIRLEY", "PLEXI 68": "SHIRLEY", "BRIT 800": "JCM900", "BRIT JVM": "JCM2000", "HIWATT DR": "JCM900", "ORANGE 120": "JCM2000", "CHIME 30": "AC15 TB", "ODS LEAD": "MARK IV", "SLO 100": "PRO MOD", "MARK IIC+": "MARK IV", "RECTIFIED": "5150", "5150 LEAD": "5150", "5150 III": "5150", "ECSTASY": "PRO MOD", "BE LEAD": "PRO MOD", "UBER VH4": "5150", "EURO BALL": "5150", "REVV GEN": "5150", "JC CLEAN": "TWIN", "SUPRO 64": "AC15 TB", "TWO-ROCK": "TWIN", "SVT BASS": "TWIN"}, "DRV": {"TS 808": "TS9", "TS 9": "TS9", "SD-1 OD": "TS9", "KLONE": "KLON", "BD BLUES": "KLON", "OCD DRIVE": "M77 OD", "RAT DIST": "SWEDE HM-2", "DS-1 DIST": "SWEDE HM-2", "DIST PLUS": "M77 OD", "BLUESBREAKER": "KLON", "KING OF TONE": "KLON", "TIMMY": "KLON", "ZEN DRIVE": "TS9", "MUFF PI": "M77 OD", "RAMS HEAD": "M77 OD", "GREEN RUSSIAN": "M77 OD", "FACE GERMAN.": "M77 OD", "FACE SILICON": "M77 OD", "BENDER MK2": "M77 OD", "OCTAFUZZ": "M77 OD", "FUZZ FACTORY": "M77 OD", "TREBLE BOOST": "M77 OD", "EP BOOST": "KLON", "METAL ZONE": "SWEDE HM-2", "PRECISION": "TS9", "BASS DI 7K": "KLON"}, "CAB": {"1x10 OPEN": "1x12 US OPEN", "2x10 VIBRO": "1x12 US OPEN", "2x12 BRIT": "4x12 GREEN", "4x10 TWEED": "1x12 US OPEN", "4x12 H30": "4x12 V30", "1x15 OPEN": "1x12 US OPEN", "8x10 BASS": "4x12 V30", "4x10 HORN": "1x12 US OPEN"}};
+
+// v35: delay TIME 20..1000 ms in 100 steps became 20..1000 ms in 80 steps, then up to 2 s (px_dly_time_v35)
+export const dlyTimeV35 = (v) => Math.min(80, Math.floor(v * (9.8 / 12.25) + 0.5));
 
 // a preset from its JSON; problems (unknown block or type) are listed, the rest still comes through
 export function presetFromJSON(o, cat, base) {
@@ -238,6 +242,10 @@ export function presetFromJSON(o, cat, base) {
     if (Array.isArray(ob.params)) for (let k = 0; k < q.p[i].length; k++) {
       const v = Number(ob.params[k]);
       if (Number.isFinite(v)) q.p[i][k] = Math.max(0, Math.min(100, Math.round(v)));
+    }
+    if (!(o.v >= 35) && ob.block === "DLY" && cat.blocks[i].types[q.type[i]] && cat.blocks[i].types[q.type[i]].name !== "REVERSE") {
+      const old = q.p[i][0], now = dlyTimeV35(old);                // a file from before v35: TIME was 20..1000 ms
+      if (now !== old) { q.p[i][0] = now; warn.push(`DLY: TIME ${old} (before v35) -> ${now}, same delay`); }
     }
   }
   if (Array.isArray(o.order)) {

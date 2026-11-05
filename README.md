@@ -19,6 +19,8 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   voiced-by-ear amp. Method and results: [docs/FITTED-MODELS.md](docs/FITTED-MODELS.md)
 - **4 drives fitted the same way** (TS9, Klon, MXR M77, HM-2) and **7 cabinets** (the 4x12 V30 fitted to measurements;
   Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
+- **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no
+  metallic tail), the decay time you set (low and high frequencies apart), and Dattorro's plate; **delays up to 2 s**
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,
   ring modulator, bitcrusher, slicer, square-wave synth, 4 compressors, 3 EQs
 - **52 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 52 factory presets

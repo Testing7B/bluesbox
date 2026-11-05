@@ -75,6 +75,7 @@ int         px_nparams(int blk, int type);
 const char *px_param_name(int blk, int type, int k);
 /* text for a knob value when a bare 0..100 says little ("+5TH", "440" ms...); returns 0 = show the number */
 int         px_type_v34(int blk, int old);   /* presets saved before v34: old type -> new */
+int         px_dly_time_v35(int type, int v);   /* presets saved before v35: delay TIME (20..1000 ms) -> today's knob */
 int         px_param_text(int blk, int type, int k, int v, char *buf8);
 int         px_preset_count(void);
 void        px_preset_factory(px_preset_t *p, int idx);
@@ -85,9 +86,8 @@ typedef struct { float b0, b1, a1, z; } px_op;      /* first-order section (RC) 
 
 #define PX_PS_N 2048                   /* pitch shifter buffer (46 ms) */
 #define PX_SYN_CB 1024                 /* SYN: ensemble / doubler / body reflections (23 ms) */
-#define PX_DLY_N 48000                 /* 1.09 s of delay */
-#define PX_RV_C 2800                   /* reverb combs */
-#define PX_RV_A 1100
+#define PX_DLY_N 89600                 /* 2.03 s of delay (16-bit: 175 KB) */
+#define PX_RV_M 16384                  /* reverb memory: one 16-bit ring (32 KB) at half rate, laid out per type */
 #define PX_CABM 6                      /* cabinet detail: cone breakup modes (2-pole resonators) */
 #define PX_CABT 8                      /* cabinet detail: sparse taps (mic comb, back wave) */
 
@@ -157,16 +157,27 @@ typedef struct {
     float ph_z[4], ph_fb, ph_lo, ph_hi, uv_k[4], uv_lamp, uv_up, uv_dn, trem_g, trem_att, trem_rel;
     float rot_h, rot_d, rot_hs, rot_ds, rot_ht, rot_dt, rot_hk, rot_dk, rot_bal;
     /* delay */
-    float dly_buf[PX_DLY_N]; int dly_w, dly_type, dly_heads, rev_start, rev_cnt;
+    int16_t dly_buf[PX_DLY_N]; int dly_w, dly_type, dly_heads, rev_start, rev_cnt;
     float dly_len, dly_tgt, dly_fb, dly_mix, dly_ph, dly_ph2, dly_inc, dly_inc2, dly_wow, dly_flut, dly_mod;
-    float dly_sat, dly_satn, dly_q, dly_hn, dly_hf, rev_xf;
+    float dly_sat, dly_satn, dly_q, dly_hn, dly_hf, rev_xf, dly_env, dly_rq;
     px_bq dly_lp, dly_hp;
-    /* reverb: 8 damped combs + 4 all-pass (+ spring dispersion, shimmer shifter, gate) */
-    float rv_c[8][PX_RV_C]; int rv_cw[8], rv_cl[8]; float rv_cs[8], rv_g[8], rv_damp;
-    float rv_a[4][PX_RV_A]; int rv_aw[4], rv_al[4]; float rv_ag, rv_mix;
+    /* reverb (v35): pre-delay + early reflections, 4 input diffusers, then either an 8-line feedback delay network
+     * with modulated lines and per-line high-frequency decay, or Dattorro's plate tank (8 units, 2 modulated);
+     * all lines in one 16-bit ring that turns once per sample at 22.05 kHz (+ spring dispersion, shimmer, gate) */
+    int16_t rv_m[PX_RV_M];
+    int   rv_lay, rv_alg;                              /* layout in use (type + 1; 0: none), 0 FDN / 1 plate */
+    int   rv_b[13], rv_n[13], rv_ptr, rv_tick;         /* units: 0 pre-delay, 1..4 diffusers, 5..12 lines / tank */
+    float rv_sr, rv_xa, rv_y0, rv_y1;                  /* half rate: its rate, the input kept, the last two outputs */
+    float rv_d[13], rv_dg[4];                          /* delay of each unit (samples), diffuser gains */
+    int   rv_pd, rv_ner, rv_ert[4]; float rv_erg[4];   /* pre-delay, early reflections (taps, gains) */
+    float rv_g[8], rv_p[8], rv_s[8];                   /* FDN: loop gain (low), damping pole, damping state */
+    float rv_ph1, rv_ph2, rv_inc1, rv_inc2, rv_mdep;   /* modulation: two slow LFOs, depth (samples) */
+    float rv_dec, rv_dd2, rv_damp, rv_bw, rv_fl, rv_fr; /* plate: decay, decay diffusion 2, damping, input band, feedback */
+    int   rv_tap[14];                                  /* plate: output taps (samples into tank units) */
+    float rv_in, rv_out, rv_mix, rv_env, rv_rq, rv_fade;          /* rv_rq: rounding (0.5), or 0 once the tail is very quiet */
     int   rv_gate, rv_hold_n, sp_on; float rv_hold, rv_genv, rv_gg, rv_gate_rel;
     float sp_z[6], sp_a;
-    float sh_buf[PX_PS_N]; int sh_w; float sh_ph, sh_out, sh_lp, sh_k, rv_shim;
+    float sh_buf[PX_PS_N]; int sh_w; float sh_ph, sh_out, sh_lp, sh_k, rv_shim, sh_hp, sh_hk;
     px_bq rv_tone, rv_hp;
 } px_engine;
 

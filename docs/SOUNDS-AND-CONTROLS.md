@@ -1,4 +1,4 @@
-# OpenPocket — sounds and controls (v34)
+# OpenPocket — sounds and controls (v35)
 
 ![OpenPocket screens](ui-v23.png)
 
@@ -89,11 +89,22 @@ mute it. MONO SYNTH needs single notes: it finds the pitch in 30–80 ms and is 
 | SFX | ENVELOPE WAH (Mu-Tron), AUTO WAH (LFO, or fixed wah with DEPTH 0), RING MOD, BITCRUSHER, SLICER (8 rhythm patterns), LO-FI RADIO, SQUARE SYNTH (square-wave synth + sub, opening filter) |
 | EQ | 5 BAND, GRAPHIC 5 (the Mesa "V"), PARAMETRIC |
 | MOD | CE CHORUS, DIMENSION (4 modes), FLANGER, PHASE 90, SMALL STONE, UNI-VIBE, OPTO TREMOLO, BIAS TREMOLO, HARMONIC TREM, ROTARY (Leslie, real SLOW↔FAST ramp), VIBRATO |
-| DLY | DIGITAL, ANALOG BBD, MEMORY MAN (modulated repeats), TAPE EP-3 (wow & flutter), SPACE ECHO (3 heads, 7 combinations), REVERSE, LO-FI, DUAL TAP (quarter + dotted eighth) — TIME 20–1000 ms |
+| DLY | DIGITAL, ANALOG BBD, MEMORY MAN (modulated repeats), TAPE EP-3 (wow & flutter), SPACE ECHO (3 heads, 7 combinations), REVERSE, LO-FI, DUAL TAP (quarter + dotted eighth) — TIME 20–2000 ms (REVERSE 250–1000 ms) |
 | REV | ROOM, HALL, CATHEDRAL, PLATE, SPRING (DRIP), SHIMMER (octave in the tail), GATED (80s), AMBIENT (up to 20 s) |
 
 The analog/tape delays (ANALOG, MEMORY MAN, TAPE, SPACE ECHO, LO-FI) **self-oscillate above FDBK ≈ 90**, like the
 real ones: lower FDBK to stop it.
+
+**Delay TIME (v35)**: 0–80 = 20–1000 ms in steps of 12.25 ms, 80–100 = 1–2 s in steps of 50 ms; the screen shows
+the ms. Presets saved before v35 keep their delay time (the knob value moves). The repeats are read with cubic
+interpolation (no dulling when the time glides or the tape wobbles), like the chorus, flanger and vibrato.
+
+**Reverbs (v35)**: the halls, rooms, spring, shimmer, gated and ambient are an 8-line feedback delay network with
+early reflections, Dattorro's input diffusers, slowly moving lines (no metallic ringing in the tail) and a decay
+time set separately for the lows and for 4 kHz (TONE); PLATE is Dattorro's plate (the classic "Effect Design"
+plate). DECAY sets the real decay time (RT60) of the lows: ROOM 0.3–1.2 s, HALL 1.2–4 s, CATHEDRAL 3–10 s,
+PLATE 0.6–5 s, SPRING 1.5–4 s, SHIMMER 2–8 s, AMBIENT 6–20 s. They run at 22 kHz in 16 bits (like the classic
+studio units), in a quarter of v34's memory.
 
 ## 52 factory presets (one per style)
 01 GLASS CLEAN · 02 JAZZ BOX · 03 COUNTRY SNAP · 04 TEXAS BLUES · 05 BLUES CRUNCH · 06 BRIT JANGLE · 07 60S PSYCH ·
@@ -149,7 +160,7 @@ high-gain amps turned it into a constant hiss, even with nothing plugged in.
 - Pitch shifters: 100 % of the energy on the target note (440 Hz, 110 Hz, −7 semitones) thanks to phase alignment
   at every crossfade (SOLA).
 - Digital silence: no more denormal numbers (silence used to cost 25× more CPU on the PC).
-- Memory: engine 327 KB in the 344 KB POOL area.
+- Memory: engine 247 KB in the 336 KB POOL area (v35: delay and reverb in 16 bits; v34: 332 KB).
 - Preset saving (`tests/test_store.c`): power cut simulated at 1,286 points of a save → old version kept 578 times,
   new one 708 times, never a damaged slot; no write outside the preset area.
 - CPU: v25 loaded the pedal too much (DOOM SLUDGE in BYP at 89 % on v26). v27 computes the cabinets and the amp

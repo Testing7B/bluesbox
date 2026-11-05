@@ -54,7 +54,7 @@ let s = sim(["--dump", flash1]);
 await s.ready;
 let ed = new Editor(s.access);
 const info = await ed.connect();
-ok(info && info.proto === 1 && info.version === "v34" && info.identity === "PocketX_934", `INFO: ${info && `${info.version} ${info.identity}`}`);
+ok(info && info.proto === 1 && info.version === "v35" && info.identity === "PocketX_935", `INFO: ${info && `${info.version} ${info.identity}`}`);
 ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 12 blocks, 5 parameters, 52 slots, names of 13");
 const t0 = Date.now();
 const cat = await ed.catalog();
@@ -130,6 +130,11 @@ const v33 = presetFromJSON({ name: "OLD", blocks: [{ block: "AMP", on: true, typ
 const tn = (b, t) => cat.blocks[b].types[t].name;
 ok(v33.warn.length === 3 && tn(amp, v33.preset.type[amp]) === "5150" && tn(4, v33.preset.type[4]) === "M77 OD" && tn(6, v33.preset.type[6]) === "4x12 V30",
    "file: a v33 preset file -> the nearest v34 amp / drive / cab, each one reported");
+const dl = cat.blocks.findIndex((b) => b.label === "DLY");
+const oldDly = presetFromJSON({ name: "ECHO", blocks: [{ block: "DLY", on: true, type: "TAPE EP-3", params: [50, 30, 20, 50, 50] }] }, cat, q);
+const newDly = presetFromJSON(presetToJSON(oldDly.preset, cat), cat, q);
+ok(oldDly.preset.p[dl][0] === 40 && oldDly.warn.length === 1 && newDly.preset.p[dl][0] === 40 && newDly.warn.length === 0,
+   "file: a delay TIME from before v35 keeps its time (50 -> 40 = 510 ms); a v35 file is taken as is");
 await s.end();
 
 // ---- 6. after a power cycle: the store is read back from the flash ----

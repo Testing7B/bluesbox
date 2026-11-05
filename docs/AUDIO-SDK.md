@@ -230,3 +230,20 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   lighter), only the tables change.
 - Presets saved before v34 are converted at boot to the nearest new type (store format 3, `px_type_v34`); the other
   blocks are untouched. Six factory presets are renamed (their old amp no longer exists).
+
+## v35: new reverbs, 2 s delay, 16-bit delay lines (89 KB of RAM freed)
+- RAM: the engine filled 332 of the 336 KB POOL. The delay line (1 s in 32-bit floats: 188 KB) and the reverb
+  (107 KB) are now 16-bit (rounded; once a tail is down to the last bits it is cut towards zero, so a loop cannot
+  hold a tiny pattern for ever). Engine: 247 KB, 89 KB free (for BLE / MIDI later), with a delay twice as long.
+- Reverb: v34's was a Freeverb (8 combs + 4 all-pass): metallic on long tails, the same decay at every frequency
+  whatever DECAY said. v35: an 8-line FDN (Hadamard, per-line decay at low frequencies and at 4 kHz, 4 slowly
+  modulated lines, early reflections) and Dattorro's plate, at 22.05 kHz in one 16-bit ring (32 KB). Measured with
+  a noise burst: the decay time now matches DECAY (HALL at noon 2.6 s target: 2.60 s), and the tail's fine spectrum
+  is 1.5 to 2.5 dB closer to a dense random field on HALL, CATHEDRAL, PLATE, SHIMMER, AMBIENT (less ringing).
+  Each type's level matches v34's (on guitar, within 0.2 dB); SHIMMER's octave builds up about as in v34.
+- Delay: TIME up to 2 s (0–80 = 20–1000 ms, 80–100 = 1–2 s), cubic (Hermite) reads in the delay, chorus,
+  flanger, vibrato, rotary. Presets saved before v35 are converted at boot (store format 4) and on import in the
+  editor (files without `"v": 35`). The read position is now split into whole samples and a fraction before
+  wrapping round the line, so it can never land past the end.
+- CPU (PC, instructions per sample): reverb presets +80 to +100, delay + reverb presets up to +200, 1,889 on average
+  over the 52 presets (v34: 1,807); the heaviest, SMOOTH LEAD, 2,582 (v34: 2,418). To be checked on the pedal.
