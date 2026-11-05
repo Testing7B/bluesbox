@@ -8,18 +8,17 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 
 ## What it does
 
-- **12-block chain, 129 models**, in any order you like (double-click PUSH to move a block; the order is saved with
+- **12-block chain, 77 models**, in any order you like (double-click PUSH to move a block; the order is saved with
   the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB
 - **Synths, keyboards and other guitars** from a normal guitar (no MIDI pickup): organ, church organ, string machine,
   choir, mono synth with pitch tracking and a resonant ladder filter, PWM synth, bass synth, 12-string, acoustic,
   sitar (bridge buzz + sympathetic strings), baritone
-- **29 amps** (Twin, Deluxe, Princeton, Tweed Bassman, Champ, AC30, AC15, JTM45, Plexi, JCM800, JVM, Hiwatt, Orange,
-  Matchless, Dumble ODS, SLO, Mark IIC+, Rectifier, 5150 / 5150 III, Ecstasy, Friedman BE, VH4, Powerball, Revv,
-  JC-120, Supro, Two-Rock, SVT), tube stages oversampled ×4, real tone stacks, power-amp sag, all level-matched
-- **15 cabinets** (Greenback, V30, T75, H30, Alnico Blue, Jensen, Cream, JBL 15", 8x10 bass…) with a MIC position
-- **27 drives / fuzzes / boosts** (TS808, TS9, SD-1, Klon, BD-2, OCD, RAT, DS-1, Distortion+, Bluesbreaker, King of
-  Tone, Timmy, Zendrive, three Big Muffs, two Fuzz Faces, Tone Bender, Octavia, Fuzz Factory, Rangemaster, EP Booster,
-  HM-2, Metal Zone, Precision Drive, B7K)
+- **8 amps fitted to captures of the real ones** (v34): Twin Reverb, AC15 Top Boost, JCM900, JCM2000, Mark IV,
+  Dirty Shirley, Pro Mod, 5150. A computer sets the engine's numbers (tube stages oversampled ×4, tone stack, power
+  amp, sag) so that it matches a Neural Amp Modeler capture of each amp on real guitar playing; same CPU cost as a
+  voiced-by-ear amp. Method and results: [docs/FITTED-MODELS.md](docs/FITTED-MODELS.md)
+- **4 drives fitted the same way** (TS9, Klon, MXR M77, HM-2) and **7 cabinets** (the 4x12 V30 fitted to measurements;
+  Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,
   ring modulator, bitcrusher, slicer, square-wave synth, 4 compressors, 3 EQs
 - **52 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 52 factory presets
@@ -104,5 +103,9 @@ the packages, and the installer on GitHub Pages (with your own `git` / `gh` and 
 ## Licence
 
 GPL-3.0-only. Board support and loader: MPL-2.0 (felucca-bsp). JieLi SDK files: Apache-2.0. Inter: OFL 1.1.
+The fitted models were computed from the NAM captures of [pelennor2170/NAM_models](https://github.com/pelennor2170/NAM_models)
+(GPL-3.0, thanks to their authors) and the DI recordings of
+[Alec-Wright/Automated-GuitarAmpModelling](https://github.com/Alec-Wright/Automated-GuitarAmpModelling) (GPL-3.0); neither is shipped.
+Product names are trademarks of their owners, used only to describe the sound.
 See [NOTICE.md](NOTICE.md). Not affiliated with Donner or M-VAVE. Install at your own risk.
 

@@ -12,9 +12,6 @@ from scipy.optimize import least_squares
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SR = 44100
 FIELDS = ["hp", "hpq10", "bump", "bump_db", "d1", "d1db", "d2", "d2db", "p1", "p1db", "p2", "p2db", "lp", "lpq"]
-ENUM = ["PX_CAB_110", "PX_CAB_112JN", "PX_CAB_210", "PX_CAB_212BLUE", "PX_CAB_212GB", "PX_CAB_410BASSMAN",
-        "PX_CAB_412GB", "PX_CAB_412T75", "PX_CAB_412V30", "PX_CAB_412H30", "PX_CAB_112CREAM", "PX_CAB_115",
-        "PX_CAB_810SVT", "PX_CAB_410BASS", "PX_CAB_DI"]
 BANDS = np.geomspace(60, 12000, 12 * int(np.log2(12000 / 60)) + 1)
 
 
@@ -24,7 +21,7 @@ def table(name):
     rows = re.findall(r'\{"([^"]+)",\s*([^}]*)\}', src[i:src.index("};", i)])
     for k, (n, body) in enumerate(rows):
         if n == name:
-            v = [float(t) for t in body.split(",")]
+            v = [float(t.strip().rstrip("f")) for t in body.split(",")]
             return k, np.array(v + [0.9] * (len(FIELDS) - len(v)))
     sys.exit("no cab named %s" % name)
 

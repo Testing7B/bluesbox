@@ -151,7 +151,7 @@ fn = ("\n/* presets saved before v34 (store format 1 / 2): the old amp / drive /
 s = rep(s, "\nint px_param_text(int b, int t, int k, int v, char *buf)", fn + "\nint px_param_text(int b, int t, int k, int v, char *buf)")
 
 # ---- factory presets: the same sounds on the new types ----
-i = s.index("void px_preset_factory"); j = s.index("\n}\n", i)
+i = s.index("static void base_preset"); j = s.index("\n}\n", s.index("void px_preset_factory"))
 body = s[i:j]
 for o, n in AMP_TO.items():
     body = re.sub(r"\bPX_AMP_%s\b" % o, "PX_AMP_%s" % n, body)

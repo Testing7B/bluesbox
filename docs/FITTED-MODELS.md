@@ -67,3 +67,38 @@ python3 tools/fit_amp.py --capture "My amp.nam" --start "JCM900" --name myamp \
 
 `--start` is the existing row to start from (pick the closest style), `--stages` the number of tube stages (1 for
 a clean amp, 4 for high gain). A capture must be an amp alone (no cab), at the knob setting you want as noon.
+
+## Results (v34)
+
+Measured on 20 s of guitar the fit never heard, against the capture. "Before" is the v33 type the fit started from.
+
+- **Spectrum**: RMS difference of the long-term spectra in 1/6 octaves, 60 Hz to 16 kHz (dB; below about 1.5 dB the
+  tone is hard to tell apart).
+- **Dynamics**: RMS difference of the level envelopes, silences excluded (dB): how the amp compresses and follows
+  the pick. Measured on the amps only.
+- **ESR**: sample-by-sample error (0 = identical, 1 = no better than silence). It only means something on clean and
+  light crunch sounds; on distortion it stays high even when the two sound alike (the harmonics' phases differ).
+
+| Type | Started from (v33) | Fit | Spectrum (dB) | Dynamics (dB) | ESR |
+| --- | --- | --- | --- | --- | --- |
+| TWIN | TWIN CLEAN | time | 10.1 → **0.5** | 1.8 → 2.3 | 0.18 → 0.002 |
+| AC15 TB | AC 30 TB | spectral | 13.4 → **1.8** | 5.9 → 3.7 | 1.00 → 0.363 |
+| JCM900 | BRIT 800 | spectral | 12.1 → **0.3** | 2.2 → 0.9 | 0.12 → 0.046 |
+| JCM2000 | BRIT JVM | spectral | 16.4 → **0.8** | 4.4 → 3.0 | 0.62 → 0.836 |
+| MARK IV | MARK IIC+ | spectral | 18.9 → **1.3** | 6.3 → 3.5 | 0.83 → 0.843 |
+| SHIRLEY | PLEXI 68 | spectral | 13.6 → **1.2** | 4.3 → 2.6 | 0.51 → 0.735 |
+| PRO MOD | BRIT JVM | spectral | 16.3 → **2.3** | 4.1 → 3.8 | 1.00 → 0.721 |
+| 5150 | 5150 LEAD | spectral | 15.7 → **0.7** | 5.4 → 4.2 | 0.99 → 0.647 |
+| TS9 | TS 9 | spectral | 4.6 → **2.2** | — | 0.23 → 0.149 |
+| KLON | KLONE | time | 6.6 → **6.0** | — | 0.37 → 0.045 |
+| M77 OD | KING OF TONE | time | 3.7 → **2.2** | — | 0.21 → 0.144 |
+| SWEDE HM-2 | SWEDE HM-2 | spectral | 8.3 → **4.6** | — | 0.91 → 0.911 |
+
+4x12 V30 cabinet: 4.1 → **1.5 dB** RMS from the measured response (1/12 octave, 60 Hz to 12 kHz).
+
+The weakest are the KLON (the fit follows the waveform closely, ESR 0.05, but stays 6 dB off in the highs, where
+there is little energy) and the HM-2 (4.6 dB: its extreme EQ). Both are still much closer than v33. On the TWIN,
+the clean fit is near-exact sample by sample; its dynamics number is the noise floor of a clean amp's envelope.
+
+CPU (instructions per sample on the PC, the pedal's proxy): 1,807 on average over the 52 presets (v33: 1,757,
++3 %), 2,418 at most (SMOOTH LEAD; v33: 2,493).

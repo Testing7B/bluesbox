@@ -30,10 +30,10 @@ BOUNDS = {"g": (0.05, 20.0), "bias": (-0.5, 0.5), "lp": (1000, 21000), "hp": (5,
 def table_row(name):
     """the current table row named NAME in engine/px_dsp.c -> (n, hard, values[38])"""
     src = open(os.path.join(ROOT, "engine", "px_dsp.c")).read()
-    m = re.search(r'\{"%s",\s*(.*?)\},\s*\n' % re.escape(name), src)
+    m = re.search(r'\{"%s",\s*(.*?)\},\s*(?:/\*.*?\*/)?\s*\n' % re.escape(name), src)
     if not m:
         sys.exit("no amp named %s" % name)
-    nums = [float(x.rstrip("f")) for x in re.findall(r"-?\d+\.?\d*f?", m.group(1))]
+    nums = [float(x.rstrip("f")) for x in re.findall(r"-?\d+\.?\d*(?:e[+-]?\d+)?f?", m.group(1))]
     n, hard, rest = int(nums[0]), int(nums[1]), nums[2:]
     v = rest[:16] + rest[16:34]                     # g bias lp hp, then 18 scalars
     return n, hard, np.array(v + [1.0, IN_GAIN], dtype=np.float64)

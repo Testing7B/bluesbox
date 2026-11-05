@@ -1,8 +1,8 @@
-# OpenPocket — sounds and controls (v29)
+# OpenPocket — sounds and controls (v34)
 
 ![OpenPocket screens](ui-v23.png)
 
-## The chain (12 blocks, 129 models)
+## The chain (12 blocks, 77 models)
 Default order: `GT → CMP → PIT → SFX → SYN → DRV → AMP → CAB → EQ → MOD → DLY → REV`
 
 Since v29 every preset has its own block order: **double-click PUSH** on the chain to grab the selected block, turn
@@ -14,53 +14,51 @@ Each block has a **type** (the model), an **ON/OFF** state and up to **5 setting
 would mean nothing, the screen shows the real value: interval (`+5TH`), semitones (`-7`), time in ms (`510`),
 playback heads (`1+2`), EQ dB (`+6`), bits (`8`), `SLOW`/`FAST` for the rotary.
 
-The names refer to the famous units the sounds are inspired by (voicings taken from published circuit analyses:
-ElectroSmash, Electric Druid, R.G. Keen, Rob Robinette, Duncan's Tone Stack Calculator, Celestion/Jensen/EV/JBL
-curves, Boss/Roland/Ampeg/EHX manuals). They are simplified digital models, not copies.
+The names refer to the famous units the sounds are inspired by. Amps, drives and the V30 cabinet are fitted to
+captures of the real units (v34); the effects follow published circuit analyses (ElectroSmash, Electric Druid,
+R.G. Keen, Boss/Roland/EHX manuals). They are digital models, not copies. The product names are trademarks of their
+owners, used only to describe the sound.
 
-### AMP — 29 amps (GAIN, BASS, MID, TREBLE, PRESENCE)
-| Family | Models (inspired by) |
-|---|---|
-| American clean | TWIN CLEAN (Twin Reverb), DELUXE 65 (Deluxe Reverb), PRINCETONE (Princeton), TWO-ROCK (boutique clean) |
-| Tweed / small amp | TWEED 59 (Bassman 5F6-A), TWEED CHAMP (Champ), SUPRO 64 (Supro, heavy sag) |
-| British chime | AC 30 TB (AC30 Top Boost), AC 15, CHIME 30 (Matchless) |
-| British rock | JTM 45, PLEXI 68 (Super Lead), BRIT 800 (JCM800), BRIT JVM, HIWATT DR (big headroom), ORANGE 120 |
-| Boutique lead | ODS LEAD (Dumble), SLO 100 (Soldano), ECSTASY (Bogner), BE LEAD (Friedman), MARK IIC+ (Mesa) |
-| Modern / metal | RECTIFIED (Dual Rectifier), 5150 LEAD, 5150 III, UBER VH4 (Diezel), EURO BALL (Engl), REVV GEN |
-| Solid state / bass | JC CLEAN (Jazz Chorus, no breakup), SVT BASS (Ampeg SVT) |
+### AMP — 8 amps, fitted to captures of the real ones (GAIN, BASS, MID, TREBLE, PRESENCE)
+Since v34 there are fewer amps, and each one is fitted by computer to a capture of the real amp (method and
+references: [FITTED-MODELS.md](FITTED-MODELS.md)). With the knobs at noon it sounds like the capture.
 
-Each amp = 0 to 4 preamp stages (gain, asymmetry, RC filters per stage) oversampled ×4, input filter (tightness),
-a "bright" cap that fades as the gain goes up, a tone stack at its own frequencies (mid scoop at noon: −6 dB Fender,
-−3 dB Marshall, −6 dB Mesa…), presence, resonance, power-stage saturation and supply sag. All 29 amps are
-level-matched (±0.1 dB).
-Since v25: asymmetric triode curve (the positive half-wave limits earlier: 2nd harmonic from −35 to −24 dB on the
-Plexi, from −33 to −18 dB on the 5150), bias shift that follows your playing (the note compresses on a hard attack,
-then blooms back in about 100 ms), and supply sag that reaches the preamp too.
-
-### CAB — 15 cabinets (BODY, BRIGHT, MIC)
-1x10 OPEN · 1x12 US OPEN (Jensen C12N) · 2x10 VIBRO · 2x12 BLUE (Alnico Blue) · 2x12 BRIT (G12H) ·
-4x10 TWEED (Bassman) · 4x12 GREEN (Greenback) · 4x12 T75 · 4x12 V30 (Vintage 30) · 4x12 H30 · 1x12 CREAM ·
-1x15 OPEN (JBL D130) · 8x10 BASS (SVT) · 4x10 HORN (bass + tweeter) · DI (NO CAB).
-Speaker resonance, presence dips and peaks taken from the makers' curves. **MIC** moves the mic from the edge
-(dark) to the centre (bright).
-Since v25 each cabinet also has a detail layer: the cone's breakup resonances between 1.2 and 6 kHz (specific to
-each model, so two cabinets no longer sound alike in the highs), the comb filtering of an off-axis mic (MIC 0 = cone
-edge: dip around 6 kHz; MIC 100 = centre: out of the audio band) and the rear wave of open-back cabinets (1x10,
-1x12 US, 2x10, 2x12 BLUE, 4x10 TWEED, 1x15). Since v27 it is computed with resonators instead of a 128-tap filter:
-same sound, much lighter on the pedal.
-
-### DRV — 27 drives, fuzzes and boosts
-| Family | Models | Settings |
+| Type | Style | Reference |
 |---|---|---|
-| Overdrive | TS 808, TS 9, SD-1 OD, KLONE, BD BLUES, OCD DRIVE, BLUESBREAKER, KING OF TONE, ZEN DRIVE (VOICE), TIMMY (BASS, TREBLE) | DRIVE, TONE, LEVEL |
-| Distortion | RAT DIST, DS-1 DIST, DIST PLUS, SWEDE HM-2 (LOW, HIGH), METAL ZONE (LOW, HIGH) | DIST, TONE, LEVEL |
-| Fuzz | MUFF PI, RAMS HEAD, GREEN RUSSIAN, FACE GERMAN., FACE SILICON, BENDER MK2, OCTAFUZZ (upper octave), FUZZ FACTORY (GATE, BIAS: sputters) | SUSTAIN/FUZZ, TONE, LEVEL |
-| Boost / bass | TREBLE BOOST (Rangemaster), EP BOOST, PRECISION (TIGHT, BRIGHT: metal boost), BASS DI 7K (BLEND) | BOOST/DRIVE, TONE, LEVEL |
+| TWIN | American clean | Fender Twin Reverb |
+| AC15 TB | chime | Vox AC15 Top Boost |
+| JCM900 | British crunch | Marshall JCM900 |
+| JCM2000 | British lead | Marshall JCM2000 DSL |
+| MARK IV | American lead | Mesa Boogie Mark IV |
+| SHIRLEY | boutique crunch | Friedman Dirty Shirley |
+| PRO MOD | modern rock | Splawn Pro Mod |
+| 5150 | high gain | Peavey 5150 |
 
-Each drive follows its circuit: input filter, the TS "shelf" (the lows don't clip), clipping type (soft,
-asymmetric, hard diodes, germanium, LED, MOSFET, the Muff's two stages, starved transistor, rectifier), original
-tone control (low-pass, the Muff's and DS-1's LP/HP blend, the HM-2's peaks). Level-matched: at noon every drive
-comes out at the same level as the guitar (boosts: +6 dB).
+Each amp = 1 to 4 preamp stages (gain, asymmetry, RC filters per stage) oversampled ×4, input filter (tightness),
+a "bright" cap that fades as the gain goes up, a tone stack, presence, resonance, power-stage saturation and supply
+sag (asymmetric triode curve, bias shift that follows your playing, sag that reaches the preamp too). All 8 amps are
+level-matched (±0.1 dB).
+
+### CAB — 7 cabinets (BODY, BRIGHT, MIC)
+1x12 US OPEN (Jensen C12N) · 2x12 BLUE (Alnico Blue) · 4x12 GREEN (Greenback) · 4x12 T75 · 4x12 V30 (Vintage 30,
+fitted to measurements since v34) · 1x12 CREAM · DI (NO CAB).
+Speaker resonance, presence dips and peaks taken from the makers' curves (the V30 from 8 measured amp / amp + cab
+pairs). **MIC** moves the mic from the edge (dark) to the centre (bright).
+Each cabinet also has a detail layer: the cone's breakup resonances between 1.2 and 6 kHz, the comb filtering of an
+off-axis mic (MIC 0 = cone edge: dip around 6 kHz; MIC 100 = centre: out of the audio band) and the rear wave of
+the open-back cabinets (1x12 US, 2x12 BLUE), computed with resonators.
+
+### DRV — 4 drives, fitted to captures (DRIVE / DIST, TONE, LEVEL)
+| Type | Style | Reference |
+|---|---|---|
+| TS9 | overdrive (mid hump) | Ibanez TS9 |
+| KLON | transparent overdrive | Klon Centaur (clone) |
+| M77 OD | boost / hot overdrive | MXR M77 Custom Badass |
+| SWEDE HM-2 (LOW, HIGH) | Swedish distortion | Boss HM-2 |
+
+Each drive follows its circuit (input filter, the TS "shelf", clipping type, original tone control), with its
+numbers fitted to a capture of the pedal at noon. Level-matched: at noon every drive comes out at the same level as
+the guitar.
 
 ### SYN — 11 synths, keyboards and other guitars (v29)
 Played with a normal guitar: no special pickup, no MIDI.
@@ -98,12 +96,12 @@ The analog/tape delays (ANALOG, MEMORY MAN, TAPE, SPACE ECHO, LO-FI) **self-osci
 real ones: lower FDBK to stop it.
 
 ## 52 factory presets (one per style)
-01 GLASS CLEAN · 02 JAZZ BOX · 03 COUNTRY SNAP · 04 TEXAS BLUES · 05 TWEED BLUES · 06 BRIT JANGLE · 07 60S PSYCH ·
+01 GLASS CLEAN · 02 JAZZ BOX · 03 COUNTRY SNAP · 04 TEXAS BLUES · 05 BLUES CRUNCH · 06 BRIT JANGLE · 07 60S PSYCH ·
 08 70S ROCK · 09 80S HAIR · 10 BRIT CRUNCH · 11 SMOOTH LEAD · 12 SPACE LEAD · 13 DOTTED 8TH · 14 MARK SOLO ·
 15 THRASH · 16 GROOVE METAL · 17 DJENT · 18 DOOM SLUDGE · 19 SWEDE DEATH · 20 SHOEGAZE · 21 SWELL PAD ·
 22 FUNK WAH · 23 SURF · 24 SWAMP TREM · 25 VIBE ROCK · 26 ROTARY ORGAN · 27 HARM LEAD · 28 WHAMMY DIVE ·
-29 OCTA FUZZ · 30 SQUARE SYNTH · 31 RING MOD · 32 LO-FI TAPE · 33 STUTTER FUZZ · 34 BITCRUSH · 35 BASS DRIVE ·
-36 BASS OCTAVE · 37 TWEED CHAMP · 38 HIWATT STACK · 39 MODERN HIGH · 40 SUPRO GRIT · 41 STONER FUZZ · 42 CHIME CLEAN ·
+29 OCTA FUZZ · 30 SQUARE SYNTH · 31 RING MOD · 32 LO-FI TAPE · 33 STUTTER FUZZ · 34 BITCRUSH · 35 LOW DRIVE ·
+36 OCTAVE DOWN · 37 LITTLE AMP · 38 BIG STACK · 39 MODERN HIGH · 40 GRIT CLEAN · 41 STONER FUZZ · 42 CHIME CLEAN ·
 43 B3 ORGAN · 44 CHURCH ORGAN · 45 MELLO STRINGS · 46 CHOIR PAD · 47 MONO LEAD · 48 PWM SYNTH · 49 SYNTH BASS ·
 50 12-STRING · 51 ACOUSTIC · 52 SITAR
 
@@ -144,9 +142,9 @@ The right input channel only carries constant noise (−77 dB); before v28 it wa
 high-gain amps turned it into a constant hiss, even with nothing plugged in.
 
 ## Checks run on the PC (with the pedal's own math library, `firmware/px_math.c`)
-- 3,312 configurations (every block × type × extreme settings, changed while playing; signal, silence, very loud
+- 2,443 configurations (every block × type × extreme settings, changed while playing; signal, silence, very loud
   signal): 0 NaN.
-- 354 long runs (3 s plucked string + 8 s of silence, every model at full settings): nothing runs away; only the
+- 231 long runs (3 s plucked string + 8 s of silence, every model at full settings): nothing runs away; only the
   delays at FDBK 100 keep repeating (by design).
 - Pitch shifters: 100 % of the energy on the target note (440 Hz, 110 Hz, −7 semitones) thanks to phase alignment
   at every crossfade (SOLA).

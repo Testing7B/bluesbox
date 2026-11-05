@@ -222,3 +222,11 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - Confirmed on both pedals with v31's boot line: a Pocket X starts with `PINR 08` (bit 0, the enable, clear: the
   long-press reset off), Megal's BlackBox with `PINR 09` (bit 0 set: on). Bit 0 is the enable in the SDK's
   `long_press_reset_enable` (cpu.a power_wakeup.c: P33 0x94 bit 0, and 0x95 bit 0).
+
+## v34: amps, drives and the V30 cab fitted to captures
+- The 29 amps / 27 drives / 15 cabinets voiced by ear make way for 8 amps, 4 drives and 7 cabinets whose numbers are
+  fitted by computer to Neural Amp Modeler captures of the real units, on real DI guitar
+  ([FITTED-MODELS.md](FITTED-MODELS.md)). Same engine, same CPU (+3 % on average, the heaviest preset a little
+  lighter), only the tables change.
+- Presets saved before v34 are converted at boot to the nearest new type (store format 3, `px_type_v34`); the other
+  blocks are untouched. Six factory presets are renamed (their old amp no longer exists).

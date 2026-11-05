@@ -23,7 +23,7 @@ TMS = ["TM_LP", "TM_MUFF", "TM_HM2", "TM_MT2"]
 
 def table_row(name):
     src = open(os.path.join(ROOT, "engine", "px_dsp.c")).read()
-    m = re.search(r'\{"%s",\s*L(\d)\(([^)]*)\),(.*?)\},\s*\n' % re.escape(name), src)
+    m = re.search(r'\{"%s",\s*L(\d)\(([^)]*)\),(.*?)\},\s*(?:/\*.*?\*/)?\s*\n' % re.escape(name), src)
     if not m:
         sys.exit("no drive named %s" % name)
     np_ = int(m.group(1))

@@ -24,8 +24,8 @@
 
 static uint8_t nor[0x100000];
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && (uint32_t)(n) <= (hi) - (uint32_t)(off))
-#define OP_VERSION "v33"
-static const char *FELUCCA_ID_PTR = "PocketX_933";
+#define OP_VERSION "v34"
+static const char *FELUCCA_ID_PTR = "PocketX_934";
 
 static uint32_t ms_now(void)
 {
