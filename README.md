@@ -21,6 +21,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
 - **Pro levels (v36)**: every amp, block and preset at the same loudness (-23 LUFS, measured on real guitar);
   24 factory presets round the fitted amps, 28 USER slots; a PRESET LVL per preset; soft output limiter
+- What changed since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 - **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
   page with big values and bars
 - **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no

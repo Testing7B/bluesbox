@@ -49,6 +49,8 @@ static int st_reset(uint32_t k) { saved_ok[k] = 0; return 0; }
 static int st_saved(uint32_t k) { return saved_ok[k]; }
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static int a_level_db(int ch) { return ch ? -84 : -62; }
+static volatile uint8_t a_tmute;
+static int bat_mv = 3920, bat_usb_mv = 0;
 
 #include "ui_text.h"
 #include "ui.h"
@@ -94,7 +96,9 @@ int main(int argc, char **argv)
     ui_home(); ui_blk = PX_B_GATE; ui_mode = M_BLOCK; full(); shot(d, "edit_gate_preset_level");
     ui_home(); cur_preset = 13; load_preset(13); ui_blk = PX_B_REVERB; poison(); ui_render(); status(); shot(d, "play_smooth_lead");
     ui_move_start(); ui_knob(-1, 0); ui_render(); shot(d, "play_move");
-    ui_move_cancel(); cur_preset = 23; load_preset(23); full(); ui_status("BYP 97%", 1); shot(d, "play_acoustic_bypass");
+    ui_move_cancel(); cur_preset = 23; load_preset(23); master_vol = 100; bat_mv = 3640; full(); ui_status("BYP 97%", 1); shot(d, "play_acoustic_bypass_vol100_bat12");
+    bat_usb_mv = 5000; ui_render(); shot(d, "play_usb");
+    bat_usb_mv = 0; bat_mv = 3920; master_vol = 80;
     save_open(); save_draw(); shot(d, "save");
     save_knob(1); save_draw(); shot(d, "save_other_slot");
     save_close(); ui_render(); status();

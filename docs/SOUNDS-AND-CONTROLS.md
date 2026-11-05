@@ -144,6 +144,8 @@ block type, with its knobs at noon, keeps the loudness when switched on; each pr
 off = dark) and the selected block; EDIT shows the block on its colour, the model, and up to 5 settings with value and
 bar. `C1 xx%` (top right on PLAY, bottom right on EDIT) = DSP load on the second core (`C0` = fallback on the main
 core, `BYP` = overload guard: turn a block off). `EDITED`: the sound differs from its saved slot.
+Top centre of PLAY: the **battery** (v36), from the chip's own VBAT/4 channel (green, amber below 30 %, red below 15 %;
+`USB` when the 5 V supply is there); the tuner page shows the same reading in volts.
 
 ## Saving your sounds (v25)
 - `EDITED` at the top of the PLAY screen means the sound has been edited since the preset was loaded.
@@ -157,7 +159,7 @@ core, `BYP` = overload guard: turn a block off). `EDITED`: the sound differs fro
   the first start of v29 (the SYN block off, the default order).
 
 ## Tuner
-Long press on HOME. The `IN L … R … dB` line at the top shows the level of each input channel (dB below full
+Long press on HOME. The output is muted while the tuner is open (v36). The `IN L … R … dB` line at the top shows the level of each input channel (dB below full
 scale): with nothing plugged in, it is the pedal's own noise floor; while playing, it is your guitar's level.
 
 ## Audio input (v26–v28)

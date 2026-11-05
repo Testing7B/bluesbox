@@ -88,6 +88,39 @@ static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 
 static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
 static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 
+static int bat_percent(int mv)         /* a Li-ion cell at rest: 4.15 V full, 3.30 V empty */
+{
+    static const int16_t V[12] = {3300, 3500, 3630, 3690, 3720, 3750, 3790, 3840, 3900, 3970, 4050, 4150};
+    static const int8_t P[12] = {0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    if (mv <= V[0]) return 0;
+    for (int i = 1; i < 12; i++) if (mv < V[i]) return P[i - 1] + (P[i] - P[i - 1]) * (mv - V[i - 1]) / (V[i] - V[i - 1]);
+    return 100;
+}
+/* battery, top centre of PLAY: a cell icon + "78%" (green / amber / red), "USB" when the 5 V supply is there */
+static void draw_battery(int force)
+{
+    static int last = -100;
+    int usb = bat_usb_mv > 4300, pct = bat_mv ? bat_percent(bat_mv) : -1, key = usb ? 1000 + (pct < 0 ? 0 : pct) : pct;
+    if (!force && key == last) return;
+    last = key;
+    const uint32_t x = 84u, y = 4u;                    /* icon 22 x 12 + tip, then the text */
+    if (pct < 0 && !usb) { lcd_rect(x, 0, 74, S_H, UI_PANEL); return; }
+    uint16_t c = usb ? GRN : pct <= 15 ? RED : pct <= 30 ? YEL : GRN;
+    lcd_rect(x, 0, 74, y, UI_PANEL); lcd_rect(x, y + 12u, 74, S_H - y - 12u, UI_PANEL);
+    lcd_rect(x, y, 22, 1, UI_TXT); lcd_rect(x, y + 11u, 22, 1, UI_TXT);
+    lcd_rect(x, y + 1u, 1, 10, UI_TXT); lcd_rect(x + 21u, y + 1u, 1, 10, UI_TXT);
+    lcd_rect(x + 22u, y + 3u, 2, 6, UI_TXT); lcd_rect(x + 22u, y, 2, 3, UI_PANEL); lcd_rect(x + 22u, y + 9u, 2, 3, UI_PANEL);
+    uint32_t f = pct < 0 ? 18u : (uint32_t)pct * 18u / 100u;
+    if (f) lcd_rect(x + 2u, y + 2u, f, 8, c);
+    if (f < 18u) lcd_rect(x + 2u + f, y + 2u, 18u - f, 8, UI_PANEL);
+    lcd_rect(x + 1u, y + 1u, 1, 10, UI_PANEL); lcd_rect(x + 20u, y + 1u, 1, 10, UI_PANEL);
+    lcd_rect(x + 2u, y + 1u, 18, 1, UI_PANEL); lcd_rect(x + 2u, y + 10u, 18, 1, UI_PANEL);
+    char b[8] = "USB";
+    if (!usb) { num3(b, (uint32_t)pct); int i = 0; while (b[i]) i++; b[i] = '%'; b[i + 1] = 0; }
+    lcd_rect(x + 24u, y, 4, 12, UI_PANEL);
+    ft_box(x + 28u, 3, 46, b, &FT_SM, usb ? GRN : (pct <= 15 ? RED : UI_TXT), UI_PANEL, 0);
+}
+
 /* ---- status bar / footer, shared ---- */
 static int ui_dirty(void)              /* the preset differs from what its slot holds (hold PUSH to save) */
 {
@@ -101,11 +134,11 @@ static void draw_status(int force)
     if (uc.screen != 0) return;        /* (EDIT: its band takes the top) */
     if (force || uc.vol != master_vol) {
         char b[10] = "VOL "; num3(b + 4, master_vol);
-        ft_box(0, 3, 66, b, &FT_SM, UI_DIM, UI_PANEL, 1);
+        ft_box(0, 3, 66, b, &FT_SM, UI_DIM, UI_PANEL, 1);     /* (v36: 66 px; v35's 48 px cut "VOL 100" to "VOL 10") */
         uc.vol = master_vol;
     }
-    int d = ui_dirty();
-    if (force || d != uc.dirty) { ft_box(70, 3, 100, d ? "EDITED" : "", &FT_SM, UI_ACC, UI_PANEL, 1); uc.dirty = d; }
+    lcd_rect(66, 0, 18, S_H, UI_PANEL); lcd_rect(158, 0, 12, S_H, UI_PANEL);
+    draw_battery(force);
 }
 /* the DSP load, from the main loop: "C1 42%" (2nd core), "C0", "BYP" (red) */
 static void ui_status(const char *s, int red)
@@ -146,9 +179,11 @@ static void draw_play_top(int force)
         uc.amp_t = at; uc.amp_on = ao;
     }
     if (force || ct != uc.cab_t || co != uc.cab_on) {
-        ft_box(94, P_NUM_Y + 29u, 142, co ? px_type_name(PX_B_CAB, ct) : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
+        ft_box(94, P_NUM_Y + 29u, 88, co ? px_type_name(PX_B_CAB, ct) : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
         uc.cab_t = ct; uc.cab_on = co;
     }
+    int d = ui_dirty();                                /* EDITED: the sound differs from its saved slot */
+    if (force || d != uc.dirty) { ft_box(182, P_NUM_Y + 29u, 54, d ? "EDITED" : "", &FT_SM, UI_ACC, UI_BG, 2); uc.dirty = d; }
     int nchg = force;
     for (int i = 0; i < 14; i++) if (uc.name[i] != PRESET.name[i]) nchg = 1;
     if (nchg) {
@@ -453,18 +488,25 @@ static int lv_str(char *b, int v)
 static void tuner_level(void)
 {
     int l = a_level_db(0), r = a_level_db(1);
-    if (((l & 0xFF) | ((r & 0xFF) << 8)) == tn_last_lv) return;
-    tn_last_lv = (l & 0xFF) | ((r & 0xFF) << 8);
-    char b[28]; int i = 0;
+    if ((((l & 0xFF) | ((r & 0xFF) << 8)) ^ (bat_mv << 16)) == tn_last_lv) return;
+    tn_last_lv = ((l & 0xFF) | ((r & 0xFF) << 8)) ^ (bat_mv << 16);
+    char b[40]; int i = 0;
     b[i++] = 'I'; b[i++] = 'N'; b[i++] = ' '; b[i++] = ' '; b[i++] = 'L'; b[i++] = ' '; i += lv_str(b + i, l);
     b[i++] = ' '; b[i++] = ' '; b[i++] = ' '; b[i++] = 'R'; b[i++] = ' '; i += lv_str(b + i, r);
-    b[i++] = ' '; b[i++] = 'd'; b[i++] = 'B'; b[i] = 0;
+    b[i++] = ' '; b[i++] = 'd'; b[i++] = 'B';
+    if (bat_mv) {                                             /* + the battery in volts (v36: to check the gauge) */
+        b[i++] = ' '; b[i++] = ' '; b[i++] = 'B'; b[i++] = 'A'; b[i++] = 'T'; b[i++] = ' ';
+        b[i++] = (char)('0' + bat_mv / 1000); b[i++] = '.'; b[i++] = (char)('0' + bat_mv / 100 % 10); b[i++] = (char)('0' + bat_mv / 10 % 10);
+        b[i++] = 'V';
+    }
+    b[i] = 0;
     ft_box(0, 36, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
 #define TN_BAR_Y 172u
 static void tuner_open(void)
 {
     ui_mode = M_TUNER;
+    a_tmute = 1;                                              /* v36: silent while tuning */
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, GRN); lcd_rect(0, 27, 240, 3, GRN); lcd_rect(0, 4, 8, 23, GRN);
     ft_box(8, 4, 232, "TUNER", &FT_MD, BLK, GRN, 0);
@@ -478,7 +520,7 @@ static void tuner_open(void)
     ft_box(0, F_Y + 3u, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_PANEL, 1);
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
-static void tuner_close(void) { ui_mode = M_CHAIN; lcd_rect(0, 0, 240, 240, UI_BG); uc.screen = -1; ui_invalidate(); }
+static void tuner_close(void) { a_tmute = 0; ui_mode = M_CHAIN; lcd_rect(0, 0, 240, 240, UI_BG); uc.screen = -1; ui_invalidate(); }
 static void tuner_draw(float hz)       /* hz <= 0: no note */
 {
     int note = -1, c = 0; float cents = 0.0f;

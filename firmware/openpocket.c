@@ -396,6 +396,46 @@ static int32_t adc_read2(uint32_t ch)
     (void)fm1_adc_read(ch);
     return fm1_adc_read(ch);
 }
+
+/* ---- battery (v36): the chip's own VBAT / 4 channel through the PMU test bus, scaled by the 0.8 V bandgap
+ * read the same way (JieLi AC79 SDK, cpu/wl82/key/adc_api.c): mV = 4 x 800 x vbat / vbg. P3_ANA_CON4: bit 0
+ * PMU_DET_EN, bits 3:1 the PMU channel (0 VBG, 5 VBAT/4, 6 LDO5V/4); WLA_CON0 bits 17:15 = 4: the PMU on the ADC's
+ * channel 15, bit 14: the bandgap path. Everything is put back as it was after each reading. */
+#define P3_ANA_CON4 0x04u
+static int bat_mv, bat_usb_mv;         /* last readings (0: none) */
+static int32_t pmu_conv(uint32_t sel)
+{
+    uint32_t t, v = 0;
+    for (int k = 0; k < 3; k++) {                       /* 2 conversions to settle the mux, the 3rd counts */
+        FM1_ADC_CON_R = 0;
+        if (sel == 0u) FM1_WLA_CON0 |= 1u << 14; else FM1_WLA_CON0 &= ~(1u << 14);
+        FM1_ADC_CON_R = (FM1_ADC_CON_SDK & 0xF00Fu) | 0x40u | (15u << 8);
+        FM1_ADC_CON_R |= 0x10u;
+        FM1_ADC_CON_R |= 0x40u;
+        for (t = 0; t < 20000u && !fm1_adc_done(); t++) ;
+        if (t == 20000u) { fm1_adc_abort(); return -1; }
+        v = fm1_adc_take();
+    }
+    return (int32_t)v;
+}
+static void bat_read(void)
+{
+    uint8_t c4 = fm1_p33_read(P3_ANA_CON4);
+    uint32_t w = FM1_WLA_CON0;
+    FM1_WLA_CON0 = (w & ~(7u << 15)) | (4u << 15);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (0u << 1)));
+    int32_t vbg = pmu_conv(0u);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (5u << 1)));
+    int32_t vb = pmu_conv(5u);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (6u << 1)));
+    int32_t v5 = pmu_conv(6u);
+    fm1_p33_write(P3_ANA_CON4, c4);
+    FM1_WLA_CON0 = w;
+    if (vbg < 100 || vbg > 900 || vb < 0) { bat_mv = 0; return; }
+    int mv = (int)(3200 * vb / vbg), mu = v5 < 0 ? 0 : (int)(3200 * v5 / vbg);
+    bat_mv = bat_mv ? (bat_mv * 3 + mv) / 4 : mv;      /* a little smoothing */
+    bat_usb_mv = mu;
+}
 #define KEY_DEBUG 0          /* 1 = shows the raw value of channel 9 at the bottom right (K####) */
 /* identifies the analog keypad button by the nearest value (±42 window),
  * independent of the idle state */
@@ -690,6 +730,10 @@ static void app_main(void)
         int32_t mv = -1;
         if (now - adc_tick >= 10u) {     /* analog keypad CAB/DLY/REV + MASTER knob, every 10 ms */
             adc_tick = now;
+            {   /* battery: every 2 s (v36) */
+                static uint32_t t_bat;
+                if (!t_bat || now - t_bat >= 2000u) { t_bat = now ? now : 1u; bat_read(); }
+            }
             int k = keys_decode(adc_read2(ADC_CH_KEYS));
             p_cab = dbn_press(&btn[B_CAB], k == KEY_CAB);
             p_dly = dbn_press(&btn[B_DLY], k == KEY_DLY);
