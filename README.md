@@ -78,7 +78,7 @@ what you change on the pedal shows on the page. The protocol: [`docs/EDITOR-PROT
 
 ## Build
 
-The same on macOS, Linux and Windows, in one container (Docker is the only requirement): **`make package`** (Windows:
+The same on macOS, Linux and Windows, in one container (Docker and Node 18+): **`make package`** (Windows:
 **`build.bat`**), then **`make test`**. Details, pinned versions, the toolchain's licence and troubleshooting:
 [`docs/BUILDING.md`](docs/BUILDING.md). The build makes:
 

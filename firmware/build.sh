@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build OpenPocket -> firmware/openpocket.bin (app), build/loader/ota.bin (update loader),
-#                    docs/firmware/*.fwsc (packages for the web installer)   (WSL via build.bat, or Linux)
+#                    docs/firmware/*.fwsc (packages for the web installer)   (in the container: tools/op.mjs build)
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BSP="${BSP:-$HERE/bsp}"
@@ -10,7 +10,7 @@ echo "BSP       : $BSP"
 if [ ! -x "$TC/pi32v2/bin/clang" ]; then
   echo "ERROR: no JieLi toolchain in $TC"
   echo "  -> it is the one you already use to build CLIPPER."
-  echo "  -> run again with:  JIELI_TOOLCHAIN=/path/to/toolchain wsl bash build.sh"
+  echo "  -> run again with:  JIELI_TOOLCHAIN=/path/to/toolchain sh firmware/build.sh"
   exit 1
 fi
 if [ ! -x "$TC/pi32v2/bin/ld" ]; then

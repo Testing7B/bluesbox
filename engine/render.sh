@@ -8,7 +8,7 @@ cd "$HERE"
 CC=""
 for c in cc gcc clang; do command -v $c >/dev/null 2>&1 && { CC=$c; break; }; done
 if [ -z "$CC" ]; then
-  echo "No C compiler in WSL. Install one:  sudo apt-get update && sudo apt-get install -y build-essential"
+  echo "No C compiler found. Install one:  sudo apt-get update && sudo apt-get install -y build-essential"
   exit 1
 fi
 if [ ! -x ./px_render ] || [ px_render.c -nt px_render ] || [ px_dsp.c -nt px_render ]; then

@@ -9,9 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the container, the firmware and the installer packages
-        run: make package
+        run: node tools/op.mjs package
       - name: Host tests
-        run: make test
+        run: node tools/op.mjs test
       - uses: actions/upload-artifact@v4
         with:
           name: openpocket-build

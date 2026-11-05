@@ -9,15 +9,15 @@ make package      # build the firmware + installer packages, print their SHA-256
 make test         # run the host tests
 ```
 
-Windows has no `make` by default: double-click **`build.bat`** (it runs the same container). `make` also works in WSL or Git Bash.
+Every command is `node tools/op.mjs <command>` (Node 18 or newer); `make` is a shortcut for it on macOS and Linux, and the `.bat` files are shortcuts for it on Windows (double-click **`build.bat`**). The Docker command lines live only in `tools/op.mjs`.
 
 ## Requirements
 
 | System | You need |
 | --- | --- |
-| macOS | Docker Desktop (or Colima), `make` (Xcode command line tools) |
-| Linux | Docker, `make` |
-| Windows | Docker Desktop (WSL 2 backend). `make` optional |
+| macOS | Docker Desktop (or Colima), Node 18+, `make` optional (Xcode command line tools) |
+| Linux | Docker, Node 18+, `make` optional |
+| Windows | Docker Desktop (WSL 2 backend), Node 18+ (nodejs.org). `make` is not needed |
 
 The toolchain is JieLi's compiler, and it only exists for x86-64 Linux. The container is therefore always `linux/amd64`. On
 Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you change nothing.
@@ -29,8 +29,8 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 | `make build` | `firmware/build.sh` in the container: `firmware/openpocket.bin`, the update loader, `docs/firmware/PocketX_9NN.fwsc`, `BlackBox_9NN.fwsc`, `manifest.json` |
 | `make package` | `build`, then `build/SHA256SUMS` |
 | `make test` | `tests/run_tests.sh` (engine, preset store, screen, simulated pedal, installer, editor; the browser page tests also run when Playwright is installed) |
-| `make clean` | remove every build output |
-| `make shell` | a shell in the container |
+| `make clean` | remove every build output (on the host; needs neither Docker nor the image) |
+| `make shell` | a shell in the container (as your user) |
 | `make serve` | the installer and editor on `http://localhost:8765/` (offline install; needs Python 3 on the host) |
 | `make render IN=guitar.wav [OUT=..] [PRESET=1]` | a DI recording through the engine |
 | `make appimage DUMP=fm1-1.bin` | `fm1-300.bin` for the SD-card recovery |
@@ -39,7 +39,7 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 `~/.jieli`; Linux x86-64 only). `tests/run_tests.sh` also runs directly on macOS and Linux with only a C compiler, Node and
 Python 3.
 
-The `.bat` files are thin wrappers around the same container. `PUBLISH-GITHUB.bat` and `PUBLISH-SOURCE.bat` (PowerShell
+The `.bat` files (`build.bat`, `makeimage.bat`, `render.bat`, `INSTALL-OFFLINE.bat`) only check that Node is installed and call `tools/op.mjs`. `tests/test_op.mjs` (part of `make test`) checks the Docker command lines, the friendly errors and `make clean` without Docker, using a fake `docker`. `PUBLISH-GITHUB.bat` and `PUBLISH-SOURCE.bat` (PowerShell
 `tools/publish_github.ps1`) are the maintainer's release tool and still need Windows; nothing else does.
 
 ## What is pinned
@@ -74,7 +74,7 @@ request on a native x86-64 runner and uploads the packages with their checksums.
 - **`checksum mismatch` while building the image**: JieLi replaced the file at that URL. Do not bypass the check; open an
   issue with the new SHA-256.
 - **No network for the toolchain download**: build once on a connected machine; the image `openpocket-build` keeps it.
-- **Files owned by root on Linux**: the Makefile runs the container as your user; if you ran `docker run` by hand, `sudo chown -R $USER .`.
+- **Files owned by root on Linux**: `tools/op.mjs` runs the container as your user; if you ran `docker run` by hand, `sudo chown -R $USER .`.
 
 ## Time
 
@@ -83,5 +83,5 @@ On an Apple M-series Mac under emulation: first image build about 1 min (downloa
 
 ## Not covered
 
-Native Windows was not tested (no Windows machine here); `build.bat` only calls `docker build` and `docker run`. The page
+Native Windows was not tested (no Windows machine here); the `.bat` files only check for Node and call `tools/op.mjs`, which is tested on macOS and Linux with a fake `docker`. The page
 tests that need Playwright are skipped unless it is installed.
