@@ -214,6 +214,10 @@ export function presetToJSON(q, cat, slot) {
 }
 export function filePresets(presets) { return { format: "openpocket-presets", version: 1, presets }; }
 
+// v34: amps, drives and cabs were replaced by fitted models (docs/FITTED-MODELS.md); a preset file from v32 / v33
+// names the old types: each one -> the nearest new type, the same choice the pedal makes for its saved presets (px_type_v34)
+export const V33_TYPES = {"AMP": {"TWIN CLEAN": "TWIN", "DELUXE 65": "TWIN", "PRINCETONE": "TWIN", "TWEED 59": "SHIRLEY", "TWEED CHAMP": "AC15 TB", "AC 30 TB": "AC15 TB", "AC 15": "AC15 TB", "JTM 45": "SHIRLEY", "PLEXI 68": "SHIRLEY", "BRIT 800": "JCM900", "BRIT JVM": "JCM2000", "HIWATT DR": "JCM900", "ORANGE 120": "JCM2000", "CHIME 30": "AC15 TB", "ODS LEAD": "MARK IV", "SLO 100": "PRO MOD", "MARK IIC+": "MARK IV", "RECTIFIED": "5150", "5150 LEAD": "5150", "5150 III": "5150", "ECSTASY": "PRO MOD", "BE LEAD": "PRO MOD", "UBER VH4": "5150", "EURO BALL": "5150", "REVV GEN": "5150", "JC CLEAN": "TWIN", "SUPRO 64": "AC15 TB", "TWO-ROCK": "TWIN", "SVT BASS": "TWIN"}, "DRV": {"TS 808": "TS9", "TS 9": "TS9", "SD-1 OD": "TS9", "KLONE": "KLON", "BD BLUES": "KLON", "OCD DRIVE": "M77 OD", "RAT DIST": "SWEDE HM-2", "DS-1 DIST": "SWEDE HM-2", "DIST PLUS": "M77 OD", "BLUESBREAKER": "KLON", "KING OF TONE": "KLON", "TIMMY": "KLON", "ZEN DRIVE": "TS9", "MUFF PI": "M77 OD", "RAMS HEAD": "M77 OD", "GREEN RUSSIAN": "M77 OD", "FACE GERMAN.": "M77 OD", "FACE SILICON": "M77 OD", "BENDER MK2": "M77 OD", "OCTAFUZZ": "M77 OD", "FUZZ FACTORY": "M77 OD", "TREBLE BOOST": "M77 OD", "EP BOOST": "KLON", "METAL ZONE": "SWEDE HM-2", "PRECISION": "TS9", "BASS DI 7K": "KLON"}, "CAB": {"1x10 OPEN": "1x12 US OPEN", "2x10 VIBRO": "1x12 US OPEN", "2x12 BRIT": "4x12 GREEN", "4x10 TWEED": "1x12 US OPEN", "4x12 H30": "4x12 V30", "1x15 OPEN": "1x12 US OPEN", "8x10 BASS": "4x12 V30", "4x10 HORN": "1x12 US OPEN"}};
+
 // a preset from its JSON; problems (unknown block or type) are listed, the rest still comes through
 export function presetFromJSON(o, cat, base) {
   const q = clonePreset(base), warn = [];
@@ -224,6 +228,11 @@ export function presetFromJSON(o, cat, base) {
     if (i === undefined) { warn.push(`unknown block ${ob.block}`); continue; }
     q.on[i] = ob.on ? 1 : 0;
     let t = typeof ob.type === "number" ? ob.type : cat.blocks[i].types.findIndex((x) => x.name === ob.type);
+    const moved = typeof ob.type === "string" && t < 0 && V33_TYPES[ob.block] && V33_TYPES[ob.block][ob.type];
+    if (moved) {
+      t = cat.blocks[i].types.findIndex((x) => x.name === moved);
+      if (t >= 0) warn.push(`${ob.block}: ${ob.type} (before v34) -> ${moved}`);
+    }
     if (t < 0 || t >= cat.blocks[i].types.length) { warn.push(`${ob.block}: unknown type ${ob.type}`); t = q.type[i]; }
     q.type[i] = t;
     if (Array.isArray(ob.params)) for (let k = 0; k < q.p[i].length; k++) {

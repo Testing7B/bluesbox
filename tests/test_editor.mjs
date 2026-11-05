@@ -126,6 +126,10 @@ const r = presetFromJSON(back[0], cat, (await ed.slotGet(0)).preset);
 ok(r.warn.length === 0 && JSON.stringify(r.preset) === JSON.stringify(q), "file: a preset survives export -> import exactly");
 const odd = presetFromJSON({ name: "X", blocks: [{ block: "AMP", on: true, type: "NO SUCH AMP", params: [1, 2, 3] }, { block: "FOO" }] }, cat, q);
 ok(odd.warn.length === 2 && odd.preset.p[amp][0] === 1, "file: unknown type and block are reported, the rest comes through");
+const v33 = presetFromJSON({ name: "OLD", blocks: [{ block: "AMP", on: true, type: "RECTIFIED" }, { block: "DRV", on: true, type: "MUFF PI" }, { block: "CAB", on: true, type: "4x12 H30" }] }, cat, q);
+const tn = (b, t) => cat.blocks[b].types[t].name;
+ok(v33.warn.length === 3 && tn(amp, v33.preset.type[amp]) === "5150" && tn(4, v33.preset.type[4]) === "M77 OD" && tn(6, v33.preset.type[6]) === "4x12 V30",
+   "file: a v33 preset file -> the nearest v34 amp / drive / cab, each one reported");
 await s.end();
 
 // ---- 6. after a power cycle: the store is read back from the flash ----
