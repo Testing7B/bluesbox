@@ -21,7 +21,7 @@
 #define ST_NSLOT   52u
 #define ST_SLOT    112u
 #define ST_S0N     34u                          /* slots in sector 0: 16 + 34 * 112 = 0xEF0 < 0xF00 */
-#define ST_VER     4u          /* 4: v35 (delay TIME up to 2 s); 3: v34 (amp / drive / cab types renumbered); 2: v29; 1: v25 */
+#define ST_VER     5u          /* 5: v36 (preset LEVEL); 4: v35 (delay TIME up to 2 s); 3: v34 (amp / drive / cab types renumbered); 2: v29; 1: v25 */
 #define ST1_NSLOT  42u                          /* format 1 (v25..v28) */
 #define ST1_SLOT   96u
 #define ST1_S0N    38u
@@ -71,6 +71,13 @@ static void st_types_v34(void)
         if (st_slot[k][sizeof(px_preset_t)] != ST_MARK) continue;
         px_preset_t *q = (px_preset_t *)(void *)st_slot[k];
         for (uint32_t i = 0; i < 3u; i++) q->type[B[i]] = (uint8_t)px_type_v34(B[i], q->type[B[i]]);
+    }
+}
+static void st_level_v36(void)               /* saved before v36: no preset LEVEL yet (that byte was unused) = 0 dB */
+{
+    for (uint32_t k = 0; k < ST_NSLOT; k++) {
+        if (st_slot[k][sizeof(px_preset_t)] != ST_MARK) continue;
+        ((px_preset_t *)(void *)st_slot[k])->p[PX_B_GATE][PX_PATCH_LEVEL] = 50;
     }
 }
 static void st_time_v35(void)
@@ -138,6 +145,7 @@ static void st_load(void)
     if (st_last >= ST_NSLOT) st_last = 0;
     if (best && bh.ver < 3u) st_types_v34();        /* saved before v34: the old amp / drive / cab numbers */
     if (best && bh.ver < 4u) st_time_v35();         /* saved before v35: delay TIME on the 1 s scale */
+    if (best && bh.ver < 5u) st_level_v36();        /* saved before v36: preset LEVEL = 0 dB */
 }
 
 static int st_saved(uint32_t k) { return k < ST_NSLOT && st_slot[k][sizeof(px_preset_t)] == ST_MARK; }

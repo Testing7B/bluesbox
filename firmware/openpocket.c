@@ -231,58 +231,7 @@ static inline void lcd_px(uint16_t c){ spi_byte((uint8_t)(c>>8)); spi_byte((uint
 static inline void lcd_end(void){ PB_OUT |= CS; }
 #endif
 
-/* ================= ANTI-ALIASED text (Inter font, 4-bit alpha) =================
- * ft_box(x, y, w, ...) draws a box of fixed width w and of the font's height: padding + text + padding,
- * in a single pixel stream (background included). Nothing is cleared first: no flicker. align 0 = left,
- * 1 = centre, 2 = right. Text that is too long is clipped. */
-#include "fonts.h"
-static int ft_glyph(const op_font *f, char c)
-{
-    for (int i = 0; i < f->n; i++) if (f->chars[i] == c) return i;
-    return 0;                                          /* unknown -> 1st character (space) */
-}
-static uint32_t ft_width(const op_font *f, const char *s)
-{
-    uint32_t w = 0;
-    while (*s) w += f->adv[ft_glyph(f, *s++)];
-    return w;
-}
-static uint16_t ft_mix(uint16_t fg, uint16_t bg, uint32_t a)   /* a = 0..15 */
-{
-    uint32_t r = (((fg >> 11) & 31u) * a + ((bg >> 11) & 31u) * (15u - a)) / 15u;
-    uint32_t g = (((fg >> 5) & 63u) * a + ((bg >> 5) & 63u) * (15u - a)) / 15u;
-    uint32_t b = ((fg & 31u) * a + (bg & 31u) * (15u - a)) / 15u;
-    return (uint16_t)((r << 11) | (g << 5) | b);
-}
-static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const op_font *f,
-                       uint16_t fg, uint16_t bg, int align)
-{
-    uint8_t gi[40]; uint32_t n = 0, tw = 0;
-    if (x >= 240u || w == 0u) return 0;
-    if (x + w > 240u) w = 240u - x;
-    while (s[n] && n < 40u) {                          /* characters that fit in the box */
-        int g = ft_glyph(f, s[n]);
-        if (tw + f->adv[g] > w) break;
-        gi[n] = (uint8_t)g; tw += f->adv[g]; n++;
-    }
-    uint32_t lpad = align == 1 ? (w - tw) / 2u : (align == 2 ? w - tw : 0u), rpad = w - tw - lpad;
-    uint16_t pal[16];
-    for (uint32_t a = 0; a < 16u; a++) pal[a] = ft_mix(fg, bg, a);
-    lcd_win(x, y, w, f->h);
-    for (uint32_t r = 0; r < f->h; r++) {
-        for (uint32_t i = 0; i < lpad; i++) lcd_px(bg);
-        for (uint32_t k = 0; k < n; k++) {
-            uint32_t a = f->adv[gi[k]];
-            const uint8_t *b = f->bits + f->off[gi[k]];
-            uint32_t p = r * a;
-            for (uint32_t c = 0; c < a; c++, p++) lcd_px(pal[(b[p >> 1] >> ((p & 1u) ? 0 : 4)) & 15u]);
-        }
-        for (uint32_t i = 0; i < rpad; i++) lcd_px(bg);
-        if ((r & 7u) == 7u) fm1_wdt_feed();
-    }
-    lcd_end();
-    return tw;
-}
+#include "ui_text.h"                    /* anti-aliased text (Inter), rounded boxes */
 
 /* one character (scale sx,sy), fg on bg */
 static void lcd_char(uint32_t x, uint32_t y, char ch, uint16_t fg, uint16_t bg, uint32_t s)
@@ -353,7 +302,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "35"
+#define OP_VERSION_NUM "36"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -661,7 +610,6 @@ static void app_main(void)
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
-    lcd_rect(0, 224, 240, 16, UI_PANEL);
     ui_invalidate();
     ui_render();
     op_stage(ST_RUN, 0);
@@ -686,7 +634,7 @@ static void app_main(void)
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
-                ft_box(178, 225, 60, c, &FT_SM, a_bypass ? RED : UI_DIM, UI_PANEL, 2);
+                ui_status(c, a_bypass);
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
 #endif

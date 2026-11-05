@@ -1,31 +1,30 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * OpenPocket X — UI v3: "chain + block page", anti-aliased Inter font, NO flicker. All on-screen text in English.
+ * OpenPocket X — UI v4 (v36): a PLAY screen and an EDIT screen, like the big multi-effects (Helix / HX Stomp,
+ * Boss GT / GX): the preset readable from a distance, the chain in colour, big clear settings. No flicker: nothing
+ * is cleared, every element is a fixed box redrawn in one pixel stream, and only when it changed.
  *
- *  +--------------------------+  header: preset number + name (bold), volume
- *  | 05 BRIT JANGLE   VOL 80  |
- *  +--------------------------+  chain: 12 tiles in the preset's order (on = block colour, off = grey)
- *  | GT  CMP PIT SFX SYN DRV  |
- *  | AMP CAB EQ  MOD DLY REV  |
- *  +--------------------------+  block page: model (bold) + ON/OFF + up to 5 knobs as bars
- *  | AMP                 ON   |
- *  | <      AC 30 TB       >  |
- *  | GAIN     ##########  45  |
- *  +--------------------------+  help line + DSP load
- *  | KNOB: BLOCK  PUSH: OPEN  |
- *  +--------------------------+
- * No flicker: the screen is never cleared. Every element is a fixed-size box redrawn in one pixel stream
- * (background included: ft_box; a bar = filled part + empty part), and only when it changed.
+ *  PLAY                                   EDIT (a block)
+ *  +------------------------------+       +------------------------------+
+ *  | VOL 80     EDITED     C1 42% |       |#AMP ######################ON#|  band in the block's colour
+ *  | 07   JCM900                  |       | <         JCM900          >  |  model
+ *  |      4x12 GREEN              |       | GAIN                     55  |
+ *  |        BRIT CRUNCH           |       | ==========-----------------  |  up to 5 settings, bar + value
+ *  | [GT][CMP][PIT][SFX][SYN][DRV]|       | BASS                     50  |
+ *  | [AMP][CAB][EQ][MOD][DLY][REV]|       | ...                          |
+ *  | AMP   JCM900             ON  |       |                              |
+ *  | PUSH EDIT   FOOT: PRESETS    |       | PUSH EDIT   HOME BACK C1 42% |
+ *  +------------------------------+       +------------------------------+
  *
- * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to the chain (long press = tuner);
- * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = jump to that block (press again = on/off);
- * FX = cycles DRV, SFX, SYN, PIT, CMP, GT, EQ. Hold PUSH = SAVE (the preset into one of the 52 slots, in flash).
- * Double-click PUSH on the chain = MOVE the selected block: KNOB moves it along the chain, PUSH drops it there,
- * HOME puts it back (v29: the order is part of the preset).
+ * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to PLAY (long press = tuner);
+ * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = that block's page (press again = on/off);
+ * FX = cycles DRV, SFX, SYN, PIT, CMP, GT, EQ. Hold PUSH = SAVE (into one of the 52 slots, in flash).
+ * Double-click PUSH on PLAY = MOVE the selected block: KNOB moves it along the chain, PUSH drops it, HOME puts it back.
+ * The preset LEVEL (v36) is the GT page's 3rd setting ("PRESET LVL").
  */
 #pragma once
 
 enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE, M_MOVE };
-static uint32_t st_gen;                 /* bumped on each save: the header's "*" reference reloads */
+static uint32_t st_gen;                 /* bumped on each save: the "EDITED" reference reloads */
 static void st_get(uint32_t k, px_preset_t *p);
 static int st_save(uint32_t k, const px_preset_t *p);
 static int st_reset(uint32_t k);
@@ -34,25 +33,30 @@ static void save_draw(void);
 static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 #define UI_PAGE (ui_mode == M_BLOCK || ui_mode == M_EDIT)   /* the block page has the focus */
 
-#define C_OFF  0x2124
-#define C_LINE 0x2945
+#define C_OFF  0x2124                  /* a block switched off */
+#define C_LINE 0x2945                  /* thin lines, connectors */
+#define C_CARD 0x18E3                  /* a selected row */
+#define C_BAR  0x3186                  /* the empty part of a bar */
 #include "ui_colors.h"                 /* BLK_COL: the blocks' colours (also the web editor's, px_editor.h) */
 
-/* geometry (font heights: FT_SM 15 px, FT_MD 23 px) */
-#define H_Y      4u                    /* header */
-#define T_Y0     36u                   /* 1st row of tiles */
-#define T_DY     32u
+/* geometry (font heights: FT_SM 15, FT_MD 23, FT_NM 32, FT_XL 45 px) */
+#define S_H      20u                   /* status bar */
+#define P_NUM_Y  26u                   /* PLAY: preset number */
+#define P_NAME_Y 76u                   /* PLAY: preset name */
+#define T_Y0     122u                  /* PLAY: 1st row of tiles */
+#define T_DY     30u
 #define T_COLS   6
 #define T_PITCH  39u
 #define T_W      35u
-#define T_H      26u
-#define D_Y0     100u                  /* block name + ON/OFF */
-#define D_TYPE   118u                  /* type (bold) */
-#define D_P0     144u                  /* 1st parameter row */
-#define D_ROW    16u
-#define F_Y      225u                  /* footer */
-#define BAR_X    78u
-#define BAR_W    114u
+#define T_H      24u
+#define P_INFO_Y 186u                  /* PLAY: the selected block */
+#define F_Y      222u                  /* footer (both screens) */
+#define E_BAND   30u                   /* EDIT: block band */
+#define E_TYPE_Y 36u                   /* EDIT: model row */
+#define E_P0     70u                   /* EDIT: 1st setting */
+#define E_ROW    30u
+#define BAR_X    10u
+#define BAR_W    220u
 
 static void num3(char *b, uint32_t v)  /* number without leading zeros */
 {
@@ -61,64 +65,109 @@ static void num3(char *b, uint32_t v)  /* number without leading zeros */
     if (v >= 10u) b[i++] = (char)('0' + (v / 10u) % 10u);
     b[i++] = (char)('0' + v % 10u); b[i] = 0;
 }
+static uint16_t ui_dark(uint16_t c)    /* a colour at ~1/3: the "off" version of a block colour */
+{
+    return (uint16_t)((((c >> 11) & 31u) / 3u) << 11 | (((c >> 5) & 63u) / 3u) << 5 | ((c & 31u) / 3u));
+}
 
 /* ---- cache of what is on screen ---- */
 static struct {
-    int full;
+    int full, screen;                  /* screen: 0 PLAY, 1 EDIT */
     uint32_t preset, vol; char name[14];
+    int dirty, amp_t, cab_t, amp_on, cab_on;
     uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK], tile_blk[PX_NBLK], tile_mv[PX_NBLK];
+    int info_b, info_t, info_on;
     int blk, type, np, item, mode, on;
     uint8_t val[PX_NPAR];
-    int hint, dirty;
+    int hint;
+    char status[12]; int status_red;
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
+static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
+static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = parameters */
+static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
+static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 
-/* ---- header ---- */
-static void draw_header(int force)
+/* ---- status bar / footer, shared ---- */
+static int ui_dirty(void)              /* the preset differs from what its slot holds (hold PUSH to save) */
+{
+    static px_preset_t ref;
+    static uint32_t ref_slot = ~0u, ref_gen = ~0u;
+    if (ref_slot != cur_preset || ref_gen != st_gen) { st_get(cur_preset, &ref); ref_slot = cur_preset; ref_gen = st_gen; }
+    return memcmp(&ref, &PRESET, sizeof ref) != 0;
+}
+static void draw_status(int force)
+{
+    if (uc.screen != 0) return;        /* (EDIT: its band takes the top) */
+    if (force || uc.vol != master_vol) {
+        char b[10] = "VOL "; num3(b + 4, master_vol);
+        ft_box(0, 3, 66, b, &FT_SM, UI_DIM, UI_PANEL, 1);
+        uc.vol = master_vol;
+    }
+    int d = ui_dirty();
+    if (force || d != uc.dirty) { ft_box(70, 3, 100, d ? "EDITED" : "", &FT_SM, UI_ACC, UI_PANEL, 1); uc.dirty = d; }
+}
+/* the DSP load, from the main loop: "C1 42%" (2nd core), "C0", "BYP" (red) */
+static void ui_status(const char *s, int red)
+{
+    if (ui_mode == M_TUNER || ui_mode == M_SAVE) return;
+    int same = uc.status_red == red;
+    for (int i = 0; i < 12; i++) { if (uc.status[i] != s[i]) same = 0; if (!s[i]) break; }
+    if (same && !uc.full) return;
+    if (uc.screen == 0) ft_box(170, 3, 66, s, &FT_SM, red ? RED : UI_DIM, UI_PANEL, 2);
+    else ft_box(178, F_Y + 3u, 58, s, &FT_SM, red ? RED : UI_DIM, UI_PANEL, 2);
+    for (int i = 0; i < 12; i++) { uc.status[i] = s[i]; if (!s[i]) break; }
+    uc.status_red = red;
+}
+static void draw_hint(int force)
+{
+    int h = (int)ui_mode;
+    if (!force && uc.hint == h) return;
+    const char *t = h == M_MOVE ? "KNOB: MOVE    PUSH: DROP"
+                  : h == M_EDIT ? "KNOB: VALUE   PUSH: OK"
+                  : h == M_BLOCK ? "KNOB: SELECT  PUSH: EDIT"
+                  : "KNOB: BLOCK    PUSH: EDIT";
+    ft_box(0, F_Y + 3u, uc.screen ? 174u : 240u, t, &FT_SM, UI_DIM, UI_PANEL, uc.screen ? 0 : 1);
+    uc.hint = h;
+}
+
+/* ===================================================== PLAY ======== */
+static void draw_play_top(int force)
 {
     if (force || uc.preset != cur_preset) {
         char b[4]; uint32_t n = cur_preset + 1u;
         b[0] = (char)('0' + n / 10u); b[1] = (char)('0' + n % 10u); b[2] = 0;
-        ft_box(4, H_Y, 30, b, &FT_MD, UI_ACC, UI_BG, 0);
+        ft_box(6, P_NUM_Y, 84, b, &FT_XL, UI_ACC, UI_BG, 0);
         uc.preset = cur_preset;
+    }
+    int at = PRESET.type[PX_B_AMP], ct = PRESET.type[PX_B_CAB], ao = PRESET.on[PX_B_AMP], co = PRESET.on[PX_B_CAB];
+    if (force || at != uc.amp_t || ao != uc.amp_on) {
+        ft_box(94, P_NUM_Y + 4u, 142, ao ? px_type_name(PX_B_AMP, at) : "NO AMP", &FT_MD, ao ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
+        uc.amp_t = at; uc.amp_on = ao;
+    }
+    if (force || ct != uc.cab_t || co != uc.cab_on) {
+        ft_box(94, P_NUM_Y + 29u, 142, co ? px_type_name(PX_B_CAB, ct) : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
+        uc.cab_t = ct; uc.cab_on = co;
     }
     int nchg = force;
     for (int i = 0; i < 14; i++) if (uc.name[i] != PRESET.name[i]) nchg = 1;
     if (nchg) {
-        ft_box(34, H_Y, 144, PRESET.name, &FT_MD, UI_TXT, UI_BG, 0);
+        ft_box(0, P_NAME_Y, 240, PRESET.name, &FT_NM, UI_TXT, UI_BG, 1);
         for (int i = 0; i < 14; i++) uc.name[i] = PRESET.name[i];
     }
-    {   /* "*": the preset differs from what its slot holds (hold PUSH to save) */
-        static px_preset_t ref;
-        static uint32_t ref_slot = ~0u, ref_gen = ~0u;
-        if (ref_slot != cur_preset || ref_gen != st_gen) { st_get(cur_preset, &ref); ref_slot = cur_preset; ref_gen = st_gen; }
-        int d = memcmp(&ref, &PRESET, sizeof ref) != 0;
-        if (force || d != uc.dirty) { ft_box(178, H_Y, 12, d ? "*" : "", &FT_MD, UI_ACC, UI_BG, 0); uc.dirty = d; }
-    }
-    if (force || uc.vol != master_vol) {
-        char b[10] = "VOL "; num3(b + 4, master_vol);
-        ft_box(190, H_Y + 4u, 48, b, &FT_SM, UI_DIM, UI_BG, 2);
-        uc.vol = master_vol;
-    }
 }
-
 /* ---- chain tiles: position i shows block PRESET.order[i] ---- */
 static uint32_t tile_x(int i) { return 4u + (uint32_t)(i % T_COLS) * T_PITCH; }
 static uint32_t tile_y(int i) { return T_Y0 + (uint32_t)(i / T_COLS) * T_DY; }
-static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
-static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 static void draw_tile(int i)
 {
     int b = PRESET.order[i];
     uint32_t x = tile_x(i), y = tile_y(i);
     int on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
-    uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : UI_DIM;   /* moving: accent tile */
-    uint16_t ol = mv ? WHT : (sel ? WHT : UI_BG);
-    lcd_rect(x - 1u, y - 1u, T_W + 2u, 1, ol); lcd_rect(x - 1u, y + T_H, T_W + 2u, 1, ol);   /* 1 px outline */
-    lcd_rect(x - 1u, y, 1, T_H, ol);           lcd_rect(x + T_W, y, 1, T_H, ol);
-    lcd_rect(x, y, T_W, 5, bg); lcd_rect(x, y + 20u, T_W, T_H - 20u, bg);                  /* background around the text */
-    ft_box(x, y + 5u, T_W, px_block_label(b), &FT_SM, fg, bg, 1);
-    lcd_rect(x, y + T_H + 2u, T_W, 2, mv ? UI_ACC : (sel ? WHT : UI_BG));                  /* underline: selected / moving */
+    uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : (uint16_t)((BLK_COL[b] >> 1) & 0x7BEF);
+    ui_rbox(x - 2u, y - 2u, T_W + 4u, T_H + 4u, 5, sel ? WHT : UI_BG, UI_BG);   /* selection ring (or nothing) */
+    ui_rbox(x, y, T_W, T_H, 4, bg, sel ? WHT : UI_BG);
+    ft_box(x + 2u, y + 5u, T_W - 4u, px_block_label(b), &FT_SM, fg, bg, 1);
     uc.tile_on[i] = (uint8_t)on; uc.tile_sel[i] = (uint8_t)sel; uc.tile_blk[i] = (uint8_t)b; uc.tile_mv[i] = (uint8_t)mv;
 }
 static void draw_tiles(int force)
@@ -129,89 +178,95 @@ static void draw_tiles(int force)
         if (force || uc.tile_blk[i] != b || uc.tile_on[i] != on || uc.tile_sel[i] != sel || uc.tile_mv[i] != mv) draw_tile(i);
     }
 }
-
-/* ---- block page ---- */
-static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
-static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = parameters */
-
-static void draw_onoff(void)
+static void draw_info(int force)       /* the selected block: label, model, on/off */
 {
-    int sel = (UI_PAGE && ui_item == 1u);
-    uint16_t bg = sel ? UI_PANEL : UI_BG;
-    int on = PRESET.on[ui_blk] != 0;
-    ft_box(186, D_Y0, 50, on ? "ON" : "OFF", &FT_SM, on ? BLK_COL[ui_blk] : UI_DIM, bg, 1);
+    int b = (int)ui_blk, t = PRESET.type[b], on = PRESET.on[b] != 0;
+    if (!force && uc.info_b == b && uc.info_t == t && uc.info_on == on) return;
+    ft_box(0, P_INFO_Y, 8, "", &FT_MD, UI_TXT, UI_BG, 0);
+    ft_box(8, P_INFO_Y, 54, px_block_label(b), &FT_MD, BLK_COL[b], UI_BG, 0);
+    ft_box(62, P_INFO_Y, 132, px_type_name(b, t), &FT_MD, on ? UI_TXT : UI_DIM, UI_BG, 0);
+    lcd_rect(194, P_INFO_Y, 40, 4, UI_BG); lcd_rect(194, P_INFO_Y + 19u, 40, 4, UI_BG);
+    ft_box(194, P_INFO_Y + 4u, 40, on ? "ON" : "OFF", &FT_SM, on ? BLK_COL[b] : UI_DIM, UI_BG, 2);
+    lcd_rect(234, P_INFO_Y, 6, 23, UI_BG);
+    uc.info_b = b; uc.info_t = t; uc.info_on = on;
+}
+
+/* ===================================================== EDIT ======== */
+static void draw_band(int force)       /* the block's name on its colour, ON / OFF pill (item 1) */
+{
+    int on = PRESET.on[ui_blk] != 0, sel = (UI_PAGE && ui_item == 1u);
+    if (!(force || uc.blk != (int)ui_blk || uc.on != on || (uc.item == 1) != sel)) return;
+    uint16_t c = BLK_COL[ui_blk];
+    if (force || uc.blk != (int)ui_blk) {
+        lcd_rect(0, 0, 240, 4, c); lcd_rect(0, 27, 240, E_BAND - 27u, c); lcd_rect(0, 4, 8, 23, c);
+        ft_box(8, 4, 160, px_block_name((int)ui_blk), &FT_MD, BLK, c, 0);
+        lcd_rect(168, 4, 8, 23, c); lcd_rect(232, 4, 8, 23, c);
+    }
+    ui_rbox(176, 4, 56, 23, 6, sel ? WHT : c, c);
+    ui_rbox(178, 6, 52, 19, 5, on ? BLK : ui_dark(c), sel ? WHT : c);
+    ft_box(182, 8, 44, on ? "ON" : "OFF", &FT_SM, on ? c : UI_TXT, on ? BLK : ui_dark(c), 1);
 }
 static void draw_type(void)
 {
     int sel = (UI_PAGE && ui_item == 0u), ed = sel && ui_mode == M_EDIT;
-    uint16_t bg = sel ? UI_PANEL : UI_BG, fg = ed ? UI_ACC : UI_TXT;
-    ft_box(0, D_TYPE, 22, sel ? "<" : "", &FT_MD, UI_ACC, bg, 1);
-    ft_box(22, D_TYPE, 196, px_type_name((int)ui_blk, PRESET.type[ui_blk]), &FT_MD, fg, bg, 1);
-    ft_box(218, D_TYPE, 22, sel ? ">" : "", &FT_MD, UI_ACC, bg, 1);
+    uint16_t bg = sel ? C_CARD : UI_BG, fg = ed ? UI_ACC : UI_TXT;
+    ui_rbox(4, E_TYPE_Y - 2u, 232, 28, 5, bg, UI_BG);
+    ft_box(8, E_TYPE_Y, 20, sel ? "<" : "", &FT_MD, UI_ACC, bg, 1);
+    ft_box(28, E_TYPE_Y, 184, px_type_name((int)ui_blk, PRESET.type[ui_blk]), &FT_MD, fg, bg, 1);
+    ft_box(212, E_TYPE_Y, 20, sel ? ">" : "", &FT_MD, UI_ACC, bg, 1);
 }
-static void draw_bar(int k)            /* bar + number: the only thing that moves while adjusting */
+static void draw_bar(int k)            /* value + bar: the only thing that moves while adjusting */
 {
-    uint32_t y = D_P0 + (uint32_t)k * D_ROW;
+    uint32_t y = E_P0 + (uint32_t)k * E_ROW;
     int sel = (UI_PAGE && (int)ui_item == k + 2), ed = sel && ui_mode == M_EDIT;
-    uint16_t bg = sel ? UI_PANEL : UI_BG;
+    uint16_t bg = sel ? C_CARD : UI_BG;
     uint32_t v = PRESET.p[ui_blk][k]; if (v > 100u) v = 100u;
+    char b[10];
+    if (!px_param_text((int)ui_blk, PRESET.type[ui_blk], k, (int)v, b)) num3(b, v);   /* "+5TH", "440 MS"... */
+    ft_box(140, y + 1u, 90, b, &FT_MD, ed ? UI_ACC : UI_TXT, bg, 2);
     uint32_t w = v * BAR_W / 100u;
-    if (w) lcd_rect(BAR_X, y + 4u, w, 7, ed ? UI_ACC : BLK_COL[ui_blk]);
-    if (w < BAR_W) lcd_rect(BAR_X + w, y + 4u, BAR_W - w, 7, C_OFF);
-    char b[8];
-    if (!px_param_text((int)ui_blk, PRESET.type[ui_blk], k, (int)v, b)) num3(b, v);   /* "+5TH", "440"... */
-    ft_box(196, y, 40, b, &FT_SM, ed ? UI_ACC : UI_TXT, bg, 2);
+    uint16_t fc = ed ? UI_ACC : BLK_COL[ui_blk];
+    if (w) lcd_rect(BAR_X, y + 24u, w, 4, fc);
+    if (w < BAR_W) lcd_rect(BAR_X + w, y + 24u, BAR_W - w, 4, C_BAR);
     uc.val[k] = (uint8_t)v;
 }
-static void draw_row(int k)            /* one full parameter row, without a global clear */
+static void draw_row(int k)            /* one full setting row */
 {
-    uint32_t y = D_P0 + (uint32_t)k * D_ROW;
-    if (k >= ui_np()) { lcd_rect(0, y, 240, D_ROW, UI_BG); return; }
+    uint32_t y = E_P0 + (uint32_t)k * E_ROW;
+    if (k >= ui_np()) { lcd_rect(0, y, 240, E_ROW, UI_BG); return; }
     int sel = (UI_PAGE && (int)ui_item == k + 2);
-    uint16_t bg = sel ? UI_PANEL : UI_BG;
-    lcd_rect(0, y, 6, 15, bg);
-    ft_box(6, y, 70, px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, sel ? WHT : UI_TXT, bg, 0);
-    lcd_rect(76, y, 2, 15, bg);
-    lcd_rect(BAR_X, y, BAR_W, 4, bg); lcd_rect(BAR_X, y + 11u, BAR_W, 4, bg);
-    lcd_rect(BAR_X + BAR_W, y, 196u - (BAR_X + BAR_W), 15, bg);
-    lcd_rect(236, y, 4, 15, bg);
-    lcd_rect(0, y + 15u, 240, 1, UI_BG);
+    uint16_t bg = sel ? C_CARD : UI_BG;
+    ui_rbox(4, y, 232, E_ROW - 1u, 5, bg, UI_BG);
+    lcd_rect(0, y + E_ROW - 1u, 240, 1, UI_BG);
+    if (sel) lcd_rect(4, y + 6u, 3, 14, UI_ACC);                 /* accent marker */
+    ft_box(BAR_X, y + 5u, 130, px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, sel ? WHT : UI_DIM, bg, 0);
     draw_bar(k);
 }
 static void draw_item(int it)
 {
     if (it == 0) draw_type();
-    else if (it == 1) draw_onoff();
+    else if (it == 1) draw_band(1);
     else draw_row(it - 2);
 }
-static void draw_detail(int force)
+static void draw_edit(int force)
 {
     int type = PRESET.type[ui_blk], np = ui_np(), on = PRESET.on[ui_blk] != 0;
     if (force || uc.blk != (int)ui_blk || uc.type != type) {
-        ft_box(6, D_Y0, 180, px_block_name((int)ui_blk), &FT_SM, UI_DIM, UI_BG, 0);
-        draw_onoff(); draw_type();
+        draw_band(1); draw_type();
+        lcd_rect(0, E_TYPE_Y + 26u, 240, E_P0 - E_TYPE_Y - 26u, UI_BG);
         for (int k = 0; k < PX_NPAR; k++) draw_row(k);
+        lcd_rect(0, E_P0 + PX_NPAR * E_ROW, 240, F_Y - (E_P0 + PX_NPAR * E_ROW), UI_BG);
         uc.blk = (int)ui_blk; uc.type = type; uc.np = np; uc.item = (int)ui_item; uc.mode = (int)ui_mode; uc.on = on;
         return;
     }
-    if (uc.item != (int)ui_item || uc.mode != (int)ui_mode) {   /* highlight moved: 2 rows only */
+    if (uc.item != (int)ui_item || uc.mode != (int)ui_mode) {   /* highlight moved: 2 items only */
         int old = uc.item;
         uc.item = (int)ui_item; uc.mode = (int)ui_mode;
         if (old != (int)ui_item) draw_item(old);
         draw_item((int)ui_item);
     }
-    if (uc.on != on) { draw_onoff(); uc.on = on; }
+    if (uc.on != on) { draw_band(1); uc.on = on; }
     for (int k = 0; k < np; k++) if (uc.val[k] != PRESET.p[ui_blk][k]) draw_bar(k);
-}
-
-/* ---- footer: help (the DSP load is drawn by the main loop, on the right) ---- */
-static void draw_hint(int force)
-{
-    int h = (int)ui_mode;
-    if (!force && uc.hint == h) return;
-    static const char *H[3] = {"PUSH: OPEN   2x: MOVE", "PUSH: EDIT   HOME: BACK", "KNOB: VALUE   PUSH: OK"};
-    ft_box(4, F_Y, 174, h == M_MOVE ? "KNOB: MOVE   PUSH: DROP" : H[h < 3 ? h : 0], &FT_SM, UI_DIM, UI_PANEL, 0);
-    uc.hint = h;
 }
 
 /* ---- render: sends only what changed to the screen ---- */
@@ -219,24 +274,39 @@ static void ui_render(void)
 {
     if (ui_mode == M_TUNER) return;
     if (ui_mode == M_SAVE) { save_draw(); return; }
+    int scr = UI_PAGE ? 1 : 0;
+    if (scr != uc.screen) { uc.screen = scr; uc.full = 1; }
     int f = uc.full;
-    if (f) {                                                     /* page change: background drawn only once */
-        lcd_rect(0, 0, 240, H_Y, UI_BG); lcd_rect(0, H_Y + 23u, 240, 3, UI_BG);
-        lcd_rect(190, H_Y, 50, 4, UI_BG); lcd_rect(190, H_Y + 19u, 50, 4, UI_BG); lcd_rect(0, H_Y, 4, 23, UI_BG);
-        lcd_rect(0, 30, 240, 1, C_LINE);
-        lcd_rect(0, 31, 240, 4, UI_BG);
-        lcd_rect(0, 35, 3, 2u * T_DY, UI_BG); lcd_rect(235, 35, 5, 2u * T_DY, UI_BG);
-        lcd_rect(0, T_Y0 + T_DY + T_H + 1u, 240, 1, UI_BG);          /* row 95: between the tiles and their underline */
-        lcd_rect(0, D_Y0 - 3u, 240, 1, C_LINE); lcd_rect(0, D_Y0 - 2u, 240, 2, UI_BG);
-        lcd_rect(0, D_Y0, 6, 15, UI_BG); lcd_rect(0, D_Y0 + 15u, 240, D_TYPE - D_Y0 - 15u, UI_BG);
-        lcd_rect(0, D_TYPE + 23u, 240, D_P0 - D_TYPE - 23u, UI_BG);
-        lcd_rect(0, 224, 240, 1, UI_PANEL); lcd_rect(0, F_Y, 4, 15, UI_PANEL);
+    if (f) {                                                     /* page change: background drawn once */
+        if (scr == 0) {
+            lcd_rect(0, 0, 240, S_H, UI_PANEL);
+            lcd_rect(0, S_H, 240, P_NUM_Y - S_H, UI_BG);
+            lcd_rect(0, P_NUM_Y, 6, 45, UI_BG); lcd_rect(90, P_NUM_Y, 4, 45, UI_BG);
+            lcd_rect(94, P_NUM_Y, 142, 4, UI_BG); lcd_rect(94, P_NUM_Y + 27u, 142, 2, UI_BG); lcd_rect(94, P_NUM_Y + 44u, 142, 1, UI_BG);
+            lcd_rect(236, P_NUM_Y, 4, 45, UI_BG);
+            lcd_rect(0, P_NUM_Y + 45u, 240, P_NAME_Y - P_NUM_Y - 45u, UI_BG);
+            lcd_rect(0, P_NAME_Y + 32u, 240, T_Y0 - 2u - P_NAME_Y - 32u, UI_BG);
+            lcd_rect(16, P_NAME_Y + 36u, 208, 1, C_LINE);
+            lcd_rect(0, T_Y0 - 2u, 2, 2u * T_DY + 2u, UI_BG); lcd_rect(236, T_Y0 - 2u, 4, 2u * T_DY + 2u, UI_BG);
+            lcd_rect(0, T_Y0 + T_H + 2u, 240, T_DY - T_H - 4u, UI_BG);     /* between the two rows of tiles */
+            lcd_rect(0, T_Y0 + T_DY + T_H + 2u, 240, P_INFO_Y - (T_Y0 + T_DY + T_H + 2u), UI_BG);
+            lcd_rect(0, P_INFO_Y + 23u, 240, F_Y - P_INFO_Y - 23u, UI_BG);
+        } else {
+            lcd_rect(0, E_BAND, 240, 4, UI_BG);
+            lcd_rect(0, E_BAND + 4u, 4, F_Y - E_BAND - 4u, UI_BG); lcd_rect(236, E_BAND + 4u, 4, F_Y - E_BAND - 4u, UI_BG);
+        }
+        lcd_rect(0, F_Y, 240, 3, UI_PANEL); lcd_rect(0, F_Y + 18u, 240, 240u - F_Y - 18u, UI_PANEL);
+        if (scr) { lcd_rect(174, F_Y + 3u, 4, 15, UI_PANEL); lcd_rect(236, F_Y + 3u, 4, 15, UI_PANEL); }
         uc.full = 0;
     }
-    draw_header(f);
-    draw_tiles(f);
-    draw_detail(f);
+    if (scr == 0) {
+        draw_status(f);
+        draw_play_top(f);
+        draw_tiles(f);
+        draw_info(f);
+    } else draw_edit(f);
     draw_hint(f);
+    if (f) { char s[12]; for (int i = 0; i < 12; i++) s[i] = uc.status[i]; uc.full = 1; ui_status(s, uc.status_red); uc.full = 0; }
 }
 
 /* ---- actions ---- */
@@ -297,11 +367,12 @@ static void save_open(void)
 {
     ui_mode = M_SAVE; sv_dest = cur_preset; sv_shown = ~0u;
     lcd_rect(0, 0, 240, 240, UI_BG);
-    ft_box(0, 14, 240, "SAVE PRESET", &FT_MD, UI_ACC, UI_BG, 1);
-    ft_box(0, 46, 240, PRESET.name, &FT_SM, UI_DIM, UI_BG, 1);
-    lcd_rect(20, 76, 200, 1, C_LINE);
-    ft_box(0, 196, 240, "KNOB: SLOT   PUSH: SAVE", &FT_SM, UI_DIM, UI_BG, 1);
-    ft_box(0, 214, 240, "HOME: CANCEL", &FT_SM, UI_DIM, UI_BG, 1);
+    lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
+    ft_box(8, 4, 232, "SAVE PRESET", &FT_MD, BLK, UI_ACC, 0);
+    ft_box(0, 40, 240, PRESET.name, &FT_MD, UI_TXT, UI_BG, 1);
+    lcd_rect(20, 70, 200, 1, C_LINE);
+    lcd_rect(0, F_Y, 240, 240u - F_Y, UI_PANEL);
+    ft_box(0, F_Y + 3u, 240, "KNOB: SLOT  PUSH: SAVE  HOME: NO", &FT_SM, UI_DIM, UI_PANEL, 1);
 }
 static void save_draw(void)
 {
@@ -309,24 +380,25 @@ static void save_draw(void)
     sv_shown = sv_dest;
     char b[20];
     if (sv_dest == SV_FACTORY) {
-        ft_box(0, 92, 240, "RESTORE FACTORY", &FT_MD, UI_TXT, UI_PANEL, 1);
+        ft_box(0, 82, 240, "", &FT_XL, UI_ACC, UI_BG, 1);
+        ft_box(0, 132, 240, "RESTORE FACTORY", &FT_MD, UI_TXT, UI_BG, 1);
         b[0] = 'S'; b[1] = 'L'; b[2] = 'O'; b[3] = 'T'; b[4] = ' ';
         b[5] = (char)('0' + (cur_preset + 1u) / 10u); b[6] = (char)('0' + (cur_preset + 1u) % 10u); b[7] = 0;
-        ft_box(0, 124, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
-        ft_box(0, 146, 240, st_saved(cur_preset) ? "BACK TO ITS FACTORY SOUND" : "(ALREADY THE FACTORY SOUND)", &FT_SM, UI_DIM, UI_BG, 1);
+        ft_box(0, 160, 240, st_saved(cur_preset) ? b : "ALREADY THE FACTORY SOUND", &FT_SM, UI_DIM, UI_BG, 1);
         return;
     }
     px_preset_t d;
     st_get(sv_dest, &d);
-    b[0] = 'T'; b[1] = 'O'; b[2] = ' '; b[3] = (char)('0' + (sv_dest + 1u) / 10u); b[4] = (char)('0' + (sv_dest + 1u) % 10u); b[5] = 0;
-    ft_box(0, 92, 240, b, &FT_MD, UI_TXT, UI_PANEL, 1);
-    ft_box(0, 124, 240, sv_dest == cur_preset ? "(THIS SLOT)" : "REPLACES:", &FT_SM, UI_DIM, UI_BG, 1);
-    ft_box(0, 146, 240, sv_dest == cur_preset ? "" : d.name, &FT_SM, UI_TXT, UI_BG, 1);
+    b[0] = (char)('0' + (sv_dest + 1u) / 10u); b[1] = (char)('0' + (sv_dest + 1u) % 10u); b[2] = 0;
+    ft_box(0, 82, 240, b, &FT_XL, UI_ACC, UI_BG, 1);
+    ft_box(0, 132, 240, sv_dest == cur_preset ? "THIS SLOT" : "REPLACES", &FT_MD, sv_dest == cur_preset ? UI_TXT : UI_DIM, UI_BG, 1);
+    ft_box(0, 160, 240, sv_dest == cur_preset ? "" : d.name, &FT_SM, UI_TXT, UI_BG, 1);
 }
 static void save_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
-    lcd_rect(0, 0, 240, 240, UI_BG); lcd_rect(0, 224, 240, 16, UI_PANEL);
+    lcd_rect(0, 0, 240, 240, UI_BG);
+    uc.screen = -1;
     ui_invalidate();
 }
 static void save_knob(int dd)
@@ -336,7 +408,7 @@ static void save_knob(int dd)
 static void save_confirm(void)
 {
     int rc;
-    ft_box(0, 168, 240, "SAVING...", &FT_SM, UI_ACC, UI_BG, 1);
+    ft_box(0, 186, 240, "SAVING...", &FT_MD, UI_ACC, UI_BG, 1);
     if (sv_dest == SV_FACTORY) { rc = st_reset(cur_preset); }
     else { rc = st_save(sv_dest, &PRESET); if (!rc) cur_preset = sv_dest; }
     st_gen++;
@@ -344,7 +416,7 @@ static void save_confirm(void)
     {
         char b[16] = "ERROR -";
         if (rc) { b[7] = (char)('0' + (uint32_t)(-rc) % 10u); b[8] = 0; }
-        ft_box(0, 168, 240, rc ? b : "SAVED", &FT_MD, rc ? RED : GRN, UI_BG, 1);
+        ft_box(0, 186, 240, rc ? b : "SAVED", &FT_MD, rc ? RED : GRN, UI_BG, 1);
     }
     for (int i = 0; i < 7; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
     save_close();
@@ -387,23 +459,26 @@ static void tuner_level(void)
     b[i++] = 'I'; b[i++] = 'N'; b[i++] = ' '; b[i++] = ' '; b[i++] = 'L'; b[i++] = ' '; i += lv_str(b + i, l);
     b[i++] = ' '; b[i++] = ' '; b[i++] = ' '; b[i++] = 'R'; b[i++] = ' '; i += lv_str(b + i, r);
     b[i++] = ' '; b[i++] = 'd'; b[i++] = 'B'; b[i] = 0;
-    ft_box(0, 32, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(0, 36, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
-#define TN_BAR_Y 170u
+#define TN_BAR_Y 172u
 static void tuner_open(void)
 {
     ui_mode = M_TUNER;
     lcd_rect(0, 0, 240, 240, UI_BG);
-    ft_box(0, 8, 240, "TUNER", &FT_MD, UI_ACC, UI_BG, 1);
-    lcd_rect(20, TN_BAR_Y, 200, 10, C_OFF);
-    lcd_rect(119, TN_BAR_Y - 8u, 2, 26, UI_TXT);
+    lcd_rect(0, 0, 240, 4, GRN); lcd_rect(0, 27, 240, 3, GRN); lcd_rect(0, 4, 8, 23, GRN);
+    ft_box(8, 4, 232, "TUNER", &FT_MD, BLK, GRN, 0);
+    ui_rbox(18, TN_BAR_Y - 2u, 204, 14, 5, C_BAR, UI_BG);
+    lcd_rect(110, TN_BAR_Y - 2u, 20, 14, ui_dark(GRN));
+    lcd_rect(119, TN_BAR_Y - 10u, 2, 30, UI_TXT);
     ft_box(10, TN_BAR_Y + 22u, 40, "-50", &FT_SM, UI_DIM, UI_BG, 1);
     ft_box(100, TN_BAR_Y + 22u, 40, "0", &FT_SM, UI_DIM, UI_BG, 1);
     ft_box(190, TN_BAR_Y + 22u, 40, "+50", &FT_SM, UI_DIM, UI_BG, 1);
-    ft_box(0, F_Y, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_BG, 1);
+    lcd_rect(0, F_Y, 240, 240u - F_Y, UI_PANEL);
+    ft_box(0, F_Y + 3u, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_PANEL, 1);
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
-static void tuner_close(void) { ui_mode = M_CHAIN; ui_invalidate(); lcd_rect(0, 0, 240, 240, UI_BG); lcd_rect(0, 224, 240, 16, UI_PANEL); }
+static void tuner_close(void) { ui_mode = M_CHAIN; lcd_rect(0, 0, 240, 240, UI_BG); uc.screen = -1; ui_invalidate(); }
 static void tuner_draw(float hz)       /* hz <= 0: no note */
 {
     int note = -1, c = 0; float cents = 0.0f;
@@ -417,7 +492,7 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
     }
     int ok = (note >= 0 && c > -5 && c < 5);
     if (note != tn_last_note || (note >= 0 && (ok != (tn_last_c > -5 && tn_last_c < 5)))) {
-        ft_box(0, 52, 240, note < 0 ? "-" : NOTE_N[note], &FT_LG, note < 0 ? UI_DIM : (ok ? GRN : UI_TXT), UI_BG, 1);
+        ft_box(0, 60, 240, note < 0 ? "-" : NOTE_N[note], &FT_LG, note < 0 ? UI_DIM : (ok ? GRN : UI_TXT), UI_BG, 1);
         tn_last_note = note;
     }
     if (c != tn_last_c || note < 0) {
@@ -425,17 +500,19 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
         if (note >= 0) { int a = c < 0 ? -c : c; b[0] = (char)(c < 0 ? '-' : '+'); num3(b + 1, (uint32_t)a); }
         int i = 0; while (b[i]) i++;
         if (note >= 0) { b[i++] = ' '; b[i++] = 'c'; b[i++] = 't'; b[i] = 0; }
-        ft_box(60, 124, 120, b, &FT_MD, ok ? GRN : UI_TXT, UI_BG, 1);
+        ft_box(60, 128, 120, b, &FT_MD, ok ? GRN : UI_TXT, UI_BG, 1);
         tn_last_c = note < 0 ? 1000 : c;
     }
     int x = -1;
     if (note >= 0) { x = 120 + c * 2; if (x < 22) x = 22; if (x > 216) x = 216; }
     if (x != tn_last_x) {                                     /* needle: erase the old one, draw the new one */
         if (tn_last_x >= 0) {
-            lcd_rect((uint32_t)tn_last_x - 2u, TN_BAR_Y, 5, 10, C_OFF);
-            if (tn_last_x >= 116 && tn_last_x <= 124) lcd_rect(119, TN_BAR_Y - 8u, 2, 26, UI_TXT);
+            uint16_t under = (tn_last_x >= 108 && tn_last_x <= 132) ? ui_dark(GRN) : C_BAR;
+            lcd_rect((uint32_t)tn_last_x - 3u, TN_BAR_Y - 2u, 7, 14, under);
+            if (tn_last_x >= 107 && tn_last_x <= 133) { lcd_rect(110, TN_BAR_Y - 2u, 20, 14, ui_dark(GRN)); }
+            lcd_rect(119, TN_BAR_Y - 10u, 2, 30, UI_TXT);
         }
-        if (x >= 0) lcd_rect((uint32_t)x - 2u, TN_BAR_Y, 5, 10, (x >= 110 && x <= 130) ? GRN : UI_ACC);
+        if (x >= 0) lcd_rect((uint32_t)x - 3u, TN_BAR_Y - 2u, 7, 14, (x >= 110 && x <= 130) ? GRN : UI_ACC);
         tn_last_x = x;
     }
 }

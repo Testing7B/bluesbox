@@ -134,9 +134,9 @@ static void bq_hp1(px_bq *b, float fs, float f)          /* first order (RC coup
 /* ============================================================ catalog ===== */
 static const char *const BLK_LABEL[PX_NBLK] = {"GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV",
                                                "SYN"};
-static const char *const BLK_NAME[PX_NBLK] = {"NOISE GATE", "COMPRESSOR", "PITCH", "SPECIAL FX", "DRIVE / FUZZ",
+static const char *const BLK_NAME[PX_NBLK] = {"NOISE GATE", "COMPRESSOR", "PITCH", "SPECIAL FX", "DRIVE",
                                               "AMP", "CABINET", "EQUALIZER", "MODULATION", "DELAY", "REVERB",
-                                              "SYNTH / INSTRUMENT"};
+                                              "INSTRUMENT"};
 /* default processing order (v29: each preset carries its own) */
 static const uint8_t ORDER_DEF[PX_NBLK] = {PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_SYN, PX_B_DRIVE, PX_B_AMP,
                                            PX_B_CAB, PX_B_EQ, PX_B_MOD, PX_B_DELAY, PX_B_REVERB};
@@ -149,8 +149,8 @@ int px_order_valid(const uint8_t *o)
 }
 typedef struct { const char *name; uint8_t np; const char *const *pn; } tdef;
 
-static const char *const PN_GATE[] = {"THRESH", "RELEASE"};
-static const tdef T_GATE[] = {{"NOISE GATE", 2, PN_GATE}};
+static const char *const PN_GATE[] = {"THRESH", "RELEASE", "PRESET LVL"};   /* (3rd: the preset's level, v36) */
+static const tdef T_GATE[] = {{"NOISE GATE", 3, PN_GATE}};
 
 static const char *const PN_CMP[] = {"SUSTAIN", "ATTACK", "LEVEL", "MIX"};
 static const char *const PN_OPTO[] = {"COMPRESS", "LEVEL", "MIX"};
@@ -430,6 +430,16 @@ int px_param_text(int b, int t, int k, int v, char *buf)
     if (v > 100) v = 100;
     float x = (float)v * 0.01f;
     switch (b) {
+    case PX_B_GATE:
+        if (k == PX_PATCH_LEVEL) {                     /* "+1.5 DB": 0.3 dB a step */
+            int d = (v - 50) * 3, a = d < 0 ? -d : d, i = 0;
+            buf[i++] = d < 0 ? '-' : '+';
+            if (a >= 100) buf[i++] = (char)('0' + a / 100);
+            buf[i++] = (char)('0' + (a / 10) % 10); buf[i++] = '.'; buf[i++] = (char)('0' + a % 10);
+            buf[i++] = ' '; buf[i++] = 'D'; buf[i++] = 'B'; buf[i] = 0;
+            return 1;
+        }
+        break;
     case PX_B_PITCH:
         if (t == PX_PIT_HARMONY && k == 0) { put_str(buf, HARM_TXT[harm_idx(v)]); return 1; }
         if (t == PX_PIT_WHAMMY && k == 0) { float st = (x - 0.5f) * 48.0f; put_int(buf, (int)(st + (st >= 0 ? 0.5f : -0.5f)), 1); return 1; }
@@ -459,7 +469,8 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
         break;
     case PX_B_DELAY:
-        if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); return 1; }
+        if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); int i = 0; while (buf[i]) i++;
+                      buf[i] = ' '; buf[i + 1] = 'M'; buf[i + 2] = 'S'; buf[i + 3] = 0; return 1; }   /* "450 MS" */
         if (t == PX_DLY_SPACE && k == 3) { put_str(buf, HEAD_TXT[(int)(x * 6.99f)]); return 1; }
         break;
     }
@@ -475,7 +486,7 @@ static void blk(px_preset_t *p, int b, int on, int type, int a, int c, int d, in
 static void base_preset(px_preset_t *p)
 {
     memset(p, 0, sizeof(*p));
-    blk(p, PX_B_GATE,   1, 0, 40, 20, 0, 0, 0);
+    blk(p, PX_B_GATE,   1, 0, 40, 20, 50, 0, 0);   /* 3rd: preset LEVEL (v36), 50 = 0 dB */
     blk(p, PX_B_COMP,   0, PX_CMP_SQUASH, 50, 30, 50, 100, 0);
     blk(p, PX_B_PITCH,  0, PX_PIT_OCTAVER, 70, 50, 0, 0, 40);
     blk(p, PX_B_SFX,    0, PX_SFX_AUTOWAH, 60, 60, 60, 40, 0);
@@ -497,199 +508,117 @@ static void setname(px_preset_t *p, const char *s)
 }
 enum { NPRESETS = 52 };
 int px_preset_count(void) { return NPRESETS; }
+/* v36: 24 factory presets built round the fitted amps and drives (amps near noon, where they match the captures),
+ * each one levelled (LEVEL, tools/level_presets.py: -20 LUFS on DI guitar); slots 25..52: USER, a clean starting point */
+#define LVL(v) (p->p[PX_B_GATE][PX_PATCH_LEVEL] = (uint8_t)(v))
+#define NOGATE (p->on[PX_B_GATE] = 0)
 void px_preset_factory(px_preset_t *p, int idx)
 {
     base_preset(p);
     if (idx < 0 || idx >= NPRESETS) idx = 0;
+    p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
     switch (idx) {
-    case 0: setname(p, "GLASS CLEAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 55, 45, 65, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 55, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 35, 40, 55, 60, 0); blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 25, 45, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 45, 55, 25, 0, 0); break;
-    case 1: setname(p, "JAZZ BOX"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 65, 55, 30, 30); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 60, 35, 35, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_OPTO, 30, 55, 70, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 40, 22, 0, 0); break;
-    case 2: setname(p, "COUNTRY SNAP"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 45, 50, 70, 60); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 45, 60, 60, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 60, 35, 55, 100, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 8, 5, 30, 60, 20); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 18, 40, 0); break;
-    case 3: setname(p, "TEXAS BLUES"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 25, 55, 75, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 60, 60, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 55, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 45, 45, 20, 40, 0); break;
-    case 4: setname(p, "BLUES CRUNCH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 65, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 45, 18, 0, 0); break;
-    case 5: setname(p, "BRIT JANGLE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 45, 50, 50, 65, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 55, 50, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 24, 20, 18, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 50, 18, 0, 0); break;
-    case 6: setname(p, "60S PSYCH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 70, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 45, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 35, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
-    case 7: setname(p, "70S ROCK");
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 75, 55, 60, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 50, 12, 0, 0); break;
-    case 8: setname(p, "80S HAIR");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 20, 55, 70, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 70, 55, 60, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 55, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 20, 35, 35, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 32, 25, 18, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 16, 0, 0); break;
-    case 9: setname(p, "BRIT CRUNCH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_KLON, 25, 55, 70, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 55, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 15, 0, 0); break;
-    case 10: setname(p, "SMOOTH LEAD");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 30, 50, 50, 65, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_MARK4, 65, 50, 55, 55, 45); blk(p, PX_B_CAB, 1, PX_CAB_112CREAM, 55, 45, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 32, 30, 22, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 45, 18, 0, 0); break;
-    case 11: setname(p, "SPACE LEAD");
-        blk(p, PX_B_AMP, 1, PX_AMP_PROMOD, 70, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_MEMORY, 40, 45, 30, 30, 40); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 65, 45, 25, 0, 0); break;
-    case 12: setname(p, "DOTTED 8TH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 40, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 50, 50, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 36, 40, 35, 60, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 55, 55, 22, 0, 0); break;
-    case 13: setname(p, "MARK SOLO");
-        blk(p, PX_B_AMP, 1, PX_AMP_MARK4, 75, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_EQ, 1, PX_EQ_GEQ, 55, 52, 42, 55, 55);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 36, 35, 22, 50, 0); break;
-    case 14: setname(p, "THRASH"); p->p[PX_B_GATE][0] = 50;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 0, 60, 80, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 70, 60, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 15: setname(p, "GROOVE METAL"); p->p[PX_B_GATE][0] = 55;
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 75, 65, 35, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 55, 50, 50, 0, 0);
-        blk(p, PX_B_EQ, 1, PX_EQ_GEQ, 60, 50, 35, 55, 55); break;
-    case 16: setname(p, "DJENT"); p->p[PX_B_GATE][0] = 60;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 10, 70, 55, 75, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 70, 55, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 45, 55, 50, 0, 0); break;
-    case 17: setname(p, "DOOM SLUDGE");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 60, 40, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 70, 70, 55, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 65, 40, 45, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 55, 35, 18, 0, 0); break;
-    case 18: setname(p, "SWEDE DEATH"); p->p[PX_B_GATE][0] = 55;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_HM2, 80, 100, 100, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 45, 50, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 19: setname(p, "SHOEGAZE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 70, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 40, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_REVERSE, 40, 35, 35, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_CATHEDRAL, 65, 40, 35, 0, 0); break;
-    case 20: setname(p, "SWELL PAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_SWELL, 45, 60, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 50, 45, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 44, 45, 30, 45, 30); blk(p, PX_B_REVERB, 1, PX_REV_SHIMMER, 70, 45, 40, 50, 0); break;
-    case 21: setname(p, "FUNK WAH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 55, 25, 55, 100, 0); blk(p, PX_B_SFX, 1, PX_SFX_AUTOWAH, 60, 65, 60, 35, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0); break;
-    case 22: setname(p, "SURF"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 45, 50, 70, 60); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 45, 60, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 70, 60, 45, 80, 0); break;
-    case 23: setname(p, "SWAMP TREM"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 50, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_OPTOTREM, 45, 70, 0, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 50, 45, 25, 50, 0); break;
-    case 24: setname(p, "VIBE ROCK"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 60, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 55, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 45, 75, 50, 0, 0); break;
-    case 25: setname(p, "ROTARY ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 55, 55, 55, 45); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 70, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 45, 18, 0, 0); break;
-    case 26: setname(p, "HARM LEAD");
-        blk(p, PX_B_PITCH, 1, PX_PIT_HARMONY, 85, 45, 0, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 70, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 32, 25, 20, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 15, 0, 0); break;
-    case 27: setname(p, "WHAMMY DIVE");
-        blk(p, PX_B_PITCH, 1, PX_PIT_WHAMMY, 75, 100, 40, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 70, 60, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 28: setname(p, "OCTA FUZZ"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 65, 60, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 50, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
-    case 29: setname(p, "SQUARE SYNTH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_SYNTH, 70, 70, 40, 100, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 28, 30, 25, 60, 0); break;
-    case 30: setname(p, "RING MOD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_RING, 45, 80, 20, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 50, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 36, 40, 30, 50, 0); break;
-    case 31: setname(p, "LO-FI TAPE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 55, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 45, 45, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_VIBRATO, 10, 30, 0, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_LOFI, 36, 45, 35, 60, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 50, 30, 25, 0, 0); break;
-    case 32: setname(p, "STUTTER FUZZ"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 75, 50, 55, 0, 0); blk(p, PX_B_SFX, 1, PX_SFX_SLICER, 50, 100, 30, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 45, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0); break;
-    case 33: setname(p, "BITCRUSH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_CRUSH, 70, 30, 80, 0, 0); blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 50, 50, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 50, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
-    case 34: setname(p, "LOW DRIVE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 30, 55, 60, 0); blk(p, PX_B_DRIVE, 1, PX_DRV_KLON, 50, 55, 50, 55, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 60, 50, 50, 40); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 35: setname(p, "OCTAVE DOWN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_PITCH, 1, PX_PIT_POLYOCT, 70, 60, 0, 0, 0); blk(p, PX_B_COMP, 1, PX_CMP_OPTO, 45, 55, 100, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 60, 50, 50, 40); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0); break;
-    case 36: setname(p, "LITTLE AMP"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 60, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 45, 15, 0, 0); break;
-    case 37: setname(p, "BIG STACK"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 55, 55, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 65, 55, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 50, 14, 0, 0); break;
-    case 38: setname(p, "MODERN HIGH"); p->p[PX_B_GATE][0] = 50;
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 72, 55, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 28, 20, 12, 50, 0); break;
-    case 39: setname(p, "GRIT CLEAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 65, 55, 60, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_SPACE, 24, 30, 22, 30, 30); break;
-    case 40: setname(p, "STONER FUZZ");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 75, 20, 45, 55, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 55, 65, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 55, 45, 50, 0, 0); break;
-    case 41: setname(p, "CHIME CLEAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 40, 50, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_PHASE90, 20, 60, 0, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 45, 55, 20, 0, 0); break;
-    /* ---- v29: synths, keyboards and other guitars (SYN block) ---- */
-    case 42: setname(p, "B3 ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_ORGAN, 60, 80, 55, 40, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 55, 40, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 30, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 45, 15, 0, 0); break;
-    case 43: setname(p, "CHURCH ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_CHURCH, 60, 75, 60, 35, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_CATHEDRAL, 75, 45, 40, 0, 0); break;
-    case 44: setname(p, "MELLO STRINGS"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_STRINGS, 45, 45, 35, 45, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 60, 45, 30, 0, 0); break;
-    case 45: setname(p, "CHOIR PAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_CHOIR, 50, 55, 70, 25, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_AMBIENT, 55, 40, 35, 0, 0); break;
-    case 46: setname(p, "MONO LEAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_MONO, 15, 50, 35, 55, 60);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 32, 35, 25, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
-    case 47: setname(p, "PWM SYNTH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_PWM, 50, 35, 45, 40, 100);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 25, 40, 40, 0, 0); blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 32, 35, 25, 50, 0); break;
-    case 48: setname(p, "SYNTH BASS"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_BASS, 80, 40, 30, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 60, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 49: setname(p, "12-STRING"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_12STR, 70, 40, 50, 0, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 50, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 50, 20, 0, 0); break;
-    case 50: setname(p, "ACOUSTIC"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_ACOUSTIC, 60, 50, 60, 35, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 30, 55, 60, 0);
-        blk(p, PX_B_AMP, 0, PX_AMP_TWIN, 30, 50, 50, 50, 50); blk(p, PX_B_CAB, 0, PX_CAB_DI, 50, 50, 50, 0, 0);
+    /* ---- clean ---- */
+    case 0: setname(p, "TWIN CLEAN"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(44);
+        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 30, 50, 50, 50, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 40, 50, 22, 0, 0); break;
+    case 1: setname(p, "CHORUS CLEAN"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(47);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 30, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 35, 25, 18, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 50, 22, 0, 0); break;
+    case 2: setname(p, "AC15 CHIME"); blk(p, PX_B_GATE, 1, 0, 20, 50, 50, 0, 0); LVL(42);
+        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 50, 45, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 55, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 20, 40, 0); break;
+    case 3: setname(p, "FUNK WAH"); NOGATE; LVL(41);
+        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 55, 35, 50, 0, 0); blk(p, PX_B_SFX, 1, PX_SFX_AUTOWAH, 55, 50, 55, 40, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 45, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0); break;
+    case 4: setname(p, "SURF SPRING"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(47);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 55, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 7, 10, 15, 50, 20); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 55, 55, 40, 60, 0); break;
+    case 5: setname(p, "AMBIENT SWELL"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(50);
+        blk(p, PX_B_COMP, 1, PX_CMP_SWELL, 50, 50, 50, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 45, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 20, 30, 30, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 35, 45, 30, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_AMBIENT, 50, 45, 40, 0, 0); break;
+    /* ---- edge of break-up, crunch ---- */
+    case 6: setname(p, "TS BLUES"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(46);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 35, 50, 50, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 55, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 18, 40, 0); break;
+    case 7: setname(p, "BLUES BREAKUP"); blk(p, PX_B_GATE, 1, 0, 22, 50, 50, 0, 0); LVL(41);
+        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 60, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 29, 20, 15, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 8: setname(p, "KLON CRUNCH"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(42);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_KLON, 40, 50, 55, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 9: setname(p, "BRIT CRUNCH"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(39);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0); break;
+    case 10: setname(p, "70S ROCK"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 20, 50, 65, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 60, 55, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 35, 50, 15, 0, 0); break;
+    case 11: setname(p, "BOUTIQUE"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(40);
+        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 29, 15, 12, 45, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 15, 0, 0); break;
+    /* ---- lead ---- */
+    case 12: setname(p, "BRIT LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(41);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 39, 30, 20, 45, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 20, 0, 0); break;
+    case 13: setname(p, "SMOOTH LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(37);
+        blk(p, PX_B_AMP, 1, PX_AMP_MARK4, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 35, 30, 20, 45, 20); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
+    case 14: setname(p, "HAIR METAL"); blk(p, PX_B_GATE, 1, 0, 35, 30, 50, 0, 0); LVL(45);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 25, 55, 60, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 60, 55, 45, 55, 55); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 33, 25, 15, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 40, 50, 18, 0, 0); break;
+    case 15: setname(p, "SPACE LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(42);
+        blk(p, PX_B_AMP, 1, PX_AMP_PROMOD, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 29, 40, 25, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_SHIMMER, 55, 45, 30, 40, 0); break;
+    /* ---- high gain ---- */
+    case 16: setname(p, "MODERN ROCK"); blk(p, PX_B_GATE, 1, 0, 40, 30, 50, 0, 0); LVL(37);
+        blk(p, PX_B_AMP, 1, PX_AMP_PROMOD, 55, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 30, 50, 12, 0, 0); break;
+    case 17: setname(p, "5150 RHYTHM"); blk(p, PX_B_GATE, 1, 0, 45, 25, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 0, 55, 75, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
+    case 18: setname(p, "TIGHT METAL"); blk(p, PX_B_GATE, 1, 0, 50, 20, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 5, 60, 80, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 60, 55, 40, 55, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 55, 50, 0, 0); break;
+    case 19: setname(p, "SWEDE DEATH"); blk(p, PX_B_GATE, 1, 0, 55, 25, 50, 0, 0); LVL(32);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_HM2, 70, 80, 80, 50, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 40, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
+    case 20: setname(p, "DOOM"); blk(p, PX_B_GATE, 1, 0, 40, 35, 50, 0, 0); LVL(27);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 65, 65, 45, 45, 45); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 60, 40, 40, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 45, 20, 10, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 35, 15, 0, 0); break;
+    /* ---- effects ---- */
+    case 21: setname(p, "VIBE ROCK"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(37);
+        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 35, 55, 60, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 55, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 22: setname(p, "ORGAN"); NOGATE; LVL(49);
+        blk(p, PX_B_SYN, 1, PX_SYN_ORGAN, 50, 70, 40, 30, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 30, 60, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 23: setname(p, "ACOUSTIC"); NOGATE; LVL(90);
+        blk(p, PX_B_SYN, 1, PX_SYN_ACOUSTIC, 55, 50, 55, 40, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 85, 60, 0);
+        p->on[PX_B_AMP] = 0; p->on[PX_B_CAB] = 0;
         blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 55, 18, 0, 0); break;
-    default: setname(p, "SITAR"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_SITAR, 35, 60, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 45, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 55, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 20, 0, 0); break;
+    /* ---- 25..52: USER, a clean amp to start from ---- */
+    default: {
+        char n[14] = "USER ";
+        n[5] = (char)('0' + (idx + 1) / 10); n[6] = (char)('0' + (idx + 1) % 10); n[7] = 0;
+        setname(p, n); NOGATE; LVL(50);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0);
+    } break;
     }
 }
+#undef LVL
+#undef NOGATE
 
 /* ============================================================ recalc ======= */
 /* reverb (v35). FDN: 8 lines (prime lengths at 44.1 kHz, x the type's size), Hadamard feedback, each line with its own
@@ -949,7 +878,7 @@ static void rc_drive(px_engine *e)
 #ifdef PX_FIT
     if (px_fit_drv_on) { e->drv_level = px_fit_drv_trim * 2.0f * level; return; }
 #endif
-    e->drv_level = DRV_TRIM[t] * 2.0f * level;
+    e->drv_level = DRV_TRIM[t] * 2.0f * level * powf(10.0f, DRV_DB[t] * 0.05f);   /* (v36 trim: before the amp) */
 }
 
 static void rc_amp(px_engine *e)
@@ -986,7 +915,12 @@ static void rc_amp(px_engine *e)
     e->amp_bk = (v->n >= 4 ? 0.45f : 0.35f) * e->amp_envk;   /* env is kept pre-scaled by the depth (0.45 / 0.35) */
     e->amp_pw = (float)v->pw10 * 0.1f;
     e->amp_pwn = 1.0f / px_tanh(e->amp_pw);
-    e->amp_out = AMP_TRIM[t] * 0.84f;
+    {   /* v36: the level at each GAIN setting, measured (px_trim.h): every amp at the same loudness at noon, +-3 dB
+         * over the whole knob, so a clean and a high-gain preset sit together */
+        float gi = gain * 10.0f; int i0 = (int)gi; if (i0 > 9) i0 = 9;
+        float db = AMP_LVL[t][i0] + (AMP_LVL[t][i0 + 1] - AMP_LVL[t][i0]) * (gi - (float)i0);
+        e->amp_out = powf(10.0f, db * 0.05f);
+    }
 #ifdef PX_FIT
     if (px_fit_on) e->amp_out = px_fit_trim;
 #endif
@@ -1509,6 +1443,15 @@ static void px_recalc(px_engine *e)
     rc_delay(e);
     rc_reverb(e);
     rc_syn(e);
+    /* v36: each type's level at noon, measured (px_trim.h): switching a block on keeps the loudness */
+    const px_preset_t *p = &e->cur;
+    static const float *const DB[PX_NBLK] = {0, CMP_DB, PIT_DB, SFX_DB, 0, 0, CAB_DB, 0, MOD_DB, DLY_DB, REV_DB, SYN_DB};
+    static const uint8_t NT[PX_NBLK] = {1, PX_CMP_COUNT, PX_PIT_COUNT, PX_SFX_COUNT, PX_DRV_COUNT, 1, PX_CAB_COUNT, 1,
+                                        PX_MOD_COUNT, PX_DLY_COUNT, PX_REV_COUNT, PX_SYN_COUNT};
+    for (int b = 0; b < PX_NBLK; b++)
+        e->btr[b] = DB[b] ? powf(10.0f, DB[b][p->type[b] % NT[b]] * 0.05f) : 1.0f;
+    /* preset LEVEL (v36): -15..+15 dB, 0.3 dB a step, kept in the gate block's spare 5th setting */
+    e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
 }
 
 void px_engine_init(px_engine *e, float sr)
@@ -2042,14 +1985,17 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
     const int syn_t = p->type[PX_B_SYN] % PX_SYN_COUNT;
     /* the blocks to run, in this preset's order (GATE always: it carries the anti-denormal offset) */
     uint8_t st[PX_NBLK];
+    float tr[PX_NBLK];                                 /* each block's level trim */
     int ns = 0, ip_drv = -100, ip_amp = -200;
     for (int i = 0; i < PX_NBLK; i++) {
         int b = e->ord[i];
         if (b != PX_B_GATE && !p->on[b]) continue;
         if (b == PX_B_DRIVE) ip_drv = ns;
         if (b == PX_B_AMP) ip_amp = ns;
+        tr[ns] = e->btr[b];
         st[ns++] = (uint8_t)b;
     }
+    const float pg = e->patch_g;
     /* DRIVE right before AMP: one oversampled section for both (set A). Otherwise each its own: the amp keeps
      * set A, a drive elsewhere takes set B (set A when the amp does not oversample). */
     const int pair = drv_on && amp_on && ip_amp == ip_drv + 1;
@@ -2063,7 +2009,7 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
         float x = in[k] + e->dn;
         { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
 
-        for (int s = 0; s < ns; s++) switch (st[s]) {
+        for (int s = 0; s < ns; s++) { switch (st[s]) {
         case PX_B_GATE:
             /* ---- gate ---- */
             if (p->on[PX_B_GATE]) {
@@ -2084,9 +2030,12 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
                 e->cmp_env = a + (e->cmp_env - a) * c;
                 if (cmp_t == PX_CMP_SWELL) {
                     e->cmp_slow += (e->cmp_env - e->cmp_slow) * e->cmp_slowk;
-                    if (e->cmp_env > 1.8f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack */
+                    if (e->cmp_env > 1.5f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack (v36: 1.5, was 1.8) */
                     else e->cmp_sw += (1.0f - e->cmp_sw) * e->cmp_rise;
-                    x *= e->cmp_sw * e->cmp_sw * e->cmp_make;
+                    /* v36: the gain acts 2.9 ms late (look-ahead): the attack is caught before it is heard */
+                    e->cmp_la[e->cmp_lw] = x;
+                    e->cmp_lw = (e->cmp_lw + 1) & 127;
+                    x = e->cmp_la[e->cmp_lw] * e->cmp_sw * e->cmp_sw * e->cmp_make;
                 } else {
                     float y = x * e->cmp_make / (1.0f + e->cmp_k * e->cmp_env * 4.0f);
                     x = x + (y - x) * e->cmp_mix;
@@ -2435,10 +2384,14 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
             }
         break;
         default: break;
-        }
+        } x *= tr[s]; }
 
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
-        if (x > 1.2f) x = 1.2f; else if (x < -1.2f) x = -1.2f;
+        x *= pg;
+        {   /* v36: soft limiter instead of a hard clip: transparent up to 0.8, then rounds off smoothly to 1.2 */
+            float a = px_abs(x);
+            if (a > 0.8f) { float y = 0.8f + 0.4f * px_tanh((a - 0.8f) * 2.5f); x = x > 0.0f ? y : -y; }
+        }
         out[k] = x;
     }
 }

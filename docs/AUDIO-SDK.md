@@ -247,3 +247,18 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   wrapping round the line, so it can never land past the end.
 - CPU (PC, instructions per sample): reverb presets +80 to +100, delay + reverb presets up to +200, 1,889 on average
   over the 52 presets (v34: 1,807); the heaviest, SMOOTH LEAD, 2,582 (v34: 2,418). To be checked on the pedal.
+
+## v36: levels, 24 factory presets, a new screen
+- Levels, measured as loudness (ITU-R BS.1770, gated) on real DI guitar at the pedal's level, by
+  `tools/calib_levels.py` (writes `engine/px_trim.h`): each amp has a level curve over GAIN (11 points: noon at
+  -23 LUFS for every amp, +-3 dB over the knob; v35 spread 46 dB between JCM900 at 0 and full), every cabinet sits
+  with the 1x12, and every other type (knobs at noon) keeps the loudness when switched on. The 52 v35 presets
+  spanned -53 to -10 LUFS; the 24 v36 presets are all at -23.0 +-0.2 LUFS (`tools/level_presets.py`).
+- The preset LEVEL: GT block, 3rd setting "PRESET LVL" (-15..+15 dB, 0.3 dB a step). Store format 5 and the editor
+  (files without `"v": 36`) set it to 0 dB on older presets.
+- Output: a soft limiter (transparent to 0.8, rounds off to 1.2) instead of the hard clip at 1.2.
+- SLOW SWELL: 2.9 ms look-ahead and a more sensitive attack detector, so a pick attack is not heard before the swell.
+- 24 factory presets round the fitted amps (near noon); 25..52: USER (clean TWIN + 1x12 + room).
+- Screen: PLAY (number and name large, amp / cab, the chain in colour, the selected block) and EDIT (the block on its
+  colour, model, 5 settings with value + bar), new Inter fonts (26 and 58 px). `tests/uisim.c` draws every page on
+  the PC and checks that each full page paints every pixel.

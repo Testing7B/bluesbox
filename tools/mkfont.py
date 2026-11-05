@@ -16,6 +16,8 @@ FONTS = [   # C name, file, size px, character set, extra tracking
     ("FT_SM", "Inter-SemiBold.otf", 12, ASCII, 0),
     ("FT_MD", "Inter-Bold.otf", 19, ASCII, 0),
     ("FT_LG", "Inter-Bold.otf", 72, " #-ABCDEFG", 0),
+    ("FT_NM", "Inter-ExtraBold.otf", 26, ASCII, 0),        # v36: the preset name on the play screen
+    ("FT_XL", "Inter-ExtraBold.otf", 58, "0123456789", 0),  # v36: the preset number
 ]
 
 def build(name, fname, size, chars, track):

@@ -53,7 +53,7 @@ Presets saved before v34 are converted to the nearest type of the new set (`px_t
 4. `tools/fit_cab.py` fits a cabinet row to a measured magnitude response (1/12 octave, 60 Hz to 12 kHz). The 4x12's
    response is the cross-spectrum of "amp" and "amp + cab" captures of the same amp settings, averaged over 8 pairs.
 5. `tools/apply_v34.py` writes the fitted rows into the tables, renumbers the types and rewrites the factory presets;
-   `tests/engine/calib3.c` sets the levels (`px_trim.h`).
+   `tools/calib_levels.py` sets the levels (`px_trim.h`, v36: BS.1770 loudness on DI guitar).
 
 Results (error on the 20 s the fit never heard) are in the table at the end of this file.
 

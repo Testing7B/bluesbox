@@ -1,4 +1,4 @@
-# OpenPocket — sounds and controls (v35)
+# OpenPocket — sounds and controls (v36)
 
 ![OpenPocket screens](ui-v23.png)
 
@@ -106,34 +106,47 @@ plate). DECAY sets the real decay time (RT60) of the lows: ROOM 0.3–1.2 s, HAL
 PLATE 0.6–5 s, SPRING 1.5–4 s, SHIMMER 2–8 s, AMBIENT 6–20 s. They run at 22 kHz in 16 bits (like the classic
 studio units), in a quarter of v34's memory.
 
-## 52 factory presets (one per style)
-01 GLASS CLEAN · 02 JAZZ BOX · 03 COUNTRY SNAP · 04 TEXAS BLUES · 05 BLUES CRUNCH · 06 BRIT JANGLE · 07 60S PSYCH ·
-08 70S ROCK · 09 80S HAIR · 10 BRIT CRUNCH · 11 SMOOTH LEAD · 12 SPACE LEAD · 13 DOTTED 8TH · 14 MARK SOLO ·
-15 THRASH · 16 GROOVE METAL · 17 DJENT · 18 DOOM SLUDGE · 19 SWEDE DEATH · 20 SHOEGAZE · 21 SWELL PAD ·
-22 FUNK WAH · 23 SURF · 24 SWAMP TREM · 25 VIBE ROCK · 26 ROTARY ORGAN · 27 HARM LEAD · 28 WHAMMY DIVE ·
-29 OCTA FUZZ · 30 SQUARE SYNTH · 31 RING MOD · 32 LO-FI TAPE · 33 STUTTER FUZZ · 34 BITCRUSH · 35 LOW DRIVE ·
-36 OCTAVE DOWN · 37 LITTLE AMP · 38 BIG STACK · 39 MODERN HIGH · 40 GRIT CLEAN · 41 STONER FUZZ · 42 CHIME CLEAN ·
-43 B3 ORGAN · 44 CHURCH ORGAN · 45 MELLO STRINGS · 46 CHOIR PAD · 47 MONO LEAD · 48 PWM SYNTH · 49 SYNTH BASS ·
-50 12-STRING · 51 ACOUSTIC · 52 SITAR
+## Factory presets (v36): 24 sounds, all at the same loudness, then 28 USER slots
+Built round the fitted amps and drives, which sound like their captures near noon. Every preset is levelled to the
+same loudness (-23 LUFS, EBU R128, measured on real DI guitar by `tools/level_presets.py`): going from a clean to a
+high-gain preset no longer jumps by 20 dB.
+
+| | Clean | Crunch | Lead | High gain | Effects |
+|---|---|---|---|---|---|
+| | 01 TWIN CLEAN | 07 TS BLUES | 13 BRIT LEAD | 17 MODERN ROCK | 22 VIBE ROCK |
+| | 02 CHORUS CLEAN | 08 BLUES BREAKUP | 14 SMOOTH LEAD | 18 5150 RHYTHM | 23 ORGAN |
+| | 03 AC15 CHIME | 09 KLON CRUNCH | 15 HAIR METAL | 19 TIGHT METAL | 24 ACOUSTIC |
+| | 04 FUNK WAH | 10 BRIT CRUNCH | 16 SPACE LEAD | 20 SWEDE DEATH | |
+| | 05 SURF SPRING | 11 70S ROCK | | 21 DOOM | |
+| | 06 AMBIENT SWELL | 12 BOUTIQUE | | | |
+
+25–52: **USER 25 … USER 52**, a clean TWIN + 1x12 + a little room, to build your own.
+
+**Levels (v36)**: every amp plays at the same loudness at GAIN noon and moves only +-3 dB over the whole knob; every
+block type, with its knobs at noon, keeps the loudness when switched on; each preset has its own **PRESET LVL**
+(GT page, 3rd line: -15..+15 dB) to balance your sounds. The output ends in a soft limiter (transparent up to
+-2 dBFS) instead of a hard clip.
 
 ## Controls
 | Control | Action |
 |---|---|
-| KNOB (PARA) | chain: pick the block · block page: pick the line · editing: change the value (turn fast = steps of 5) |
-| PUSH (knob) | chain → open the block · type/setting line → edit · ON/OFF line → toggle · while editing → confirm |
-| PUSH **double-click** (chain) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
+| KNOB (PARA) | PLAY: pick the block · EDIT page: pick the line · editing: change the value (turn fast = steps of 5) |
+| PUSH (knob) | PLAY → open the block's EDIT page · model/setting line → edit · ON/OFF → toggle · editing → confirm |
+| PUSH **double-click** (PLAY) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
 | PUSH **long press (0.8 s)** | **SAVE**: store the current sound (see below) |
-| HOME | back to the chain · **long press (0.7 s) = tuner** |
+| HOME | back to PLAY · **long press (0.7 s) = tuner** |
 | Right / left footswitch | next / previous preset |
 | AMP, CAB, DLY, REV, MOD | jump to the block; press again = on/off |
 | FX | steps through DRV → SFX → SYN → PIT → CMP → GT → EQ |
 | MASTER | output volume |
 
-Bottom right: `C1 xx%` = DSP load on the second core (`C0` = fallback on the main core, `BYP` = overload guard:
-turn a block off).
+**Screen (v36)**: PLAY shows the preset number and name large, the amp and cab, the chain in colour (on = filled,
+off = dark) and the selected block; EDIT shows the block on its colour, the model, and up to 5 settings with value and
+bar. `C1 xx%` (top right on PLAY, bottom right on EDIT) = DSP load on the second core (`C0` = fallback on the main
+core, `BYP` = overload guard: turn a block off). `EDITED`: the sound differs from its saved slot.
 
 ## Saving your sounds (v25)
-- A `*` at the top of the screen means the sound has been edited since the preset was loaded.
+- `EDITED` at the top of the PLAY screen means the sound has been edited since the preset was loaded.
 - **Long press on PUSH**: SAVE page. The knob picks the slot (1 to 52; the current preset is offered first; the
   screen shows the name of the sound that will be replaced), PUSH saves, HOME cancels.
 - At the very end of the list: **RESTORE FACTORY** puts the current slot back to its factory preset.

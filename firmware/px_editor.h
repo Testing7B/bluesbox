@@ -113,7 +113,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         if (n < 2u || a[0] >= PX_NBLK || a[1] >= (uint32_t)px_ntypes(a[0])) return;
         int np = px_nparams(a[0], a[1]);
         uint32_t mask = 0;
-        char t[8];
+        char t[12];
         for (k = 0; k < (uint32_t)np; k++)
             for (i = 0; i <= 100u && !(mask >> k & 1u); i++)
                 if (px_param_text(a[0], a[1], (int)k, (int)i, t)) mask |= 1u << k;
@@ -123,7 +123,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
     }
     case ED_TEXTS: {
         if (n < 3u || a[0] >= PX_NBLK || a[1] >= (uint32_t)px_ntypes(a[0]) || a[2] >= PX_NPAR) return;
-        char t[9];
+        char t[12];
         ed_b(a[0]); ed_b(a[1]); ed_b(a[2]);
         for (i = 0; i <= 100u; i++) {
             t[8] = 0;

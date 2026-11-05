@@ -312,7 +312,7 @@ static void audio_bench(void)
     px_preset_t pp;
     static const char *NAMES[4] = {"AMP ONLY     ", "+ CAB        ", "+ DRIVE/GATE ", "ALL ON       "};
     for (int c = 0; c < 4; c++) {
-        px_preset_factory(&pp, 15);                    /* GROOVE METAL: 4-stage 5150 III */
+        px_preset_factory(&pp, 17);                    /* 5150 RHYTHM: 4-stage 5150 */
         for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0;
         pp.on[PX_B_AMP] = 1;
         if (c >= 1) pp.on[PX_B_CAB] = 1;

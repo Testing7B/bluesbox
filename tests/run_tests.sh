@@ -16,6 +16,8 @@ $CC -O2 -Iengine tests/engine/sweep2.c engine/px_dsp.c firmware/px_math.c -lm -o
 $CC -O2 -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long && build/long | tail -1
 echo "== preset store"
 $CC -O1 -Iengine tests/test_store.c engine/px_dsp.c firmware/px_math.c -lm -o build/test_store && build/test_store | tail -2
+echo "== screen (every page fully drawn)"
+mkdir -p build/ui && $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/uisim tests/uisim.c engine/px_dsp.c firmware/px_math.c -lm && build/uisim build/ui > build/ui/log.txt && if grep -q "never drawn" build/ui/log.txt; then grep "never drawn" build/ui/log.txt; echo "screen: FAIL"; else echo "screen: $(wc -l < build/ui/log.txt) pages ok (build/ui/*.ppm)"; fi
 echo "== simulated pedal"
 $CC -O1 -Wall -Wno-unused-function -o build/devsim tests/devsim.c
 if [ -n "$1" ]; then echo "== packages"; python3 tests/test_pxpkg.py "$1"; fi

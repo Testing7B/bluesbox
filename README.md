@@ -4,7 +4,7 @@ install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE Blac
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
 
-![OpenPocket screens](docs/ui-v23.png)
+![OpenPocket screens](docs/ui-v36.png)
 
 ## What it does
 
@@ -19,6 +19,10 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   voiced-by-ear amp. Method and results: [docs/FITTED-MODELS.md](docs/FITTED-MODELS.md)
 - **4 drives fitted the same way** (TS9, Klon, MXR M77, HM-2) and **7 cabinets** (the 4x12 V30 fitted to measurements;
   Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
+- **Pro levels (v36)**: every amp, block and preset at the same loudness (-23 LUFS, measured on real guitar);
+  24 factory presets round the fitted amps, 28 USER slots; a PRESET LVL per preset; soft output limiter
+- **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
+  page with big values and bars
 - **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no
   metallic tail), the decay time you set (low and high frequencies apart), and Dattorro's plate; **delays up to 2 s**
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,

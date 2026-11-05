@@ -207,7 +207,7 @@ export class Editor {
 export function presetToJSON(q, cat, slot) {
   return {
     slot: slot === undefined ? undefined : slot + 1,
-    v: 35,                                                       // v35 scales (delay TIME up to 2 s)
+    v: 36,                                                       // v36 (preset LEVEL); v35 scales (delay TIME up to 2 s)
     name: q.name,
     blocks: cat.blocks.map((b, i) => ({ block: b.label, on: !!q.on[i], type: b.types[q.type[i]] ? b.types[q.type[i]].name : q.type[i], params: [...q.p[i]] })),
     order: q.order.map((i) => cat.blocks[i] ? cat.blocks[i].label : i),
@@ -243,6 +243,7 @@ export function presetFromJSON(o, cat, base) {
       const v = Number(ob.params[k]);
       if (Number.isFinite(v)) q.p[i][k] = Math.max(0, Math.min(100, Math.round(v)));
     }
+    if (!(o.v >= 36) && ob.block === "GT") q.p[i][2] = 50;           // before v36: no preset LEVEL (0 dB)
     if (!(o.v >= 35) && ob.block === "DLY" && cat.blocks[i].types[q.type[i]] && cat.blocks[i].types[q.type[i]].name !== "REVERSE") {
       const old = q.p[i][0], now = dlyTimeV35(old);                // a file from before v35: TIME was 20..1000 ms
       if (now !== old) { q.p[i][0] = now; warn.push(`DLY: TIME ${old} (before v35) -> ${now}, same delay`); }

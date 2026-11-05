@@ -53,7 +53,8 @@ The editor saves presets as JSON: `{"format": "openpocket-presets", "version": 1
 "order": ["GATE", ...]}`. Blocks and types are written by name, so a file stays readable and survives a firmware
 that adds types; a single preset is the same object with one preset in `presets`.
 
-Each preset written by OpenPocket v35 or later carries `"v": 35`. A preset without it comes from an older version:
-on import, its delay TIME is moved to v35's scale (the same delay time; REVERSE excepted), and amp / drive / cab
-types from before v34 (`"RECTIFIED"`...) become the nearest current type. Every such change is listed in the
-import notes.
+Each preset written by OpenPocket v36 carries `"v": 36` (v35: `35`). Older presets are converted on import: without
+`"v": 36`, the preset LEVEL (the GT block's 3rd setting, `PRESET LVL`, unused before) is set to 50 = 0 dB; without `"v": 35`,
+its delay TIME is moved to v35's scale (the same delay time; REVERSE excepted); amp / drive / cab types from before
+v34 (`"RECTIFIED"`...) become the nearest current type. Each change of the delay or the types is listed in the import
+notes.

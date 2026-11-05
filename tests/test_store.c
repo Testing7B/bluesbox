@@ -158,6 +158,7 @@ int main(void)
         for (int i = 0; i < 55; i++) {                         /* delay TIME: moved to the v35 2 s scale */
             int want = (uint8_t)(i + 27);
             if (i == PX_B_DELAY * 5) want = px_dly_time_v35(q.type[PX_B_DELAY], want);
+            if (i == PX_B_GATE * 5 + PX_PATCH_LEVEL) want = 50;          /* v36: preset LEVEL, 0 dB */
             ok &= ((uint8_t *)q.p)[i] == (uint8_t)want;
         }
         CHECK(ok && st_saved(27) && cur_preset == 27, "format 1 store: saved sounds converted, the pedal starts on the last one");
@@ -169,7 +170,7 @@ int main(void)
         CHECK(st_save(27, &q) == 0, "save after conversion");
         reboot();
         st_get(27, &f);
-        CHECK(!memcmp(&q, &f, sizeof q) && st_saved(40), "after the first save: format 4, everything still there");
+        CHECK(!memcmp(&q, &f, sizeof q) && st_saved(40), "after the first save: format 5, everything still there");
         loader_bytes_clear();
     }
     /* format 2 (v29..v33): the same layout, the old amp / drive / cab numbers -> the v34 set at boot */
@@ -214,6 +215,7 @@ int main(void)
         st_get(12, &f);
         px_preset_t g;
         st_get(13, &g);
+        CHECK(f.p[PX_B_GATE][PX_PATCH_LEVEL] == 50 && g.p[PX_B_GATE][PX_PATCH_LEVEL] == 50, "format 3 store: preset LEVEL set to 0 dB (50)");
         CHECK(f.p[PX_B_DELAY][0] == 40 && f.p[PX_B_DELAY][1] == 33 && f.type[PX_B_DELAY] == PX_DLY_TAPE && g.p[PX_B_DELAY][0] == 50,
               "format 3 store: TAPE 510 ms stays 510 ms (knob 50 -> 40), REVERSE untouched");
         CHECK(px_dly_time_v35(PX_DLY_DIGITAL, 100) == 80 && px_dly_time_v35(PX_DLY_DIGITAL, 0) == 0, "v34's 1000 ms -> 80, 20 ms -> 0");

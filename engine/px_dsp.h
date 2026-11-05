@@ -75,6 +75,7 @@ int         px_nparams(int blk, int type);
 const char *px_param_name(int blk, int type, int k);
 /* text for a knob value when a bare 0..100 says little ("+5TH", "440" ms...); returns 0 = show the number */
 int         px_type_v34(int blk, int old);   /* presets saved before v34: old type -> new */
+#define PX_PATCH_LEVEL 2                /* the preset LEVEL: p[PX_B_GATE][2] ("PRESET LVL" on the GT page), 50 = 0 dB (v36) */
 int         px_dly_time_v35(int type, int v);   /* presets saved before v35: delay TIME (20..1000 ms) -> today's knob */
 int         px_param_text(int blk, int type, int k, int v, char *buf8);
 int         px_preset_count(void);
@@ -174,7 +175,9 @@ typedef struct {
     float rv_ph1, rv_ph2, rv_inc1, rv_inc2, rv_mdep;   /* modulation: two slow LFOs, depth (samples) */
     float rv_dec, rv_dd2, rv_damp, rv_bw, rv_fl, rv_fr; /* plate: decay, decay diffusion 2, damping, input band, feedback */
     int   rv_tap[14];                                  /* plate: output taps (samples into tank units) */
-    float rv_in, rv_out, rv_mix, rv_env, rv_rq, rv_fade;          /* rv_rq: rounding (0.5), or 0 once the tail is very quiet */
+    float rv_in, rv_out, rv_mix, rv_env, rv_rq, rv_fade;
+    float cmp_la[128]; int cmp_lw;                     /* v36: swell look-ahead (128 samples) */
+    float btr[PX_NBLK], patch_g;                        /* v36: per-block level trims, preset level */          /* rv_rq: rounding (0.5), or 0 once the tail is very quiet */
     int   rv_gate, rv_hold_n, sp_on; float rv_hold, rv_genv, rv_gg, rv_gate_rel;
     float sp_z[6], sp_a;
     float sh_buf[PX_PS_N]; int sh_w; float sh_ph, sh_out, sh_lp, sh_k, rv_shim, sh_hp, sh_hk;
