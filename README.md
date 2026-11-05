@@ -54,6 +54,12 @@ starts the moment the pedal answers and halts its DSP at once. A BlackBox can al
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
 
+**Without internet**: double-click `INSTALL-OFFLINE.bat` in this folder (Windows). It builds the packages if
+`docs\firmware` has none (`INSTALL-OFFLINE.bat build` rebuilds them), serves the installer and the packages from this
+folder on this computer only (`http://localhost:8765`, a small PowerShell server: `tools/serve_offline.ps1`) and opens
+it in Chrome or Edge. Same page, same steps; keep its window open while you install. `INSTALL-OFFLINE.bat editor`
+opens the web editor the same way.
+
 ## Preset editor
 
 From OpenPocket **v32**, the **Preset editor** page (`editor.html`, linked from the installer) edits the pedal live over
