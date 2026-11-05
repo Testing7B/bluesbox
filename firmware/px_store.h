@@ -21,7 +21,7 @@
 #define ST_NSLOT   52u
 #define ST_SLOT    112u
 #define ST_S0N     34u                          /* slots in sector 0: 16 + 34 * 112 = 0xEF0 < 0xF00 */
-#define ST_VER     2u
+#define ST_VER     3u          /* 3: v34 (the fitted amps / drives / cabs: types renumbered); 2: v29; 1: v25 */
 #define ST1_NSLOT  42u                          /* format 1 (v25..v28) */
 #define ST1_SLOT   96u
 #define ST1_S0N    38u
@@ -62,6 +62,17 @@ static void st_from_v1(uint32_t k, const uint8_t *o)
     memcpy(st_slot[k], &q, sizeof q);
     st_slot[k][sizeof q] = ST_MARK;
 }
+/* format 1 / 2 -> 3: the saved presets' amp, drive and cab types moved to the v34 set (px_type_v34: the nearest one).
+ * In RAM only; the flash gets it at the next save (until then it is redone at each boot). */
+static void st_types_v34(void)
+{
+    static const uint8_t B[3] = {PX_B_DRIVE, PX_B_AMP, PX_B_CAB};
+    for (uint32_t k = 0; k < ST_NSLOT; k++) {
+        if (st_slot[k][sizeof(px_preset_t)] != ST_MARK) continue;
+        px_preset_t *q = (px_preset_t *)(void *)st_slot[k];
+        for (uint32_t i = 0; i < 3u; i++) q->type[B[i]] = (uint8_t)px_type_v34(B[i], q->type[B[i]]);
+    }
+}
 static uint32_t st_crc(void)
 {
     uint32_t k, c = 0;
@@ -99,7 +110,7 @@ static void st_load(void)
     memset(&bh, 0, sizeof bh);
     for (i = 0; i < 2u; i++) {
         if (ota_fread(BASE[i], &h, sizeof h) || h.magic != ST_MAGIC) continue;
-        if (!((h.ver == ST_VER && h.nslot == ST_NSLOT) || (h.ver == 1u && h.nslot == ST1_NSLOT))) continue;
+        if (!(((h.ver == ST_VER || h.ver == 2u) && h.nslot == ST_NSLOT) || (h.ver == 1u && h.nslot == ST1_NSLOT))) continue;
         if (st_read_copy(BASE[i], &h) == h.crc && (!best || (int32_t)(h.seq - bseq) > 0)) {
             best = BASE[i];
             bseq = h.seq;
@@ -117,6 +128,7 @@ static void st_load(void)
         st_last = 0;
     }
     if (st_last >= ST_NSLOT) st_last = 0;
+    if (best && bh.ver < 3u) st_types_v34();        /* saved before v34: the old amp / drive / cab numbers */
 }
 
 static int st_saved(uint32_t k) { return k < ST_NSLOT && st_slot[k][sizeof(px_preset_t)] == ST_MARK; }

@@ -209,14 +209,17 @@ enum { TM_LP, TM_MUFF, TM_HM2, TM_MT2 };
 typedef struct {
     const char *name;
     uint8_t role[5], np;
-    uint16_t hp, shelf, lp, mid; int8_t mid_db; uint8_t mid_q10;   /* pre-clip (base rate) */
-    int8_t g0, g1;                                                   /* gain range, dB */
-    uint8_t clip, tm; uint16_t t0, t1;                               /* clipper, post tone (oversampled) */
-    uint16_t p2; int8_t p2db;                                        /* fixed post filter (0 dB = low-pass) */
-    uint8_t blend, bias, gate;                                       /* /100 */
-} drv_v;
+    float hp, shelf, lp, mid, mid_db, mid_q10;                       /* pre-clip (base rate) */
+    float g0, g1;                                                    /* gain range, dB */
+    uint8_t clip, tm; float t0, t1;                                  /* clipper, post tone (oversampled) */
+    float p2, p2db;                                                  /* fixed post filter (0 dB = low-pass) */
+    float blend, bias, gate;                                         /* /100 */
+} drv_v;          /* (floats: tools/fit_drive.py fits them to captures) */
 #define L3(a, b, c) {a, b, c, 0, 0}, 3
 #define L4(a, b, c, d) {a, b, c, d, 0}, 4
+#ifdef PX_FIT
+drv_v px_fit_drv; int px_fit_drv_on; float px_fit_drv_trim = 1.0f;
+#endif
 static const drv_v DV[PX_DRV_COUNT] = {
     /* name           roles                                  hp  shelf  lp  mid  dB q   g0 g1 clip     tm      t0    t1    p2  p2dB bl bi gt */
     {"TS 808",      L3(R_DRIVE, R_TONE, R_LEVEL),            30, 720,   0,   0,  0, 7, 21, 41, CL_SOFT, TM_LP,   900, 4500, 0,   0, 0, 0, 0},
@@ -253,14 +256,17 @@ typedef struct {
     const char *name;
     uint8_t n, hard;
     float g[4], bias[4];
-    uint16_t lp[4], hp[4];                                /* inter-stage low-pass / coupling high-pass */
-    uint16_t tight, bright; int8_t bright_db;             /* input high-pass, bright cap (fades with gain) */
-    uint16_t bass, mid; uint8_t midq10; uint16_t treb;    /* tone stack */
-    int8_t rb, rm, rt, scoop;                             /* knob ranges (dB), fixed mid scoop at noon */
-    uint16_t pres, res; int8_t res_db;                    /* presence, resonance (power amp + speaker) */
-    uint16_t vf; int8_t vdb;                              /* fixed voice peak */
-    uint8_t sag100, pw10;                                 /* power-supply sag, power-amp drive */
-} amp_v;
+    float lp[4], hp[4];                                   /* inter-stage low-pass / coupling high-pass (Hz) */
+    float tight, bright, bright_db;                       /* input high-pass, bright cap (fades with gain) */
+    float bass, mid, midq10, treb;                        /* tone stack */
+    float rb, rm, rt, scoop;                              /* knob ranges (dB), fixed mid scoop at noon */
+    float pres, res, res_db;                              /* presence, resonance (power amp + speaker) */
+    float vf, vdb;                                        /* fixed voice peak */
+    float sag100, pw10;                                   /* power-supply sag, power-amp drive */
+} amp_v;          /* (floats: tools/fit_amp.py fits them to captures; see docs/FITTED-MODELS.md) */
+#ifdef PX_FIT
+amp_v px_fit_amp; int px_fit_on; float px_fit_trim = 1.0f;
+#endif
 static const amp_v AV[PX_AMP_COUNT] = {
   {"TWIN CLEAN",  1,0, {1.0f,0,0,0},          {0,0,0,0},             {12000,0,0,0},          {25,0,0,0},     30,    0,0,  100, 400, 7, 2400, 10,8,10, -6, 4500, 90,3,    0, 0, 15,10},
   {"DELUXE 65",   2,0, {1.3f,1.6f,0,0},       {0.02f,0.03f,0,0},     {11000,9000,0,0},       {25,40,0,0},    40,    0,0,  110, 400, 7, 2400, 10,8,10, -5, 4200, 90,3,    0, 0, 35,13},
@@ -297,10 +303,13 @@ static const amp_v AV[PX_AMP_COUNT] = {
 /* ============================================================ cabinets ===== */
 typedef struct {
     const char *name;
-    uint16_t hp; uint8_t hpq10; uint16_t bump; int8_t bump_db;
-    uint16_t d1; int8_t d1db; uint16_t d2; int8_t d2db;
-    uint16_t p1; int8_t p1db; uint16_t p2; int8_t p2db; uint16_t lp;
-} cab_v;
+    float hp, hpq10, bump, bump_db;
+    float d1, d1db, d2, d2db;
+    float p1, p1db, p2, p2db, lp, lpq;                    /* lpq: the top end's resonance (0.9 = as before v34) */
+} cab_v;          /* (floats: tools/fit_cab.py fits them to measured cabinets) */
+#ifdef PX_FIT
+cab_v px_fit_cab; int px_fit_cab_on;
+#endif
 static const cab_v CV[PX_CAB_COUNT] = {
     /* name          hp  q  bump dB   dip1 dB  dip2 dB  pres1 dB pres2 dB  lp */
     {"1x10 OPEN",    110, 9, 125, 3,  1000,-2,    0, 0,  2500, 5,  500, 2,  5000},
@@ -872,6 +881,9 @@ static void rc_drive(px_engine *e)
     float sr = e->sr, osr = sr * PX_OVERSAMPLE;
     int t = p->type[PX_B_DRIVE] % PX_DRV_COUNT;
     const drv_v *d = &DV[t];
+#ifdef PX_FIT
+    if (px_fit_drv_on) { d = &px_fit_drv; t = -1; }     /* the fitter's candidate: no per-type special case */
+#endif
     const uint8_t *q = p->p[PX_B_DRIVE];
     float dr = role_val(d, q, R_DRIVE, -1.0f);
     if (dr < 0.0f) dr = role_val(d, q, R_DIST, -1.0f);
@@ -953,6 +965,9 @@ static void rc_drive(px_engine *e)
     if (t == PX_DRV_BASSDRV) bl = role_val(d, q, R_BLEND, 0.0f);
     else bl *= (1.0f - 0.8f * dr);                     /* Klon: clean path fades as gain rises */
     e->drv_blend = bl;
+#ifdef PX_FIT
+    if (px_fit_drv_on) { e->drv_level = px_fit_drv_trim * 2.0f * level; return; }
+#endif
     e->drv_level = DRV_TRIM[t] * 2.0f * level;
 }
 
@@ -962,6 +977,9 @@ static void rc_amp(px_engine *e)
     float sr = e->sr, osr = sr * PX_OVERSAMPLE;
     int t = p->type[PX_B_AMP] % PX_AMP_COUNT;
     const amp_v *v = &AV[t];
+#ifdef PX_FIT
+    if (px_fit_on) v = &px_fit_amp;                   /* the fitter's candidate (tests/fit/fitlib.c) */
+#endif
     const uint8_t *q = p->p[PX_B_AMP];
     float gain = f01(q[0]);
     float userg = 0.3f + gain * gain * 3.2f;
@@ -988,6 +1006,9 @@ static void rc_amp(px_engine *e)
     e->amp_pw = (float)v->pw10 * 0.1f;
     e->amp_pwn = 1.0f / px_tanh(e->amp_pw);
     e->amp_out = AMP_TRIM[t] * 0.84f;
+#ifdef PX_FIT
+    if (px_fit_on) e->amp_out = px_fit_trim;
+#endif
 }
 
 /* cabinet fine structure, one sample: sparse taps on a 64-sample ring + breakup resonators, h[k] = A dec^k sin(kw)
@@ -1014,6 +1035,9 @@ static void rc_cab(px_engine *e)
     float sr = e->sr;
     int t = p->type[PX_B_CAB] % PX_CAB_COUNT;
     const cab_v *c = &CV[t];
+#ifdef PX_FIT
+    if (px_fit_cab_on) c = &px_fit_cab;               /* the fitter's candidate (the type still sets open back) */
+#endif
     const uint8_t *q = p->p[PX_B_CAB];
     if (t == PX_CAB_DI) { e->cab_n = 0; e->cab_firon = 0; return; }
     px_bq f[8];
@@ -1026,8 +1050,11 @@ static void rc_cab(px_engine *e)
     if (c->d2) bq_peak(&f[n++], sr, (float)c->d2, 1.5f, (float)c->d2db);
     if (c->p1) bq_peak(&f[n++], sr, (float)c->p1, 1.4f, (float)c->p1db + bright);
     if (c->p2) bq_peak(&f[n++], sr, (float)c->p2, 1.6f, (float)c->p2db + bright * 0.6f);
-    bq_lowpass(&f[n++], sr, (float)c->lp * mic, 0.9f);
-    bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, 0.8f);
+    {
+        float lq = c->lpq > 0.0f ? c->lpq : 0.9f;      /* the cone's top: the knee's sharpness */
+        bq_lowpass(&f[n++], sr, (float)c->lp * mic, lq);
+        bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, lq * (0.8f / 0.9f));
+    }
     /* fine structure: what a real speaker adds to the smooth curve above. Sparse taps (direct sound, the mic's
      * off-axis comb, the back wave of open cabinets) + the cone's breakup modes as 2-pole resonators: the same
      * impulse response as v25's 128-tap FIR (A dec^k sin kw per mode), without its cost on the pedal. */

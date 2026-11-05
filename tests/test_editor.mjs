@@ -59,7 +59,7 @@ ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.name
 const t0 = Date.now();
 const cat = await ed.catalog();
 const ntypes = cat.blocks.reduce((n, b) => n + b.types.length, 0);
-ok(cat.blocks.length === 12 && cat.blocks[5].label === "AMP" && cat.blocks[5].types.length === 29, `catalogue: 12 blocks, ${ntypes} types (${Date.now() - t0} ms)`);
+ok(cat.blocks.length === 12 && cat.blocks[5].label === "AMP" && cat.blocks[5].types.length === 8, `catalogue: 12 blocks, ${ntypes} types (${Date.now() - t0} ms)`);
 ok(cat.blocks[11].label === "SYN" && cat.blocks[11].color === "#ff1494", `catalogue: the SYN block and its tile colour (${cat.blocks[11].color})`);
 const withTexts = cat.blocks.flatMap((b) => b.types.flatMap((t) => t.params.filter((p) => p.texts))).length;
 ok(withTexts > 0 && cat.blocks[9].types[0].params.some((p) => p.texts && p.texts.some((x) => /ms|\d/.test(x))), `catalogue: value texts for ${withTexts} parameters (delay time...)`);

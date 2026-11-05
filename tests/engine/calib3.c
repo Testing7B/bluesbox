@@ -24,6 +24,6 @@ int main(int argc,char**argv){ mksig(); double in=0; for(int i=2560;i<44100*3;i+
   if(argc>1){ FILE*f=fopen(argv[1],"w");
     fprintf(f,"/* level matching, generated on PC by calib3.c with the pedal's libm (px_math.c):\n * amps (amp + cab, gain 55) to 0.16 RMS on a plucked string; drives (all knobs at noon) to unity. */\n");
     fprintf(f,"static const float AMP_TRIM[PX_AMP_COUNT] = {"); for(int a=0;a<PX_AMP_COUNT;a++) fprintf(f,"%s%s%.3ff",a?", ":"",a%8==0?"\n    ":"",AMP_TRIM[a]*0.16/ra[a]); fprintf(f,"};\n");
-    fprintf(f,"static const float DRV_TRIM[PX_DRV_COUNT] = {"); for(int d=0;d<PX_DRV_COUNT;d++) fprintf(f,"%s%s%.3ff",d?", ":"",d%8==0?"\n    ":"",DRV_TRIM[d]*in*((d==PX_DRV_EPBOOST||d==PX_DRV_RANGEM||d==PX_DRV_PRECISION)?2.0:1.0)/rd[d]); fprintf(f,"};\n");
+    fprintf(f,"static const float DRV_TRIM[PX_DRV_COUNT] = {"); for(int d=0;d<PX_DRV_COUNT;d++) fprintf(f,"%s%s%.3ff",d?", ":"",d%8==0?"\n    ":"",DRV_TRIM[d]*in/rd[d]); fprintf(f,"};\n");
     fclose(f); }
 }
