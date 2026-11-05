@@ -85,19 +85,32 @@ git config user.email "$email"
 git config core.autocrlf false
 # the history: the bundle's commits (each version's own commit messages), when the bundle is here
 $bundle = Join-Path $src "openpocket.bundle"
+$bundleOk = $false
 if (Test-Path $bundle) {
   git fetch --quiet $bundle "main:refs/bundle/main"
   if ($LASTEXITCODE -eq 0) {
+    $bundleOk = $true
     if ($hasMain) { git merge --quiet --no-edit -X ours --allow-unrelated-histories -m "OpenPocket ${Tag}: merge the version history" refs/bundle/main }
     else { git reset --quiet --hard refs/bundle/main }
     if ($LASTEXITCODE -ne 0) { git merge --abort *> $null; Write-Host "  (the history could not be merged: only the files are published)" -ForegroundColor Yellow }
   }
 }
-# the files: exactly this folder's (removed files go away; .gitignore keeps builds, packages and backups out)
+# the files: the version's file list (the bundle's), each one taken from this folder; without a bundle, the whole
+# folder. (.gitignore keeps builds, packages and backups out; files left over from older versions are not published.)
+$list = @()
+if ($bundleOk) { $list = @(git ls-tree -r --name-only refs/bundle/main) }
 git rm -r -q --cached . *> $null
 Get-ChildItem -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
-robocopy $src . /E /XD (Join-Path $src ".git") (Join-Path $src "build") (Join-Path $src "firmware\build") /XF openpocket.bundle /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) { Pop-Location; Fail "copying the folder's files (robocopy $LASTEXITCODE)" }
+if ($list.Count -gt 0) {
+  git checkout --quiet refs/bundle/main -- .
+  foreach ($f in $list) {
+    $from = Join-Path $src ($f -replace '/', '\')
+    if (Test-Path -LiteralPath $from -PathType Leaf) { Copy-Item -LiteralPath $from -Destination ($f -replace '/', '\') -Force }
+  }
+} else {
+  robocopy $src . /E /XD (Join-Path $src ".git") (Join-Path $src "build") (Join-Path $src "firmware\build") /XF openpocket.bundle /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) { Pop-Location; Fail "copying the folder's files (robocopy $LASTEXITCODE)" }
+}
 git add -A
 $changes = "$(git status --porcelain)".Trim()
 if ($changes) {
