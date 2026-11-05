@@ -2,7 +2,7 @@
  * and writes the processed WAV. Lets you HEAR your actual tones on your own guitar.
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- *   px_render in.wav out.wav [preset 1..52] [amp 1..29] [gain 0..100]   (list: docs/SOUNDS-AND-CONTROLS.md)
+ *   px_render in.wav out.wav [preset 1..52] [amp 1..8] [gain 0..100]   (list: docs/SOUNDS-AND-CONTROLS.md)
  *
  * Host build: cc -O2 px_render.c px_dsp.c -lm -o px_render
  */

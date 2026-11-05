@@ -231,58 +231,7 @@ static inline void lcd_px(uint16_t c){ spi_byte((uint8_t)(c>>8)); spi_byte((uint
 static inline void lcd_end(void){ PB_OUT |= CS; }
 #endif
 
-/* ================= ANTI-ALIASED text (Inter font, 4-bit alpha) =================
- * ft_box(x, y, w, ...) draws a box of fixed width w and of the font's height: padding + text + padding,
- * in a single pixel stream (background included). Nothing is cleared first: no flicker. align 0 = left,
- * 1 = centre, 2 = right. Text that is too long is clipped. */
-#include "fonts.h"
-static int ft_glyph(const op_font *f, char c)
-{
-    for (int i = 0; i < f->n; i++) if (f->chars[i] == c) return i;
-    return 0;                                          /* unknown -> 1st character (space) */
-}
-static uint32_t ft_width(const op_font *f, const char *s)
-{
-    uint32_t w = 0;
-    while (*s) w += f->adv[ft_glyph(f, *s++)];
-    return w;
-}
-static uint16_t ft_mix(uint16_t fg, uint16_t bg, uint32_t a)   /* a = 0..15 */
-{
-    uint32_t r = (((fg >> 11) & 31u) * a + ((bg >> 11) & 31u) * (15u - a)) / 15u;
-    uint32_t g = (((fg >> 5) & 63u) * a + ((bg >> 5) & 63u) * (15u - a)) / 15u;
-    uint32_t b = ((fg & 31u) * a + (bg & 31u) * (15u - a)) / 15u;
-    return (uint16_t)((r << 11) | (g << 5) | b);
-}
-static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const op_font *f,
-                       uint16_t fg, uint16_t bg, int align)
-{
-    uint8_t gi[40]; uint32_t n = 0, tw = 0;
-    if (x >= 240u || w == 0u) return 0;
-    if (x + w > 240u) w = 240u - x;
-    while (s[n] && n < 40u) {                          /* characters that fit in the box */
-        int g = ft_glyph(f, s[n]);
-        if (tw + f->adv[g] > w) break;
-        gi[n] = (uint8_t)g; tw += f->adv[g]; n++;
-    }
-    uint32_t lpad = align == 1 ? (w - tw) / 2u : (align == 2 ? w - tw : 0u), rpad = w - tw - lpad;
-    uint16_t pal[16];
-    for (uint32_t a = 0; a < 16u; a++) pal[a] = ft_mix(fg, bg, a);
-    lcd_win(x, y, w, f->h);
-    for (uint32_t r = 0; r < f->h; r++) {
-        for (uint32_t i = 0; i < lpad; i++) lcd_px(bg);
-        for (uint32_t k = 0; k < n; k++) {
-            uint32_t a = f->adv[gi[k]];
-            const uint8_t *b = f->bits + f->off[gi[k]];
-            uint32_t p = r * a;
-            for (uint32_t c = 0; c < a; c++, p++) lcd_px(pal[(b[p >> 1] >> ((p & 1u) ? 0 : 4)) & 15u]);
-        }
-        for (uint32_t i = 0; i < rpad; i++) lcd_px(bg);
-        if ((r & 7u) == 7u) fm1_wdt_feed();
-    }
-    lcd_end();
-    return tw;
-}
+#include "ui_text.h"                    /* anti-aliased text (Inter), rounded boxes */
 
 /* one character (scale sx,sy), fg on bg */
 static void lcd_char(uint32_t x, uint32_t y, char ch, uint16_t fg, uint16_t bg, uint32_t s)
@@ -353,7 +302,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "29"
+#define OP_VERSION_NUM "36"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -447,6 +396,46 @@ static int32_t adc_read2(uint32_t ch)
     (void)fm1_adc_read(ch);
     return fm1_adc_read(ch);
 }
+
+/* ---- battery (v36): the chip's own VBAT / 4 channel through the PMU test bus, scaled by the 0.8 V bandgap
+ * read the same way (JieLi AC79 SDK, cpu/wl82/key/adc_api.c): mV = 4 x 800 x vbat / vbg. P3_ANA_CON4: bit 0
+ * PMU_DET_EN, bits 3:1 the PMU channel (0 VBG, 5 VBAT/4, 6 LDO5V/4); WLA_CON0 bits 17:15 = 4: the PMU on the ADC's
+ * channel 15, bit 14: the bandgap path. Everything is put back as it was after each reading. */
+#define P3_ANA_CON4 0x04u
+static int bat_mv, bat_usb_mv;         /* last readings (0: none) */
+static int32_t pmu_conv(uint32_t sel)
+{
+    uint32_t t, v = 0;
+    for (int k = 0; k < 3; k++) {                       /* 2 conversions to settle the mux, the 3rd counts */
+        FM1_ADC_CON_R = 0;
+        if (sel == 0u) FM1_WLA_CON0 |= 1u << 14; else FM1_WLA_CON0 &= ~(1u << 14);
+        FM1_ADC_CON_R = (FM1_ADC_CON_SDK & 0xF00Fu) | 0x40u | (15u << 8);
+        FM1_ADC_CON_R |= 0x10u;
+        FM1_ADC_CON_R |= 0x40u;
+        for (t = 0; t < 20000u && !fm1_adc_done(); t++) ;
+        if (t == 20000u) { fm1_adc_abort(); return -1; }
+        v = fm1_adc_take();
+    }
+    return (int32_t)v;
+}
+static void bat_read(void)
+{
+    uint8_t c4 = fm1_p33_read(P3_ANA_CON4);
+    uint32_t w = FM1_WLA_CON0;
+    FM1_WLA_CON0 = (w & ~(7u << 15)) | (4u << 15);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (0u << 1)));
+    int32_t vbg = pmu_conv(0u);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (5u << 1)));
+    int32_t vb = pmu_conv(5u);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (6u << 1)));
+    int32_t v5 = pmu_conv(6u);
+    fm1_p33_write(P3_ANA_CON4, c4);
+    FM1_WLA_CON0 = w;
+    if (vbg < 100 || vbg > 900 || vb < 0) { bat_mv = 0; return; }
+    int mv = (int)(3200 * vb / vbg), mu = v5 < 0 ? 0 : (int)(3200 * v5 / vbg);
+    bat_mv = bat_mv ? (bat_mv * 3 + mv) / 4 : mv;      /* a little smoothing */
+    bat_usb_mv = mu;
+}
 #define KEY_DEBUG 0          /* 1 = shows the raw value of channel 9 at the bottom right (K####) */
 /* identifies the analog keypad button by the nearest value (±42 window),
  * independent of the idle state */
@@ -526,9 +515,10 @@ static int dbn_press(dbn_t *d, int raw)
 #define OPD_MAGIC 0x4F504442u
 enum { ST_NONE, ST_INPUTS, ST_PRESET, ST_ENG_INIT, ST_ENG_SET, ST_I2S, ST_UI, ST_RUN, ST_OK, ST_N };
 static const char *const ST_NAME[ST_N] = {"?", "INPUTS", "PRESET", "ENGINE INIT", "ENGINE SET", "I2S START",
-                                          "UI DRAW", "FIRST 2 S", "OK"};
+                                          "UI DRAW", "FIRST 6 S", "OK"};
 volatile struct { uint32_t magic, stage, blocks, load, peak, nans, c1, loops, crash_seen, safe; } op_diag
     __attribute__((section(".noinit")));
+static struct { uint8_t vdc0, vdc1, sys0, sys1, dcdc, rst, pinr; } op_pwr;   /* supplies, reset source, pin reset (fm1_cstart) */
 static void op_stage(uint32_t s, const char *txt)
 {
     op_diag.stage = s;
@@ -548,7 +538,22 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "ui.h"
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
+#if !AUDIO_PROBE
+static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
+static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
+#include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #endif
+#endif
+
+/* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
+static void rst_names(char *l, uint32_t r)
+{
+    static const char *const N[7] = {"POWER-ON", "VDDIO LOW", "WATCHDOG", "VCM", "LONG PRESS", "1.2V", "SOFT"};
+    int any = 0;
+    for (int i = 0; i < 7; i++)
+        if (r & (1u << i)) { if (any) b_str(l, "+"); b_str(l, N[i]); any = 1; }
+    if (!any) b_str(l, "NONE");
+}
 
 static void app_main(void)
 {
@@ -572,6 +577,16 @@ static void app_main(void)
     lcd_rect(0,0,240,240,UI_BG);
     ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
     ft_box(0, 126, 240, OP_VERSION, &FT_SM, UI_DIM, UI_BG, 1);
+#if !AUDIO_PROBE
+    {   /* the supplies as found -> as set (fm1_cstart): "PWR 3>7 11>15 DCDC" */
+        char l[32]; l[0] = 0;
+        b_str(l, "PWR "); b_num(l, op_pwr.vdc0); b_str(l, " "); b_num(l, op_pwr.sys0); b_str(l, " (BOOT LEVELS)");
+        ft_box(0, 150, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
+        char h[9]; l[0] = 0;
+        b_str(l, "RST "); rst_names(l, op_pwr.rst); b_str(l, " PINR "); hex8(h, op_pwr.pinr); b_str(l, h + 6);
+        ft_box(0, 170, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
+    }
+#endif
     for (int i = 0; i < 6; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
     /* --- report of the previous boot, if it did not finish (or crashed) --- */
     int safe = 0;
@@ -589,6 +604,10 @@ static void app_main(void)
             ft_box(0, 6, 240, "LAST BOOT FAILED", &FT_MD, RED, UI_BG, 1);
             l[0] = 0; b_str(l, "STOPPED AT: "); b_str(l, ST_NAME[st]);
             ft_box(0, 40, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+            if (!crashed) {
+                l[0] = 0; b_str(l, "RESET BY: "); rst_names(l, op_pwr.rst);
+                ft_box(0, 62, 240, l, &FT_SM, UI_ACC, UI_BG, 1);
+            }
             if (crashed) {
                 l[0] = 0; b_str(l, "CRASH  PC "); hex8(h, fm1_crash.pc); b_str(l, h);
                 ft_box(0, 62, 240, l, &FT_SM, UI_ACC, UI_BG, 1);
@@ -631,7 +650,6 @@ static void app_main(void)
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
-    lcd_rect(0, 224, 240, 16, UI_PANEL);
     ui_invalidate();
     ui_render();
     op_stage(ST_RUN, 0);
@@ -656,11 +674,11 @@ static void app_main(void)
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
-                ft_box(178, 225, 60, c, &FT_SM, a_bypass ? RED : UI_DIM, UI_PANEL, 2);
+                ui_status(c, a_bypass);
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
 #endif
-        if (!boots_ok && now > 2000u) { boots_ok = 1; guard.pending = 0; guard.failed = 0; op_diag.stage = ST_OK; }
+        if (!boots_ok && now > 6000u) {   /* 4.5 s of DSP first: a pedal that resets under load is caught */ boots_ok = 1; guard.pending = 0; guard.failed = 0; op_diag.stage = ST_OK; }
 #if !AUDIO_PROBE
         if (a_hold && !safe && now > 1500u) a_hold = 0;   /* DSP on */
         {
@@ -712,6 +730,10 @@ static void app_main(void)
         int32_t mv = -1;
         if (now - adc_tick >= 10u) {     /* analog keypad CAB/DLY/REV + MASTER knob, every 10 ms */
             adc_tick = now;
+            {   /* battery: every 2 s (v36) */
+                static uint32_t t_bat;
+                if (!t_bat || now - t_bat >= 2000u) { t_bat = now ? now : 1u; bat_read(); }
+            }
             int k = keys_decode(adc_read2(ADC_CH_KEYS));
             p_cab = dbn_press(&btn[B_CAB], k == KEY_CAB);
             p_dly = dbn_press(&btn[B_DLY], k == KEY_DLY);
@@ -778,8 +800,24 @@ static void app_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
+    uint32_t vdc0, sys0, dcdc, rst0, pinr0;
     fm1_time_init();
+    /* v31, issue #1: the stock firmware's first act is P3_PINR_CON = 0, the long-press reset off (BlackBox_020
+     * f_0200698a). Left on, a pin held at its active level resets the chip every 4 s (the SDK offers 4 or 8 s):
+     * Megal's BlackBox reset every 4.3 s after a power cycle, never after an install (the always-on P33 kept the
+     * stock firmware's 0 across the warm reset). Read first, so the boot screen can show it. */
+    rst0 = fm1_p33_read(FM1_P3_RST_SRC);
+    pinr0 = fm1_p33_read(0x94u);
+    fm1_p33_write(0x94u, 0);
     fm1_wdt_arm(0x0D);
+    /* v33: the supplies stay as the boot loader leaves them (VDC14 3, SYSVDD 11, LDO), as up to v29. v30 set them as
+     * the stock firmware does (VDC14 7, SYSVDD 15, the 1.3 V supply on the DC-DC): it was not what fixed issue #1
+     * (the long-press reset was), and with it a Pocket X ran its DSP ~25 % slower (DOOM SLUDGE 61 % -> 77 %) and
+     * crackled. Only read, for the boot screen. */
+    vdc0 = fm1_vdc14();
+    sys0 = fm1_sysvdd();
+    dcdc = 0;
+    fm1_wdt_feed();
     if (guard.magic != 0x48575431u || guard.pending > 1u || guard.failed > 1u) {
         guard.magic = 0x48575431u; guard.failed = 0; guard.pending = 0;
     }
@@ -790,6 +828,9 @@ void fm1_cstart(void)
     for (d = _bss_start; d < _bss_end; d++) *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++) *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++) *d = *s;
+    op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
+    op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
+    op_pwr.rst = (uint8_t)rst0; op_pwr.pinr = (uint8_t)pinr0;
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;

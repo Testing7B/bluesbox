@@ -153,8 +153,14 @@ int main(void)
         reboot();
         st_get(27, &q);
         int ok = !strcmp(q.name, "OLD LEAD") && q.on[PX_B_SYN] == 0 && px_order_valid(q.order) && q.order[4] == PX_B_SYN;
-        for (int b = 0; b < 11; b++) ok &= q.on[b] == (b & 1) && q.type[b] == b;
-        for (int i = 0; i < 55; i++) ok &= ((uint8_t *)q.p)[i] == (uint8_t)(i + 27);
+        for (int b = 0; b < 11; b++)                           /* amp / drive / cab: moved to the v34 set */
+            ok &= q.on[b] == (b & 1) && q.type[b] == ((b == PX_B_AMP || b == PX_B_DRIVE || b == PX_B_CAB) ? px_type_v34(b, b) : b);
+        for (int i = 0; i < 55; i++) {                         /* delay TIME: moved to the v35 2 s scale */
+            int want = (uint8_t)(i + 27);
+            if (i == PX_B_DELAY * 5) want = px_dly_time_v35(q.type[PX_B_DELAY], want);
+            if (i == PX_B_GATE * 5 + PX_PATCH_LEVEL) want = 50;          /* v36: preset LEVEL, 0 dB */
+            ok &= ((uint8_t *)q.p)[i] == (uint8_t)want;
+        }
         CHECK(ok && st_saved(27) && cur_preset == 27, "format 1 store: saved sounds converted, the pedal starts on the last one");
         st_get(2, &q); px_preset_factory(&f, 2);
         CHECK(!st_saved(2) && !memcmp(&q, &f, sizeof q), "format 1 store: unsaved slots stay factory");
@@ -164,7 +170,55 @@ int main(void)
         CHECK(st_save(27, &q) == 0, "save after conversion");
         reboot();
         st_get(27, &f);
-        CHECK(!memcmp(&q, &f, sizeof q) && st_saved(40), "after the first save: format 2, everything still there");
+        CHECK(!memcmp(&q, &f, sizeof q) && st_saved(40), "after the first save: format 5, everything still there");
+        loader_bytes_clear();
+    }
+    /* format 2 (v29..v33): the same layout, the old amp / drive / cab numbers -> the v34 set at boot */
+    {
+        memset(nor + 0xF0000, 0xFF, 0x4000);
+        reboot();
+        px_preset_factory(&q, 5);
+        strcpy(q.name, "MY RECTO");
+        q.type[PX_B_AMP] = 17;                                 /* v33 RECTIFIED */
+        q.type[PX_B_DRIVE] = 13;                               /* v33 MUFF PI */
+        q.type[PX_B_CAB] = 9;                                  /* v33 4x12 H30 */
+        q.type[PX_B_MOD] = 2;                                  /* other blocks: untouched */
+        CHECK(st_save(5, &q) == 0, "format 2 test store written");
+        st_hdr_t h;                                            /* turn the copy just written into a format 2 one */
+        uint32_t base = st_cur;
+        memcpy(&h, nor + base, sizeof h);
+        h.ver = 2;
+        memcpy(nor + base, &h, sizeof h);
+        reboot();
+        st_get(5, &f);
+        CHECK(st_saved(5) && !strcmp(f.name, "MY RECTO") && f.type[PX_B_AMP] == PX_AMP_5150 && f.type[PX_B_DRIVE] == PX_DRV_M77 &&
+              f.type[PX_B_CAB] == PX_CAB_412V30 && f.type[PX_B_MOD] == 2, "format 2 store: RECTIFIED -> 5150, MUFF -> M77, H30 -> V30");
+        CHECK(px_type_v34(PX_B_AMP, 99) == 0 && px_type_v34(PX_B_DRIVE, -1) == 0, "an unknown old type -> the first one");
+        loader_bytes_clear();
+    }
+    /* format 3 (v34): types as today, delay TIME on the 1 s scale -> the 2 s scale (REVERSE keeps its own) */
+    {
+        memset(nor + 0xF0000, 0xFF, 0x4000);
+        reboot();
+        px_preset_factory(&q, 12);
+        strcpy(q.name, "MY ECHO");
+        q.type[PX_B_DELAY] = PX_DLY_TAPE; q.p[PX_B_DELAY][0] = 50; q.p[PX_B_DELAY][1] = 33;    /* 510 ms on v34 */
+        CHECK(st_save(12, &q) == 0, "format 3 test store written");
+        q.type[PX_B_DELAY] = PX_DLY_REVERSE; q.p[PX_B_DELAY][0] = 50;
+        CHECK(st_save(13, &q) == 0, "format 3 test store written (reverse)");
+        st_hdr_t h;
+        uint32_t base = st_cur;
+        memcpy(&h, nor + base, sizeof h);
+        h.ver = 3;
+        memcpy(nor + base, &h, sizeof h);
+        reboot();
+        st_get(12, &f);
+        px_preset_t g;
+        st_get(13, &g);
+        CHECK(f.p[PX_B_GATE][PX_PATCH_LEVEL] == 50 && g.p[PX_B_GATE][PX_PATCH_LEVEL] == 50, "format 3 store: preset LEVEL set to 0 dB (50)");
+        CHECK(f.p[PX_B_DELAY][0] == 40 && f.p[PX_B_DELAY][1] == 33 && f.type[PX_B_DELAY] == PX_DLY_TAPE && g.p[PX_B_DELAY][0] == 50,
+              "format 3 store: TAPE 510 ms stays 510 ms (knob 50 -> 40), REVERSE untouched");
+        CHECK(px_dly_time_v35(PX_DLY_DIGITAL, 100) == 80 && px_dly_time_v35(PX_DLY_DIGITAL, 0) == 0, "v34's 1000 ms -> 80, 20 ms -> 0");
         loader_bytes_clear();
     }
     loader_bytes_clear();

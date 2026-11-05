@@ -59,6 +59,7 @@ footer a,.note a{color:inherit}
       <h1>Open<span>Pocket</span></h1>
       <p class="tag" data-t="tag"></p>
     </div>
+    <a class="alt" id="toeditor" href="editor.html" data-t="toeditor" style="text-decoration:none;align-self:center;font:600 14px/1 Inter,sans-serif;padding:11px 16px;border-radius:10px;border:1px solid var(--line);color:var(--ink)"></a>
   </header>
 
   <section class="card" id="nomidi" hidden>
@@ -83,7 +84,8 @@ footer a,.note a{color:inherit}
     <h2><b>2</b><span data-t="s2"></span></h2>
     <p class="note"><span data-t="s2note"></span> <strong id="pkgver">…</strong></p>
     <p class="note warnbox" data-t="s2warn"></p>
-    <p class="msg err" id="bbwarn" hidden data-t="bbwarn"></p>
+    <p class="note warnbox" id="bbwarn" hidden data-t="bbwarn"></p>
+    <label class="chk"><input type="checkbox" id="rescueOn"><span data-t="rescueon"></span></label>
     <div class="row">
       <button class="go" id="install" disabled data-t="install"></button>
       <button class="alt" id="resume" hidden data-t="resume"></button>
@@ -146,7 +148,9 @@ const T = {
     foot1: "OpenPocket is an independent project, not affiliated with Donner or M-VAVE. Install at your own risk. Source code: GPL-3.0.",
     foot2: "Update protocol and loader from Felucca and felucca-bsp (Hügelton Instruments, GPL-3.0 / MPL-2.0). JieLi AC79 SDK files: Apache-2.0. Inter typeface: SIL OFL 1.1.",
     e_notfound: "Pedal not found. Check the cable (data), close other MIDI apps, then try again.",
-    bbwarn: "The M-VAVE BlackBox is not supported yet: with OpenPocket it restarts in a loop a moment after starting (issue #1 on GitHub). Installing on a BlackBox is disabled until this is fixed. If your BlackBox already runs OpenPocket, use step 3 to put its official firmware back.",
+    bbwarn: "M-VAVE BlackBox: v31 is the fix for issue #1 (OpenPocket restarted every 4 s after the pedal was switched off and on), still being tested on the BlackBox. Please report how it goes on GitHub. If your BlackBox restarts in a loop, use the rescue mode below.",
+toeditor: "Preset editor →",
+        rescueon: "Rescue mode, for a pedal that restarts in a loop: tick this, press Connect, then plug the pedal in (or let it restart). The install starts by itself as soon as the pedal answers; it stops the pedal's sound processing at once, so the restarts stop. It installs the official file chosen in step 3 if there is one for this pedal, otherwise OpenPocket.",
     e_model: "This package is not for this pedal: ", e_lost: "The pedal was disconnected. Plug it back in and press Resume.",
     e_stopped: "The pedal stopped answering. ", e_noloader: "The update loader did not appear. Replug the cable, then Resume.",
     e_noreturn: "The pedal did not come back: switch it off and on.", e_mismatch: "Written, but the pedal reports: ",
@@ -197,7 +201,7 @@ function showDev(d) {
   $("d-port").textContent = d.name;
   const bb = id.model === "BlackBox";               /* not supported yet: boot loop (issue #1) */
   $("bbwarn").hidden = !bb;
-  $("install").disabled = busy || ota || !manifest || bb;
+  $("install").disabled = busy || ota || !manifest;
   $("resume").hidden = !ota;
   $("uboot").disabled = busy || !IS_OPENPOCKET(id);
   $("backoff").disabled = busy || ota || !official || official.model !== id.model || (!official.known && !$("offok").checked);
@@ -208,7 +212,7 @@ async function connect() {
     if (!access) {
       access = await navigator.requestMIDIAccess({ sysex: true });
       up = new Updater(access, log);
-      access.onstatechange = () => { if (!busy) scan(); };
+      access.onstatechange = () => { if (busy || scanning) return; if (rescueArmed()) rescueTry(); else scan(); };
     }
     await scan();
   } catch (e) { setState(t("none"), "err"); log("MIDI: " + e.message); }
@@ -224,6 +228,7 @@ async function scan() {
     else { setState(t("none"), "warn"); log("no pedal" + up.seen()); }
     showDev(d);
   } finally { scanning = false; }
+  if (rescueArmed() && lastDev && MODELS.includes(lastDev.id.model)) setTimeout(rescueTry, 0);   // seen by a scan
 }
 
 function progress(kind, n) {
@@ -267,6 +272,37 @@ async function run(job) {
 }
 
 $("connect").onclick = connect;
+
+// rescue mode (issue #1): the packages are fetched beforehand, the install fires the moment a pedal answers
+let pre = null;
+let rescueTries = 0;                                  // a few attempts, then the mode turns itself off
+const rescueArmed = () => $("rescueOn").checked && pre !== null && up !== null && rescueTries < 10;
+async function prefetch() {
+  pre = null;
+  const got = {};
+  for (const m of MODELS) { try { got[m] = await packageFor(m); } catch (e) { log("rescue: " + errText(e)); } }
+  if ($("rescueOn").checked) { pre = got; log("rescue mode armed: waiting for the pedal"); setState(t("searching"), "warn"); }
+}
+function pick(model) {
+  if (official && official.model === model && (official.known || $("offok").checked)) return { image: official.image, product: official.product };
+  return pre && pre[model];
+}
+function rescueTry() {
+  if (busy || scanning || !rescueArmed()) return;
+  rescueTries++;
+  return run(async () => {
+    const r = await up.rescue(pick, (s, n) => { progress(s, n); if (s !== "verify" && s !== "write") log("rescue step " + s + (n !== undefined ? " " + n : "")); });
+    if (!r) throw Object.assign(new Error("no pedal yet"), { code: "notfound", detail: up.seen() });
+    $("rescueOn").checked = false; pre = null;
+    return r;
+  });
+}
+$("rescueOn").onchange = async () => {
+  if (!$("rescueOn").checked) { pre = null; log("rescue mode off"); return; }
+  rescueTries = 0;
+  await prefetch();
+  if (rescueArmed() && lastDev) rescueTry();
+};
 $("install").onclick = () => run(async () => {
   const d = lastDev;
   const { product, image } = await packageFor(d.id.model);

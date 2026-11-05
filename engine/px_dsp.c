@@ -134,9 +134,9 @@ static void bq_hp1(px_bq *b, float fs, float f)          /* first order (RC coup
 /* ============================================================ catalog ===== */
 static const char *const BLK_LABEL[PX_NBLK] = {"GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV",
                                                "SYN"};
-static const char *const BLK_NAME[PX_NBLK] = {"NOISE GATE", "COMPRESSOR", "PITCH", "SPECIAL FX", "DRIVE / FUZZ",
+static const char *const BLK_NAME[PX_NBLK] = {"NOISE GATE", "COMPRESSOR", "PITCH", "SPECIAL FX", "DRIVE",
                                               "AMP", "CABINET", "EQUALIZER", "MODULATION", "DELAY", "REVERB",
-                                              "SYNTH / INSTRUMENT"};
+                                              "INSTRUMENT"};
 /* default processing order (v29: each preset carries its own) */
 static const uint8_t ORDER_DEF[PX_NBLK] = {PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_SYN, PX_B_DRIVE, PX_B_AMP,
                                            PX_B_CAB, PX_B_EQ, PX_B_MOD, PX_B_DELAY, PX_B_REVERB};
@@ -149,8 +149,8 @@ int px_order_valid(const uint8_t *o)
 }
 typedef struct { const char *name; uint8_t np; const char *const *pn; } tdef;
 
-static const char *const PN_GATE[] = {"THRESH", "RELEASE"};
-static const tdef T_GATE[] = {{"NOISE GATE", 2, PN_GATE}};
+static const char *const PN_GATE[] = {"THRESH", "RELEASE", "PRESET LVL"};   /* (3rd: the preset's level, v36) */
+static const tdef T_GATE[] = {{"NOISE GATE", 3, PN_GATE}};
 
 static const char *const PN_CMP[] = {"SUSTAIN", "ATTACK", "LEVEL", "MIX"};
 static const char *const PN_OPTO[] = {"COMPRESS", "LEVEL", "MIX"};
@@ -209,43 +209,23 @@ enum { TM_LP, TM_MUFF, TM_HM2, TM_MT2 };
 typedef struct {
     const char *name;
     uint8_t role[5], np;
-    uint16_t hp, shelf, lp, mid; int8_t mid_db; uint8_t mid_q10;   /* pre-clip (base rate) */
-    int8_t g0, g1;                                                   /* gain range, dB */
-    uint8_t clip, tm; uint16_t t0, t1;                               /* clipper, post tone (oversampled) */
-    uint16_t p2; int8_t p2db;                                        /* fixed post filter (0 dB = low-pass) */
-    uint8_t blend, bias, gate;                                       /* /100 */
-} drv_v;
+    float hp, shelf, lp, mid, mid_db, mid_q10;                       /* pre-clip (base rate) */
+    float g0, g1;                                                    /* gain range, dB */
+    uint8_t clip, tm; float t0, t1;                                  /* clipper, post tone (oversampled) */
+    float p2, p2db;                                                  /* fixed post filter (0 dB = low-pass) */
+    float blend, bias, gate;                                         /* /100 */
+} drv_v;          /* (floats: tools/fit_drive.py fits them to captures) */
 #define L3(a, b, c) {a, b, c, 0, 0}, 3
 #define L4(a, b, c, d) {a, b, c, d, 0}, 4
+#ifdef PX_FIT
+drv_v px_fit_drv; int px_fit_drv_on; float px_fit_drv_trim = 1.0f;
+#endif
+/* v34: fitted to NAM captures of the pedals (tools/fit_drive.py); knobs at noon = the captured setting */
 static const drv_v DV[PX_DRV_COUNT] = {
-    /* name           roles                                  hp  shelf  lp  mid  dB q   g0 g1 clip     tm      t0    t1    p2  p2dB bl bi gt */
-    {"TS 808",      L3(R_DRIVE, R_TONE, R_LEVEL),            30, 720,   0,   0,  0, 7, 21, 41, CL_SOFT, TM_LP,   900, 4500, 0,   0, 0, 0, 0},
-    {"TS 9",        L3(R_DRIVE, R_TONE, R_LEVEL),            30, 720,   0,   0,  0, 7, 21, 41, CL_SOFT, TM_LP,  1300, 7000, 0,   0, 0, 0, 0},
-    {"SD-1 OD",     L3(R_DRIVE, R_TONE, R_LEVEL),            30, 720,   0,   0,  0, 7, 21, 46, CL_ASYM, TM_LP,   900, 6000, 0,   0, 0, 30, 0},
-    {"KLONE",       L3(R_DRIVE, R_TREBLE, R_LEVEL),          80, 408,   0, 1000, 3, 7,  6, 40, CL_GE,   TM_LP,  2500,14000, 0,   0, 60, 0, 0},
-    {"BD BLUES",    L3(R_DRIVE, R_TONE, R_LEVEL),            40,   0,   0,  120, 6, 7, 10, 45, CL_HARD, TM_LP,  2000, 9000, 700, -3, 0, 0, 0},
-    {"OCD DRIVE",   L3(R_DRIVE, R_TONE, R_LEVEL),            60,   0,   0,    0, 0, 7, 12, 50, CL_MOS,  TM_LP,  1000,10000, 0,   0, 0, 0, 0},
-    {"RAT DIST",    L3(R_DIST, R_TONE, R_LEVEL),             60, 1500,  0,    0, 0, 7, 18, 62, CL_HARD, TM_LP,   600,12000, 6000, 0, 0, 0, 0},
-    {"DS-1 DIST",   L3(R_DIST, R_TONE, R_LEVEL),             60,   0,   0,    0, 0, 7, 20, 42, CL_HARD, TM_MUFF,  234, 1063, 7200, 0, 0, 0, 0},
-    {"DIST PLUS",   L3(R_DIST, R_TONE, R_LEVEL),            720,   0,   0,    0, 0, 7,  6, 47, CL_GE,   TM_LP,  3000,16000, 0,   0, 0, 0, 0},
-    {"BLUESBREAKER",L3(R_DRIVE, R_TONE, R_LEVEL),           590,   0,   0,    0, 0, 7,  6, 30, CL_SOFT, TM_LP,  1200, 6000, 0,   0, 0, 0, 0},
-    {"KING OF TONE",L3(R_DRIVE, R_TONE, R_LEVEL),            80, 720,   0,    0, 0, 7,  8, 36, CL_ASYM, TM_LP,  2000, 8000, 0,   0, 10, 15, 0},
-    {"TIMMY",       L4(R_DRIVE, R_BASS, R_TREBLE, R_LEVEL), 200,   0,   0,    0, 0, 7,  3, 30, CL_LED,  TM_LP,  2000,10000, 0,   0, 0, 0, 0},
-    {"ZEN DRIVE",   L4(R_DRIVE, R_TONE, R_VOICE, R_LEVEL),   30, 720,   0, 1800, 4, 8, 15, 45, CL_SOFT, TM_LP,  1500, 7000, 0,   0, 0, 0, 0},
-    {"MUFF PI",     L3(R_SUST, R_TONE, R_LEVEL),             90,   0,   0,    0, 0, 7, 30, 55, CL_MUFF, TM_MUFF,  408, 1800, 0,   0, 0, 0, 0},
-    {"RAMS HEAD",   L3(R_SUST, R_TONE, R_LEVEL),             90,   0,   0,  700, 3, 7, 25, 50, CL_MUFF, TM_MUFF,  500, 1600, 0,   0, 0, 0, 0},
-    {"GREEN RUSSIAN",L3(R_SUST, R_TONE, R_LEVEL),            60,   0,   0,    0, 0, 7, 30, 58, CL_MUFF, TM_MUFF,  350, 1400, 0,   0, 0, 0, 0},
-    {"FACE GERMAN.",L3(R_FUZZ, R_TONE, R_LEVEL),             20,   0,   0,    0, 0, 7, 15, 45, CL_FUZZ, TM_LP,  2500, 9000, 0,   0, 0, 20, 0},
-    {"FACE SILICON",L3(R_FUZZ, R_TONE, R_LEVEL),             20,   0,   0,    0, 0, 7, 20, 52, CL_FUZZ, TM_LP,  3500,12000, 0,   0, 0, 35, 0},
-    {"BENDER MK2",  L3(R_FUZZ, R_TONE, R_LEVEL),             40,   0,   0, 1000, 3, 7, 30, 60, CL_FUZZ, TM_LP,  2000, 8000, 0,   0, 0, 30, 0},
-    {"OCTAFUZZ",    L3(R_FUZZ, R_TONE, R_LEVEL),             60,   0, 1500,   0, 0, 7, 20, 45, CL_OCTA, TM_LP,  2000, 9000, 0,   0, 0, 0, 0},
-    {"FUZZ FACTORY",L4(R_FUZZ, R_GATE, R_BIAS, R_LEVEL),     30,   0,   0,    0, 0, 7, 25, 55, CL_FUZZ, TM_LP,  5000, 5000, 0,   0, 0, 30, 0},
-    {"TREBLE BOOST",L3(R_BOOST, R_TONE, R_LEVEL),           300,   0,   0, 3500,10, 7,  6, 26, CL_ASYM, TM_LP,  6000,15000, 0,   0, 0, 20, 0},
-    {"EP BOOST",    L3(R_BOOST, R_TONE, R_LEVEL),            30,   0,   0, 2500, 2, 5,  0, 20, CL_BOOST,TM_LP,  5000,18000, 0,   0, 0, 0, 0},
-    {"SWEDE HM-2",  L4(R_DIST, R_LOW, R_HIGH, R_LEVEL),      50,   0,   0,    0, 0, 7, 25, 50, CL_HARD, TM_HM2,    87, 1100, 0,   0, 0, 0, 0},
-    {"METAL ZONE",  L4(R_DIST, R_LOW, R_HIGH, R_LEVEL),     106,   0,   0, 1000, 8, 7, 30, 60, CL_HARD, TM_MT2,   105, 4900, 800,-8, 0, 0, 0},
-    {"PRECISION",   L4(R_DRIVE, R_TIGHT, R_BRIGHT, R_LEVEL),100,   0,   0,    0, 0, 7,  6, 30, CL_LED,  TM_LP,  6000, 6000, 0,   0, 0, 0, 0},
-    {"BASS DI 7K",  L4(R_DRIVE, R_TONE, R_BLEND, R_LEVEL),   40,   0,   0,    0, 0, 7, 10, 40, CL_LED,  TM_LP,  1500, 8000, 0,   0, 0, 0, 0},
+    {"TS9", L3(R_DRIVE, R_TONE, R_LEVEL), 69.84f, 100.0f, 0.0f, 0.0f, 0.0f, 7.0f, 29.46f, 49.46f, CL_SOFT, TM_LP, 2102.0f, 1.132e+04f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},  /* Tim R TS9 */
+    {"KLON", L3(R_DRIVE, R_TREBLE, R_LEVEL), 11.65f, 239.6f, 0.0f, 449.9f, 2.0f, 11.21f, 18.99f, 52.99f, CL_GE, TM_LP, 842.3f, 4717.0f, 0.0f, 0.0f, 2.468f, 0.0f, 0.0f},  /* Keith B klone_g6_t6_o5 */
+    {"M77 OD", L3(R_DRIVE, R_TONE, R_LEVEL), 10.0f, 1111.0f, 0.0f, 0.0f, 0.0f, 7.0f, 39.88f, 67.88f, CL_ASYM, TM_LP, 1249.0f, 4995.0f, 0.0f, 0.0f, 0.09043f, 0.06363f, 0.0f},  /* Tudor N MXR M77 Custom Badass Modified OD Tone@6.5_Output@10 */
+    {"SWEDE HM-2", L4(R_DIST, R_LOW, R_HIGH, R_LEVEL), 49.27f, 0.0f, 0.0f, 0.0f, 0.0f, 7.0f, 36.83f, 61.83f, CL_HARD, TM_HM2, 100.1f, 1265.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},  /* Peter N HM-2_SWEDE_Std_ESR-0.0034 */
 };
 
 /* =============================================================== amps ====== */
@@ -253,71 +233,50 @@ typedef struct {
     const char *name;
     uint8_t n, hard;
     float g[4], bias[4];
-    uint16_t lp[4], hp[4];                                /* inter-stage low-pass / coupling high-pass */
-    uint16_t tight, bright; int8_t bright_db;             /* input high-pass, bright cap (fades with gain) */
-    uint16_t bass, mid; uint8_t midq10; uint16_t treb;    /* tone stack */
-    int8_t rb, rm, rt, scoop;                             /* knob ranges (dB), fixed mid scoop at noon */
-    uint16_t pres, res; int8_t res_db;                    /* presence, resonance (power amp + speaker) */
-    uint16_t vf; int8_t vdb;                              /* fixed voice peak */
-    uint8_t sag100, pw10;                                 /* power-supply sag, power-amp drive */
-} amp_v;
+    float lp[4], hp[4];                                   /* inter-stage low-pass / coupling high-pass (Hz) */
+    float tight, bright, bright_db;                       /* input high-pass, bright cap (fades with gain) */
+    float bass, mid, midq10, treb;                        /* tone stack */
+    float rb, rm, rt, scoop;                              /* knob ranges (dB), fixed mid scoop at noon */
+    float pres, res, res_db;                              /* presence, resonance (power amp + speaker) */
+    float vf, vdb;                                        /* fixed voice peak */
+    float sag100, pw10;                                   /* power-supply sag, power-amp drive */
+} amp_v;          /* (floats: tools/fit_amp.py fits them to captures; see docs/FITTED-MODELS.md) */
+#ifdef PX_FIT
+amp_v px_fit_amp; int px_fit_on; float px_fit_trim = 1.0f;
+#endif
+/* v34: each row fitted to a NAM capture of the real amp (tools/fit_amp.py, docs/FITTED-MODELS.md); knobs at noon
+ * = the captured setting. Captures: the NAM community collection (GPL v3), credited in the comments. */
 static const amp_v AV[PX_AMP_COUNT] = {
-  {"TWIN CLEAN",  1,0, {1.0f,0,0,0},          {0,0,0,0},             {12000,0,0,0},          {25,0,0,0},     30,    0,0,  100, 400, 7, 2400, 10,8,10, -6, 4500, 90,3,    0, 0, 15,10},
-  {"DELUXE 65",   2,0, {1.3f,1.6f,0,0},       {0.02f,0.03f,0,0},     {11000,9000,0,0},       {25,40,0,0},    40,    0,0,  110, 400, 7, 2400, 10,8,10, -5, 4200, 90,3,    0, 0, 35,13},
-  {"PRINCETONE",  2,0, {1.2f,1.5f,0,0},       {0.02f,0.03f,0,0},     {10000,8000,0,0},       {25,40,0,0},    45,    0,0,  110, 400, 7, 2200, 10,8,10, -5, 3500, 95,3,    0, 0, 40,14},
-  {"TWEED 59",    3,0, {1.6f,2.0f,1.8f,0},    {0.03f,0.05f,0.04f,0}, {8000,6500,6000,0},     {15,30,40,0},   40,    0,0,  142, 500, 8, 2500, 10,9,9,  -3, 4000,100,3,    0, 0, 55,14},
-  {"TWEED CHAMP", 2,0, {2.0f,2.4f,0,0},       {0.05f,0.07f,0,0},     {6000,5000,0,0},        {40,60,0,0},    70,    0,0,  150, 800, 7, 2500,  6,0,8,   0, 3500,120,2,    0, 0, 70,18},
-  {"AC 30 TB",    3,0, {1.8f,2.2f,2.0f,0},    {0.03f,0.05f,0.04f,0}, {10000,9000,8000,0},    {25,40,60,0},   60,    0,0,  150, 800, 9, 1800,  9,8,11, -5, 5000,110,3,    0, 0, 30,16},
-  {"AC 15",       2,0, {2.0f,2.4f,0,0},       {0.04f,0.06f,0,0},     {9000,8000,0,0},        {30,50,0,0},    65,    0,0,  150, 800, 9, 1800,  9,8,11, -4, 5000,110,3,    0, 0, 45,17},
-  {"JTM 45",      3,0, {1.8f,2.2f,2.0f,0},    {0.04f,0.06f,0.05f,0}, {7500,6500,6000,0},     {30,45,55,0},   60,  720,4,  219, 650, 8, 2000, 10,9,10, -3, 4000, 95,3,    0, 0, 50,13},
-  {"PLEXI 68",    3,0, {2.2f,2.6f,2.4f,0},    {0.05f,0.07f,0.05f,0}, {8500,7000,6500,0},     {35,50,60,0},   87,  720,6,  220, 650, 8, 2000, 11,10,10,-3, 4000, 95,3,    0, 0, 40,14},
-  {"BRIT 800",    3,0, {2.6f,3.2f,2.8f,0},    {0.04f,0.07f,0.05f,0}, {9000,7000,6000,0},     {35,55,72,0},   90,  720,3,  220, 680, 8, 2000, 11,10,10,-2, 3800, 95,3,    0, 0, 30,13},
-  {"BRIT JVM",    4,0, {2.6f,3.0f,3.2f,2.6f}, {0.04f,0.06f,0.07f,0.05f},{9000,7500,6500,5500},{40,55,70,90}, 105,   0,0,  200, 700, 8, 2200, 12,10,10,-3, 3800, 95,4,    0, 0, 30,13},
-  {"HIWATT DR",   2,0, {1.6f,1.8f,0,0},       {0.02f,0.03f,0,0},     {12000,10000,0,0},      {30,45,0,0},    40,    0,0,  100, 500, 7, 3000, 10,8,10, -1, 4500, 90,2,    0, 0, 10,11},
-  {"ORANGE 120",  4,0, {2.4f,2.8f,3.0f,2.4f}, {0.04f,0.06f,0.07f,0.05f},{7000,6000,5500,5000},{35,50,65,80},  75,    0,0,  150, 600, 7, 1500, 12,10,10,-2, 3500,100,4,  350, 3, 35,14},
-  {"CHIME 30",    3,0, {1.8f,2.2f,2.0f,0},    {0.03f,0.05f,0.04f,0}, {10000,9000,8000,0},    {25,40,55,0},   60,  900,3,  150, 800, 9, 2000,  9,8,10, -5, 5000,110,3,    0, 0, 35,16},
-  {"ODS LEAD",    4,0, {2.2f,2.6f,2.8f,2.2f}, {0.04f,0.06f,0.06f,0.04f},{7000,6000,5000,4500},{35,50,60,80}, 100, 1500,3,   80, 500, 7, 2400, 12,10,10,-4, 3800, 90,3,    0, 0, 30,12},
-  {"SLO 100",     4,0, {2.8f,3.2f,3.4f,2.8f}, {0.05f,0.07f,0.08f,0.05f},{8000,6500,5500,5000},{40,55,70,88}, 100,   0,0,  170, 650, 8, 2200, 12,11,10,-3, 3800, 95,3,    0, 0, 30,13},
-  {"MARK IIC+",   4,0, {2.6f,3.2f,3.4f,2.6f}, {0.04f,0.06f,0.08f,0.05f},{9000,7000,6000,5000},{40,60,80,100},125,   0,0,   90, 750,10, 3400, 12,12,10,-4, 4200, 90,3,    0, 0, 20,12},
-  {"RECTIFIED",   4,0, {3.0f,3.2f,3.4f,3.0f}, {0.05f,0.08f,0.06f,0.05f},{7000,5500,6500,6000},{30,45,60,85},  85,    0,0,   85, 700,10, 2800, 12,12,9, -6, 4500, 80,4,    0, 0, 50,13},
-  {"5150 LEAD",   4,0, {3.2f,3.6f,3.8f,3.2f}, {0.06f,0.09f,0.07f,0.05f},{8000,6000,5000,5000},{35,50,70,90}, 110,   0,0,  180, 650, 9, 3600, 12,11,11,-4, 4200,110,3,    0, 0, 25,13},
-  {"5150 III",    4,0, {3.4f,3.8f,4.0f,3.4f}, {0.06f,0.09f,0.07f,0.05f},{8500,6500,5500,5200},{40,60,80,100},125,   0,0,  170, 700, 9, 3500, 12,11,11,-4, 4200,100,3,    0, 0, 20,13},
-  {"ECSTASY",     4,0, {2.8f,3.2f,3.4f,2.8f}, {0.05f,0.08f,0.06f,0.05f},{8000,6500,5500,5000},{35,50,65,90}, 100,   0,0,  110, 650, 9, 3000, 12,11,10,-3, 3600, 95,3,    0, 0, 30,13},
-  {"BE LEAD",     4,0, {2.8f,3.4f,3.6f,2.8f}, {0.05f,0.07f,0.07f,0.05f},{8500,7000,6000,5200},{35,50,65,90},  90,  720,3,  220, 650, 8, 2200, 11,10,10,-2, 3800, 95,3,    0, 0, 30,13},
-  {"UBER VH4",    4,0, {3.0f,3.4f,3.6f,3.4f}, {0.04f,0.07f,0.07f,0.05f},{7500,6500,5500,4800},{45,60,75,100},125,   0,0,  170, 800,10, 3300, 12,12,10,-3, 3400,100,3,    0, 0, 25,13},
-  {"EURO BALL",   4,0, {2.8f,3.4f,3.6f,3.0f}, {0.04f,0.07f,0.08f,0.05f},{8000,7000,6000,5200},{40,55,70,100},125,   0,0,  150, 650,10, 3500, 12,12,10,-6, 3800,100,3,    0, 0, 20,13},
-  {"REVV GEN",    4,0, {3.0f,3.6f,3.8f,3.2f}, {0.05f,0.08f,0.07f,0.05f},{8500,7000,6000,5200},{40,60,80,100},120,   0,0,  160, 700, 9, 3200, 12,11,10,-2, 4000,100,3, 2000, 3, 20,13},
-  {"JC CLEAN",    0,0, {0,0,0,0},             {0,0,0,0},             {0,0,0,0},              {0,0,0,0},      25,    0,0,  100,1000, 7, 4500, 12,10,12,  0, 5000, 90,0,    0, 0,  0, 8},
-  {"SUPRO 64",    3,0, {2.2f,2.6f,2.4f,0},    {0.05f,0.08f,0.06f,0}, {5000,4500,4000,0},     {30,45,55,0},   40,    0,0,  150,1000, 7, 2500,  9,6,9,   0, 3000,110,3, 1000, 3, 70,18},
-  {"TWO-ROCK",    2,0, {1.4f,1.8f,0,0},       {0.02f,0.03f,0,0},     {11000,9000,0,0},       {25,40,0,0},    35,    0,0,  100, 500, 7, 2600, 10,8,10, -4, 4500, 90,3,    0, 0, 20,11},
-  {"SVT BASS",    2,0, {1.4f,1.6f,0,0},       {0.03f,0.04f,0,0},     {9000,7000,0,0},        {15,25,0,0},    25,    0,0,   40, 500, 6, 4000, 12,10,10,  0, 5000, 60,2,    0, 0, 40,14},
+  {"TWIN", 1,0, {0.3f,0,0,0}, {-2.302e-07f,0,0,0}, {1.995e+04f,0,0,0}, {220.9f,0,0,0}, 29.88f,3532.0f,9.754f, 154.8f,439.0f,3.031f,1005.0f, 10.0f,8.0f,10.0f,-11.81f, 2825.0f,93.49f,1.404f, 599.8f,-7.461f, 4.05f,35.8f},  /* Tim R Fender TwinVerb Norm Bright */
+  {"AC15 TB", 3,0, {9.42f,9.975f,1.816f,0}, {0.06444f,-0.4316f,3.31e-07f,0}, {2544.0f,4256.0f,5172.0f,0}, {67.75f,71.05f,114.9f,0}, 92.86f,1343.0f,19.65f, 77.92f,878.4f,7.153f,703.2f, 9.0f,8.0f,11.0f,-10.72f, 1731.0f,40.08f,0.8217f, 4552.0f,12.52f, 196.4f,6.342f},  /* Phillipe P VOXAC15-TopBoost */
+  {"JCM900", 3,0, {2.21f,3.039f,2.231f,0}, {0.04791f,0.3043f,-0.1265f,0}, {2.094e+04f,2.089e+04f,2.085e+04f,0}, {145.2f,170.2f,173.3f,0}, 53.37f,4123.0f,12.42f, 50.09f,567.8f,2.264f,833.8f, 11.0f,10.0f,10.0f,-16.09f, 9891.0f,107.4f,3.579f, 2480.0f,2.732f, 16.73f,50.37f},  /* Tim R JCM90050WDualVerbCHAG6 */
+  {"JCM2000", 4,0, {8.543f,6.047f,7.104f,3.937f}, {-0.0004265f,-0.04477f,0.258f,0.3669f}, {1.051e+04f,1.011e+04f,1.077e+04f,1.818e+04f}, {38.3f,48.77f,90.03f,27.44f}, 111.2f,1016.0f,12.16f, 51.54f,719.6f,8.087f,6428.0f, 12.0f,10.0f,10.0f,-2.586f, 2911.0f,105.3f,3.054f, 304.5f,0.09714f, 18.58f,6.411f},  /* Tim R JCM2000 L2 G6 */
+  {"MARK IV", 4,0, {7.683f,7.948f,8.82f,6.955f}, {0.01532f,-0.01585f,0.0974f,-0.1513f}, {1.105e+04f,1.025e+04f,9167.0f,7818.0f}, {37.8f,61.58f,79.03f,53.29f}, 121.7f,1317.0f,7.075f, 410.8f,588.3f,4.153f,708.6f, 12.0f,12.0f,10.0f,-14.18f, 1864.0f,107.2f,0.7193f, 300.3f,-0.1191f, 30.97f,15.42f},  /* Roman A LT_MESA_MARKIV_1 */
+  {"SHIRLEY", 3,0, {14.57f,12.87f,0.9559f,0}, {8.291e-05f,1.581e-06f,0.4817f,0}, {1.609e+04f,9064.0f,1.022e+04f,0}, {75.04f,90.07f,140.2f,0}, 104.2f,735.8f,19.94f, 212.9f,536.8f,3.517f,3829.0f, 11.0f,10.0f,10.0f,-10.71f, 2764.0f,159.2f,6.964f, 1368.0f,0.01628f, 105.2f,16.02f},  /* Sascha S DirtyShirleyMini_crunch_G6 */
+  {"PRO MOD", 4,0, {6.752f,4.731f,19.9f,0.963f}, {-0.0004333f,-0.0001043f,0.5f,4.907e-08f}, {1.162e+04f,1.497e+04f,6022.0f,8590.0f}, {25.21f,34.53f,172.3f,8.071f}, 83.83f,581.3f,17.36f, 483.1f,631.1f,15.95f,1633.0f, 12.0f,10.0f,10.0f,-6.407f, 1859.0f,92.49f,12.0f, 6408.0f,5.301f, 39.48f,13.34f},  /* Tim R Splawn Pro Mod 2nd Gear - G12 */
+  {"5150", 4,0, {7.122f,7.229f,11.68f,10.45f}, {0.001611f,-0.02376f,0.1732f,-0.0003214f}, {8118.0f,8207.0f,8905.0f,1.582e+04f}, {35.27f,46.39f,56.44f,38.31f}, 95.85f,1282.0f,5.8f, 494.3f,603.4f,3.356f,4957.0f, 12.0f,11.0f,11.0f,-8.117f, 7287.0f,136.9f,6.174f, 7286.0f,-1.026f, 16.01f,9.421f},  /* Helga B 5150 BlockLetter - NoBoost */
 };
 #include "px_trim.h"                                   /* per-amp / per-drive level matching (calibrated on PC) */
 
 /* ============================================================ cabinets ===== */
 typedef struct {
     const char *name;
-    uint16_t hp; uint8_t hpq10; uint16_t bump; int8_t bump_db;
-    uint16_t d1; int8_t d1db; uint16_t d2; int8_t d2db;
-    uint16_t p1; int8_t p1db; uint16_t p2; int8_t p2db; uint16_t lp;
-} cab_v;
+    float hp, hpq10, bump, bump_db;
+    float d1, d1db, d2, d2db;
+    float p1, p1db, p2, p2db, lp, lpq;                    /* lpq: the top end's resonance (0.9 = as before v34) */
+} cab_v;          /* (floats: tools/fit_cab.py fits them to measured cabinets) */
+#ifdef PX_FIT
+cab_v px_fit_cab; int px_fit_cab_on;
+#endif
 static const cab_v CV[PX_CAB_COUNT] = {
-    /* name          hp  q  bump dB   dip1 dB  dip2 dB  pres1 dB pres2 dB  lp */
-    {"1x10 OPEN",    110, 9, 125, 3,  1000,-2,    0, 0,  2500, 5,  500, 2,  5000},
-    {"1x12 US OPEN",  95, 9, 105, 3,   650,-3,    0, 0,  2700, 5, 5000, 3,  6500},
-    {"2x10 VIBRO",    95, 9, 105, 3,   800,-2,    0, 0,  2500, 5, 4000, 1,  5800},
-    {"2x12 BLUE",     80, 8,  90, 3,  2000,-3,    0, 0,  1350, 3, 3500, 6,  6000},
-    {"2x12 BRIT",     80, 8,  90, 4,  2800,-3,    0, 0,  2000, 4, 3800, 4,  5000},
-    {"4x10 TWEED",    80, 8,  97, 4,   900,-2,    0, 0,  2500, 5, 4000, 1,  5500},
-    {"4x12 GREEN",    70, 7, 100, 5,  2800,-3,    0, 0,  2000, 4, 3500, 3,  4800},
-    {"4x12 T75",      75, 7, 105, 5,   650,-3,    0, 0,  2500, 5, 5000, 5,  6000},
-    {"4x12 V30",      70, 7, 105, 6,  1250,-2, 3500,-4,  2500, 6, 4800, 4,  5500},
-    {"4x12 H30",      75, 7, 110, 5,  1500,-2,    0, 0,  3000, 5, 5000, 3,  5500},
-    {"1x12 CREAM",    80, 8,  90, 4,  1500,-2,    0, 0,  2500, 4, 4500, 3,  6000},
-    {"1x15 OPEN",     55, 8,  65, 4,  1000,-3,    0, 0,  3500, 4,    0, 0,  9000},
-    {"8x10 BASS",     55, 7,  80, 4,   500,-2,    0, 0,  1500, 3,    0, 0,  5000},
-    {"4x10 HORN",     45, 7,  55, 3,     0, 0,    0, 0,  2000, 1, 8000, 2, 15000},
-    {"DI (NO CAB)",    0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},
+    /* name hp q bump dB dip1 dB dip2 dB pres1 dB pres2 dB lp [lpq] */
+    {"1x12 US OPEN", 95, 9, 105, 3,   650,-3,    0, 0,  2700, 5, 5000, 3,  6500},
+    {"2x12 BLUE", 80, 8,  90, 3,  2000,-3,    0, 0,  1350, 3, 3500, 6,  6000},
+    {"4x12 GREEN", 70, 7, 100, 5,  2800,-3,    0, 0,  2000, 4, 3500, 3,  4800},
+    {"4x12 T75", 75, 7, 105, 5,   650,-3,    0, 0,  2500, 5, 5000, 5,  6000},
+    {"4x12 V30", 165.7f, 14.37f, 101.6f, 11.95f, 1558.0f, -5.565f, 5034.0f, 1.745f, 2868.0f, 9.288f, 5017.0f, 12.0f, 7097.0f, 0.5f},  /* fitted: 8 amp / amp+cab capture pairs (Phillipe P, GPL) */
+    {"1x12 CREAM", 80, 8,  90, 4,  1500,-2,    0, 0,  2500, 4, 4500, 3,  6000},
+    {"DI (NO CAB)", 0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},
 };
 
 /* ================================================================== EQ ===== */
@@ -423,7 +382,12 @@ static const int8_t HARM_ST[10] = {-12, -7, -5, -4, -3, 3, 4, 5, 7, 12};
 static const char *const HARM_TXT[10] = {"-OCT", "-5TH", "-4TH", "-3RD", "-m3", "+m3", "+3RD", "+4TH", "+5TH", "+OCT"};
 static const char *const HEAD_TXT[7] = {"1", "2", "3", "1+2", "2+3", "1+3", "ALL"};
 static int harm_idx(int v) { int i = v * 10 / 101; return i < 0 ? 0 : (i > 9 ? 9 : i); }
-static float dly_ms(int t, int v) { return t == PX_DLY_REVERSE ? 250.0f + (float)v * 7.5f : 20.0f + (float)v * 9.8f; }
+/* TIME (v35): 20..1000 ms in steps of 12.25 ms up to 80, then to 2 s in steps of 50 ms; REVERSE: 250..1000 ms */
+static float dly_ms(int t, int v)
+{
+    if (t == PX_DLY_REVERSE) return 250.0f + (float)v * 7.5f;
+    return v <= 80 ? 20.0f + (float)v * 12.25f : 1000.0f + (float)(v - 80) * 50.0f;
+}
 static void put_int(char *b, int v, int plus)
 {
     char t[8]; int n = 0, neg = v < 0;
@@ -441,12 +405,41 @@ static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRI
 static float syn_rel_ms(float x) { return 50.0f + x * x * 2950.0f; }     /* release */
 static int syn_bari_st(int v) { return -1 - (int)((float)v * 0.01f * 11.99f); }
 static int syn_oct(int v) { return v < 34 ? -1 : (v < 67 ? 0 : 1); }
+/* presets saved before v34 (store format 1 / 2): the old amp / drive / cab numbers -> the nearest of the v34 set */
+int px_dly_time_v35(int type, int v)
+{
+    if (type == PX_DLY_REVERSE || v < 0) return v < 0 ? 0 : v;
+    int k = (int)((float)v * (9.8f / 12.25f) + 0.5f);   /* old: 20 + 9.8 v ms; new: 20 + 12.25 v ms up to 80 */
+    return k > 80 ? 80 : k;
+}
+int px_type_v34(int blk, int old)
+{
+    static const uint8_t A[29] = {PX_AMP_TWIN, PX_AMP_TWIN, PX_AMP_TWIN, PX_AMP_SHIRLEY, PX_AMP_AC15, PX_AMP_AC15, PX_AMP_AC15, PX_AMP_SHIRLEY, PX_AMP_SHIRLEY, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_AC15, PX_AMP_MARK4, PX_AMP_PROMOD, PX_AMP_MARK4, PX_AMP_5150, PX_AMP_5150, PX_AMP_5150, PX_AMP_PROMOD, PX_AMP_PROMOD, PX_AMP_5150, PX_AMP_5150, PX_AMP_5150, PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_TWIN, PX_AMP_TWIN};
+    static const uint8_t D[27] = {PX_DRV_TS9, PX_DRV_TS9, PX_DRV_TS9, PX_DRV_KLON, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_HM2, PX_DRV_M77, PX_DRV_KLON, PX_DRV_KLON, PX_DRV_KLON, PX_DRV_TS9, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_M77, PX_DRV_KLON, PX_DRV_HM2, PX_DRV_HM2, PX_DRV_TS9, PX_DRV_KLON};
+    static const uint8_t C[15] = {PX_CAB_112JN, PX_CAB_112JN, PX_CAB_112JN, PX_CAB_212BLUE, PX_CAB_412GB, PX_CAB_112JN, PX_CAB_412GB, PX_CAB_412T75, PX_CAB_412V30, PX_CAB_412V30, PX_CAB_112CREAM, PX_CAB_112JN, PX_CAB_412V30, PX_CAB_112JN, PX_CAB_DI};
+    if (old < 0) return 0;
+    if (blk == PX_B_AMP) return old < 29 ? A[old] : 0;
+    if (blk == PX_B_DRIVE) return old < 27 ? D[old] : 0;
+    if (blk == PX_B_CAB) return old < 15 ? C[old] : 0;
+    return old;
+}
+
 int px_param_text(int b, int t, int k, int v, char *buf)
 {
     if (v < 0) v = 0;
     if (v > 100) v = 100;
     float x = (float)v * 0.01f;
     switch (b) {
+    case PX_B_GATE:
+        if (k == PX_PATCH_LEVEL) {                     /* "+1.5 DB": 0.3 dB a step */
+            int d = (v - 50) * 3, a = d < 0 ? -d : d, i = 0;
+            buf[i++] = d < 0 ? '-' : '+';
+            if (a >= 100) buf[i++] = (char)('0' + a / 100);
+            buf[i++] = (char)('0' + (a / 10) % 10); buf[i++] = '.'; buf[i++] = (char)('0' + a % 10);
+            buf[i++] = ' '; buf[i++] = 'D'; buf[i++] = 'B'; buf[i] = 0;
+            return 1;
+        }
+        break;
     case PX_B_PITCH:
         if (t == PX_PIT_HARMONY && k == 0) { put_str(buf, HARM_TXT[harm_idx(v)]); return 1; }
         if (t == PX_PIT_WHAMMY && k == 0) { float st = (x - 0.5f) * 48.0f; put_int(buf, (int)(st + (st >= 0 ? 0.5f : -0.5f)), 1); return 1; }
@@ -476,7 +469,8 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
         break;
     case PX_B_DELAY:
-        if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); return 1; }
+        if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); int i = 0; while (buf[i]) i++;
+                      buf[i] = ' '; buf[i + 1] = 'M'; buf[i + 2] = 'S'; buf[i + 3] = 0; return 1; }   /* "450 MS" */
         if (t == PX_DLY_SPACE && k == 3) { put_str(buf, HEAD_TXT[(int)(x * 6.99f)]); return 1; }
         break;
     }
@@ -492,16 +486,16 @@ static void blk(px_preset_t *p, int b, int on, int type, int a, int c, int d, in
 static void base_preset(px_preset_t *p)
 {
     memset(p, 0, sizeof(*p));
-    blk(p, PX_B_GATE,   1, 0, 40, 20, 0, 0, 0);
+    blk(p, PX_B_GATE,   1, 0, 40, 20, 50, 0, 0);   /* 3rd: preset LEVEL (v36), 50 = 0 dB */
     blk(p, PX_B_COMP,   0, PX_CMP_SQUASH, 50, 30, 50, 100, 0);
     blk(p, PX_B_PITCH,  0, PX_PIT_OCTAVER, 70, 50, 0, 0, 40);
     blk(p, PX_B_SFX,    0, PX_SFX_AUTOWAH, 60, 60, 60, 40, 0);
-    blk(p, PX_B_DRIVE,  0, PX_DRV_TS808, 30, 50, 60, 50, 50);
-    blk(p, PX_B_AMP,    1, PX_AMP_PLEXI, 60, 60, 50, 60, 50);
+    blk(p, PX_B_DRIVE,  0, PX_DRV_TS9, 30, 50, 60, 50, 50);
+    blk(p, PX_B_AMP,    1, PX_AMP_SHIRLEY, 60, 60, 50, 60, 50);
     blk(p, PX_B_CAB,    1, PX_CAB_412V30, 50, 50, 50, 0, 0);
     blk(p, PX_B_EQ,     0, PX_EQ_5BAND, 50, 50, 50, 50, 50);
     blk(p, PX_B_MOD,    0, PX_MOD_CHORUS, 30, 40, 40, 30, 50);
-    blk(p, PX_B_DELAY,  0, PX_DLY_DIGITAL, 35, 30, 25, 50, 30);
+    blk(p, PX_B_DELAY,  0, PX_DLY_DIGITAL, 28, 30, 25, 50, 30);
     blk(p, PX_B_REVERB, 0, PX_REV_HALL, 50, 50, 20, 40, 0);
     blk(p, PX_B_SYN,    0, PX_SYN_ORGAN, 50, 70, 40, 30, 0);
     px_order_default(p->order);
@@ -514,204 +508,141 @@ static void setname(px_preset_t *p, const char *s)
 }
 enum { NPRESETS = 52 };
 int px_preset_count(void) { return NPRESETS; }
+/* v36: 24 factory presets built round the fitted amps and drives (amps near noon, where they match the captures),
+ * each one levelled (LEVEL, tools/level_presets.py: -20 LUFS on DI guitar); slots 25..52: USER, a clean starting point */
+#define LVL(v) (p->p[PX_B_GATE][PX_PATCH_LEVEL] = (uint8_t)(v))
+#define NOGATE (p->on[PX_B_GATE] = 0)
 void px_preset_factory(px_preset_t *p, int idx)
 {
     base_preset(p);
     if (idx < 0 || idx >= NPRESETS) idx = 0;
+    p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
     switch (idx) {
-    case 0: setname(p, "GLASS CLEAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 55, 45, 65, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 55, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 35, 40, 55, 60, 0); blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 25, 45, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 45, 55, 25, 0, 0); break;
-    case 1: setname(p, "JAZZ BOX"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 65, 55, 30, 30); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 60, 35, 35, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_OPTO, 30, 55, 70, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 40, 22, 0, 0); break;
-    case 2: setname(p, "COUNTRY SNAP"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_DELUXE, 35, 45, 50, 70, 60); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 45, 60, 60, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 60, 35, 55, 100, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 10, 5, 30, 60, 20); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 18, 40, 0); break;
-    case 3: setname(p, "TEXAS BLUES"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS808, 25, 55, 75, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_DELUXE, 60, 60, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_410BASSMAN, 55, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 45, 45, 20, 40, 0); break;
-    case 4: setname(p, "TWEED BLUES"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_BASSMAN, 65, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_410BASSMAN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 45, 18, 0, 0); break;
-    case 5: setname(p, "BRIT JANGLE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_AC30, 45, 50, 50, 65, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 55, 50, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 30, 20, 18, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 50, 18, 0, 0); break;
-    case 6: setname(p, "60S PSYCH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_FUZZGE, 70, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_PLEXI, 45, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 35, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
-    case 7: setname(p, "70S ROCK");
-        blk(p, PX_B_AMP, 1, PX_AMP_PLEXI, 75, 55, 60, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 50, 12, 0, 0); break;
-    case 8: setname(p, "80S HAIR");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_SD1, 20, 55, 70, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM800, 70, 55, 60, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 55, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 20, 35, 35, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 40, 25, 18, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 16, 0, 0); break;
-    case 9: setname(p, "BRIT CRUNCH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_KLON, 25, 55, 70, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JTM45, 55, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 15, 0, 0); break;
-    case 10: setname(p, "SMOOTH LEAD");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_ZEN, 30, 50, 50, 65, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_DUMBLE, 65, 50, 55, 55, 45); blk(p, PX_B_CAB, 1, PX_CAB_112CREAM, 55, 45, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 40, 30, 22, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 45, 18, 0, 0); break;
-    case 11: setname(p, "SPACE LEAD");
-        blk(p, PX_B_AMP, 1, PX_AMP_SLO, 70, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_MEMORY, 50, 45, 30, 30, 40); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 65, 45, 25, 0, 0); break;
-    case 12: setname(p, "DOTTED 8TH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 40, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC30, 50, 50, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 45, 40, 35, 60, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 55, 55, 22, 0, 0); break;
-    case 13: setname(p, "MARK SOLO");
-        blk(p, PX_B_AMP, 1, PX_AMP_MARK, 75, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_EQ, 1, PX_EQ_GEQ, 55, 52, 42, 55, 55);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 45, 35, 22, 50, 0); break;
-    case 14: setname(p, "THRASH"); p->p[PX_B_GATE][0] = 50;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 0, 60, 80, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_5150, 70, 60, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 15: setname(p, "GROOVE METAL"); p->p[PX_B_GATE][0] = 55;
-        blk(p, PX_B_AMP, 1, PX_AMP_5150III, 75, 65, 35, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 55, 50, 50, 0, 0);
-        blk(p, PX_B_EQ, 1, PX_EQ_GEQ, 60, 50, 35, 55, 55); break;
-    case 16: setname(p, "DJENT"); p->p[PX_B_GATE][0] = 60;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_PRECISION, 10, 70, 55, 75, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_REVV, 70, 55, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 45, 55, 50, 0, 0); break;
-    case 17: setname(p, "DOOM SLUDGE");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_RUSSIAN, 60, 40, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_ORANGE, 70, 70, 55, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 65, 40, 45, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 55, 35, 18, 0, 0); break;
-    case 18: setname(p, "SWEDE DEATH"); p->p[PX_B_GATE][0] = 55;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_HM2, 80, 100, 100, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM800, 45, 50, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 19: setname(p, "SHOEGAZE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_MUFF, 70, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC30, 40, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_REVERSE, 40, 35, 35, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_CATHEDRAL, 65, 40, 35, 0, 0); break;
-    case 20: setname(p, "SWELL PAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_SWELL, 45, 60, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 30, 50, 45, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 55, 45, 30, 45, 30); blk(p, PX_B_REVERB, 1, PX_REV_SHIMMER, 70, 45, 40, 50, 0); break;
-    case 21: setname(p, "FUNK WAH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 55, 25, 55, 100, 0); blk(p, PX_B_SFX, 1, PX_SFX_AUTOWAH, 60, 65, 60, 35, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0); break;
-    case 22: setname(p, "SURF"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 45, 50, 70, 60); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 45, 60, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 70, 60, 45, 80, 0); break;
-    case 23: setname(p, "SWAMP TREM"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_DELUXE, 50, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_OPTOTREM, 45, 70, 0, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 50, 45, 25, 50, 0); break;
-    case 24: setname(p, "VIBE ROCK"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_FUZZSI, 60, 55, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_PLEXI, 55, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 45, 75, 50, 0, 0); break;
-    case 25: setname(p, "ROTARY ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_DELUXE, 45, 55, 55, 55, 45); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 70, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 45, 18, 0, 0); break;
-    case 26: setname(p, "HARM LEAD");
-        blk(p, PX_B_PITCH, 1, PX_PIT_HARMONY, 85, 45, 0, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM800, 70, 55, 60, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 40, 25, 20, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 15, 0, 0); break;
-    case 27: setname(p, "WHAMMY DIVE");
-        blk(p, PX_B_PITCH, 1, PX_PIT_WHAMMY, 75, 100, 40, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_RECTO, 70, 60, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
-    case 28: setname(p, "OCTA FUZZ"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_OCTAVIA, 65, 60, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_PLEXI, 50, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
-    case 29: setname(p, "SQUARE SYNTH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_SYNTH, 70, 70, 40, 100, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 35, 30, 25, 60, 0); break;
-    case 30: setname(p, "RING MOD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_RING, 45, 80, 20, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_AC30, 50, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 45, 40, 30, 50, 0); break;
-    case 31: setname(p, "LO-FI TAPE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_PRINCETON, 40, 50, 55, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_110, 50, 45, 45, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_VIBRATO, 10, 30, 0, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_LOFI, 45, 45, 35, 60, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 50, 30, 25, 0, 0); break;
-    case 32: setname(p, "STUTTER FUZZ"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_MUFF, 75, 50, 55, 0, 0); blk(p, PX_B_SFX, 1, PX_SFX_SLICER, 50, 100, 30, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_CHAMP, 45, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0); break;
-    case 33: setname(p, "BITCRUSH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SFX, 1, PX_SFX_CRUSH, 70, 30, 80, 0, 0); blk(p, PX_B_DRIVE, 1, PX_DRV_OCD, 50, 50, 55, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JCM800, 50, 55, 55, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
-    case 34: setname(p, "BASS DRIVE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 30, 55, 60, 0); blk(p, PX_B_DRIVE, 1, PX_DRV_BASSDRV, 50, 55, 50, 55, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SVT, 40, 60, 50, 50, 40); blk(p, PX_B_CAB, 1, PX_CAB_810SVT, 50, 50, 50, 0, 0); break;
-    case 35: setname(p, "BASS OCTAVE"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_PITCH, 1, PX_PIT_POLYOCT, 70, 60, 0, 0, 0); blk(p, PX_B_COMP, 1, PX_CMP_OPTO, 45, 55, 100, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SVT, 30, 60, 50, 50, 40); blk(p, PX_B_CAB, 1, PX_CAB_410BASS, 50, 50, 50, 0, 0); break;
-    case 36: setname(p, "TWEED CHAMP"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_CHAMP, 60, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_110, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 45, 15, 0, 0); break;
-    case 37: setname(p, "HIWATT STACK"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_DRIVE, 1, PX_DRV_FUZZSI, 55, 55, 60, 0, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_HIWATT, 65, 55, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412T75, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 50, 14, 0, 0); break;
-    case 38: setname(p, "MODERN HIGH"); p->p[PX_B_GATE][0] = 50;
-        blk(p, PX_B_AMP, 1, PX_AMP_POWERBALL, 72, 55, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 35, 20, 12, 50, 0); break;
-    case 39: setname(p, "SUPRO GRIT"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_SUPRO, 65, 55, 60, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_SPACE, 30, 30, 22, 30, 30); break;
-    case 40: setname(p, "STONER FUZZ");
-        blk(p, PX_B_DRIVE, 1, PX_DRV_FFACTORY, 75, 20, 45, 55, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_ORANGE, 55, 65, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 55, 45, 50, 0, 0); break;
-    case 41: setname(p, "CHIME CLEAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_AMP, 1, PX_AMP_MATCHLESS, 40, 50, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_PHASE90, 20, 60, 0, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 45, 55, 20, 0, 0); break;
-    /* ---- v29: synths, keyboards and other guitars (SYN block) ---- */
-    case 42: setname(p, "B3 ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_ORGAN, 60, 80, 55, 40, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 55, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 55, 40, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 30, 70, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 45, 15, 0, 0); break;
-    case 43: setname(p, "CHURCH ORGAN"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_CHURCH, 60, 75, 60, 35, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_CATHEDRAL, 75, 45, 40, 0, 0); break;
-    case 44: setname(p, "MELLO STRINGS"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_STRINGS, 45, 45, 35, 45, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 60, 45, 30, 0, 0); break;
-    case 45: setname(p, "CHOIR PAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_CHOIR, 50, 55, 70, 25, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_AMBIENT, 55, 40, 35, 0, 0); break;
-    case 46: setname(p, "MONO LEAD"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_MONO, 15, 50, 35, 55, 60);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 40, 35, 25, 55, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
-    case 47: setname(p, "PWM SYNTH"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_PWM, 50, 35, 45, 40, 100);
-        blk(p, PX_B_AMP, 1, PX_AMP_JC120, 30, 55, 50, 50, 45); blk(p, PX_B_CAB, 1, PX_CAB_DI, 50, 50, 50, 0, 0);
-        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 25, 40, 40, 0, 0); blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 40, 35, 25, 50, 0); break;
-    case 48: setname(p, "SYNTH BASS"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_BASS, 80, 40, 30, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_SVT, 30, 60, 50, 45, 40); blk(p, PX_B_CAB, 1, PX_CAB_810SVT, 50, 50, 50, 0, 0); break;
-    case 49: setname(p, "12-STRING"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_12STR, 70, 40, 50, 0, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 50, 50, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 45, 50, 20, 0, 0); break;
-    case 50: setname(p, "ACOUSTIC"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_ACOUSTIC, 60, 50, 60, 35, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 45, 30, 55, 60, 0);
-        blk(p, PX_B_AMP, 0, PX_AMP_JC120, 30, 50, 50, 50, 50); blk(p, PX_B_CAB, 0, PX_CAB_DI, 50, 50, 50, 0, 0);
+    /* ---- clean ---- */
+    case 0: setname(p, "TWIN CLEAN"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(44);
+        blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 30, 50, 50, 50, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 40, 50, 22, 0, 0); break;
+    case 1: setname(p, "CHORUS CLEAN"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(47);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 30, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 35, 25, 18, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 50, 22, 0, 0); break;
+    case 2: setname(p, "AC15 CHIME"); blk(p, PX_B_GATE, 1, 0, 20, 50, 50, 0, 0); LVL(42);
+        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 50, 45, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 55, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 20, 40, 0); break;
+    case 3: setname(p, "FUNK WAH"); NOGATE; LVL(41);
+        blk(p, PX_B_COMP, 1, PX_CMP_SQUASH, 55, 35, 50, 0, 0); blk(p, PX_B_SFX, 1, PX_SFX_AUTOWAH, 55, 50, 55, 40, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 45, 55, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0); break;
+    case 4: setname(p, "SURF SPRING"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(47);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 45, 60, 55); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 55, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 7, 10, 15, 50, 20); blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 55, 55, 40, 60, 0); break;
+    case 5: setname(p, "AMBIENT SWELL"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(50);
+        blk(p, PX_B_COMP, 1, PX_CMP_SWELL, 50, 50, 50, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 40, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 45, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_CHORUS, 20, 30, 30, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 35, 45, 30, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_AMBIENT, 50, 45, 40, 0, 0); break;
+    /* ---- edge of break-up, crunch ---- */
+    case 6: setname(p, "TS BLUES"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(46);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 35, 50, 50, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 55, 50, 50, 55, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_SPRING, 40, 50, 18, 40, 0); break;
+    case 7: setname(p, "BLUES BREAKUP"); blk(p, PX_B_GATE, 1, 0, 22, 50, 50, 0, 0); LVL(41);
+        blk(p, PX_B_AMP, 1, PX_AMP_AC15, 60, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_212BLUE, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 29, 20, 15, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 8: setname(p, "KLON CRUNCH"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(42);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_KLON, 40, 50, 55, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 9: setname(p, "BRIT CRUNCH"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(39);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0); break;
+    case 10: setname(p, "70S ROCK"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 20, 50, 65, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 60, 55, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 35, 50, 15, 0, 0); break;
+    case 11: setname(p, "BOUTIQUE"); blk(p, PX_B_GATE, 1, 0, 25, 30, 50, 0, 0); LVL(40);
+        blk(p, PX_B_AMP, 1, PX_AMP_SHIRLEY, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 29, 15, 12, 45, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 15, 0, 0); break;
+    /* ---- lead ---- */
+    case 12: setname(p, "BRIT LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(41);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 39, 30, 20, 45, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 20, 0, 0); break;
+    case 13: setname(p, "SMOOTH LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(37);
+        blk(p, PX_B_AMP, 1, PX_AMP_MARK4, 55, 50, 55, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_TAPE, 35, 30, 20, 45, 20); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 45, 45, 18, 0, 0); break;
+    case 14: setname(p, "HAIR METAL"); blk(p, PX_B_GATE, 1, 0, 35, 30, 50, 0, 0); LVL(45);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_M77, 25, 55, 60, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM2000, 60, 55, 45, 55, 55); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DIGITAL, 33, 25, 15, 50, 0); blk(p, PX_B_REVERB, 1, PX_REV_PLATE, 40, 50, 18, 0, 0); break;
+    case 15: setname(p, "SPACE LEAD"); blk(p, PX_B_GATE, 1, 0, 30, 30, 50, 0, 0); LVL(42);
+        blk(p, PX_B_AMP, 1, PX_AMP_PROMOD, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_DUAL, 29, 40, 25, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_SHIMMER, 55, 45, 30, 40, 0); break;
+    /* ---- high gain ---- */
+    case 16: setname(p, "MODERN ROCK"); blk(p, PX_B_GATE, 1, 0, 40, 30, 50, 0, 0); LVL(37);
+        blk(p, PX_B_AMP, 1, PX_AMP_PROMOD, 55, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 30, 50, 12, 0, 0); break;
+    case 17: setname(p, "5150 RHYTHM"); blk(p, PX_B_GATE, 1, 0, 45, 25, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 0, 55, 75, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 50, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 50, 50, 0, 0); break;
+    case 18: setname(p, "TIGHT METAL"); blk(p, PX_B_GATE, 1, 0, 50, 20, 50, 0, 0); LVL(41);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_TS9, 5, 60, 80, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 60, 55, 40, 55, 55); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 50, 55, 50, 0, 0); break;
+    case 19: setname(p, "SWEDE DEATH"); blk(p, PX_B_GATE, 1, 0, 55, 25, 50, 0, 0); LVL(32);
+        blk(p, PX_B_DRIVE, 1, PX_DRV_HM2, 70, 80, 80, 50, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 40, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0); break;
+    case 20: setname(p, "DOOM"); blk(p, PX_B_GATE, 1, 0, 40, 35, 50, 0, 0); LVL(27);
+        blk(p, PX_B_AMP, 1, PX_AMP_5150, 65, 65, 45, 45, 45); blk(p, PX_B_CAB, 1, PX_CAB_412V30, 60, 40, 40, 0, 0);
+        blk(p, PX_B_DELAY, 1, PX_DLY_ANALOG, 45, 20, 10, 40, 0); blk(p, PX_B_REVERB, 1, PX_REV_HALL, 40, 35, 15, 0, 0); break;
+    /* ---- effects ---- */
+    case 21: setname(p, "VIBE ROCK"); blk(p, PX_B_GATE, 1, 0, 18, 50, 50, 0, 0); LVL(37);
+        blk(p, PX_B_MOD, 1, PX_MOD_UNIVIBE, 35, 55, 60, 0, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_JCM900, 55, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_412GB, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 22: setname(p, "ORGAN"); NOGATE; LVL(49);
+        blk(p, PX_B_SYN, 1, PX_SYN_ORGAN, 50, 70, 40, 30, 0);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_MOD, 1, PX_MOD_ROTARY, 30, 60, 50, 0, 0); blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 50, 18, 0, 0); break;
+    case 23: setname(p, "ACOUSTIC"); NOGATE; LVL(90);
+        blk(p, PX_B_SYN, 1, PX_SYN_ACOUSTIC, 55, 50, 55, 40, 0); blk(p, PX_B_COMP, 1, PX_CMP_STUDIO, 40, 40, 85, 60, 0);
+        p->on[PX_B_AMP] = 0; p->on[PX_B_CAB] = 0;
         blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 40, 55, 18, 0, 0); break;
-    default: setname(p, "SITAR"); p->on[PX_B_GATE] = 0;
-        blk(p, PX_B_SYN, 1, PX_SYN_SITAR, 35, 60, 55, 60, 0);
-        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 35, 45, 55, 60, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 55, 55, 0, 0);
-        blk(p, PX_B_REVERB, 1, PX_REV_HALL, 50, 50, 20, 0, 0); break;
+    /* ---- 25..52: USER, a clean amp to start from ---- */
+    default: {
+        char n[14] = "USER ";
+        n[5] = (char)('0' + (idx + 1) / 10); n[6] = (char)('0' + (idx + 1) % 10); n[7] = 0;
+        setname(p, n); NOGATE; LVL(50);
+        blk(p, PX_B_AMP, 1, PX_AMP_TWIN, 45, 50, 50, 50, 50); blk(p, PX_B_CAB, 1, PX_CAB_112JN, 50, 50, 50, 0, 0);
+        blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0);
+    } break;
     }
 }
+#undef LVL
+#undef NOGATE
 
 /* ============================================================ recalc ======= */
-static const int RV_COMB[8] = {1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617};
-static const int RV_AP[4] = {556, 441, 341, 225};
-static const int RV_AP_SPRING[4] = {700, 880, 990, 1090};
+/* reverb (v35). FDN: 8 lines (prime lengths at 44.1 kHz, x the type's size), Hadamard feedback, each line with its own
+ * low / high frequency decay (Jot); the first 4 lines move slowly (chorus in the tail: no metallic ringing).
+ * Plate: J. Dattorro, "Effect Design Part 1" (JAES 1997), lengths at 29761 Hz. Both: Dattorro's input diffusers. */
+static const int RV_FDN[8] = {1171, 1373, 1601, 1847, 2111, 2393, 2689, 3011};
+static const int RV_DIF[4] = {142, 107, 379, 277};
+static const float RV_DIFG[4] = {0.75f, 0.75f, 0.625f, 0.625f};
+static const int PL_LEN[8] = {672, 4453, 1800, 3720, 908, 4217, 2656, 3163};
+static const int PL_TAP[14] = {266, 2974, 1913, 1996, 1990, 187, 1066, 353, 3627, 1228, 2673, 2111, 335, 121};
+static const uint8_t PL_TU[14] = {10, 10, 11, 12, 6, 7, 8, 6, 6, 7, 8, 10, 11, 12};
+static const float ER_T[4] = {0.11f, 0.31f, 0.57f, 1.0f};
+static const float ER_G[4] = {0.95f, -0.72f, 0.5f, -0.33f};
+typedef struct { float size, pre_ms, er, er_ms, mod, rt0, rt1, hf0, hf1, out; } rv_def;
+static const rv_def RVD[PX_REV_COUNT] = {
+    /* size  pre   ER  ER ms mod (samples at 44.1 kHz)  RT min +range  HF decay ratio  output */
+    {0.30f,  4, 0.70f, 25,  4, 0.3f, 0.9f,  0.15f, 0.60f, 0.502f},   /* ROOM */
+    {0.85f, 18, 0.35f, 60, 20, 1.2f, 2.8f,  0.15f, 0.60f, 0.475f},   /* HALL */
+    {1.35f, 35, 0.25f, 90, 24, 3.0f, 7.0f,  0.12f, 0.55f, 0.393f},   /* CATHEDRAL */
+    {1.0f,   0, 0.0f,   0, 16, 0.6f, 4.4f,  0.0f,  0.0f,  1.478f},   /* PLATE (size: Dattorro's) */
+    {0.40f,  0, 0.0f,   0,  2, 1.5f, 2.5f,  0.10f, 0.40f, 0.279f},   /* SPRING */
+    {1.0f,  25, 0.0f,   0, 20, 2.0f, 6.0f,  0.20f, 0.60f, 0.368f},   /* SHIMMER */
+    {0.55f,  3, 0.50f, 30,  8, 2.5f, 0.0f,  0.30f, 0.50f, 0.468f},   /* GATED */
+    {1.35f, 30, 0.0f,   0, 28, 6.0f, 14.0f, 0.10f, 0.50f, 0.368f}};  /* AMBIENT */
 static const uint16_t SLICE_PAT[8] = {0xAAAA, 0xCCCC, 0xF0F0, 0xB6B6, 0x9249, 0xEEEE, 0xDB6D, 0x8888};
 
 static float role_val(const drv_v *d, const uint8_t *q, int role, float def)
@@ -872,6 +803,9 @@ static void rc_drive(px_engine *e)
     float sr = e->sr, osr = sr * PX_OVERSAMPLE;
     int t = p->type[PX_B_DRIVE] % PX_DRV_COUNT;
     const drv_v *d = &DV[t];
+#ifdef PX_FIT
+    if (px_fit_drv_on) { d = &px_fit_drv; t = -1; }     /* the fitter's candidate: no per-type special case */
+#endif
     const uint8_t *q = p->p[PX_B_DRIVE];
     float dr = role_val(d, q, R_DRIVE, -1.0f);
     if (dr < 0.0f) dr = role_val(d, q, R_DIST, -1.0f);
@@ -887,8 +821,6 @@ static void rc_drive(px_engine *e)
 
     /* pre-clip, base rate */
     float hp = (float)d->hp;
-    if (t == PX_DRV_TIMMY) hp = 700.0f * powf(30.0f / 700.0f, role_val(d, q, R_BASS, 0.5f));
-    if (t == PX_DRV_PRECISION) hp = 100.0f + role_val(d, q, R_TIGHT, 0.5f) * 600.0f;
     bq_hp1(&e->drv_hp, sr, hp);
     e->drv_pre = 0;
     if (d->shelf) {                                    /* TS-style: lows bypass the clipping gain */
@@ -899,12 +831,7 @@ static void rc_drive(px_engine *e)
     if (d->lp) { bq_lowpass(&e->drv_lp, sr, (float)d->lp, 0.7f); e->drv_pre |= 2; }
     if (d->mid) {
         float f = (float)d->mid, db = (float)d->mid_db;
-        if (t == PX_DRV_ZEN) f = 900.0f * powf(3.3f, role_val(d, q, R_VOICE, 0.5f));
         bq_peak(&e->drv_mid, sr, f, (float)d->mid_q10 * 0.1f, db);
-        e->drv_pre |= 4;
-    }
-    if (t == PX_DRV_PRECISION) {                       /* BRIGHT = pre-clip treble lift */
-        bq_highshelf(&e->drv_mid, sr, 2000.0f, role_val(d, q, R_BRIGHT, 0.5f) * 9.0f);
         e->drv_pre |= 4;
     }
 
@@ -912,10 +839,6 @@ static void rc_drive(px_engine *e)
     e->drv_clip = d->clip;
     e->drv_bias = (float)d->bias * 0.01f;
     e->drv_gate = 0.0f;
-    if (t == PX_DRV_FFACTORY) {
-        e->drv_bias = 0.05f + role_val(d, q, R_BIAS, 0.5f) * 0.6f;
-        e->drv_gate = role_val(d, q, R_GATE, 0.0f) * 0.25f;
-    }
     e->drv_off = px_tanh(e->drv_bias);
     e->drv_dcb = (d->clip == CL_ASYM || d->clip == CL_FUZZ || d->clip == CL_OCTA);
     e->drv_dck = 2.0f * PI_F * 12.0f / osr;
@@ -950,10 +873,12 @@ static void rc_drive(px_engine *e)
     }
 
     float bl = (float)d->blend * 0.01f;
-    if (t == PX_DRV_BASSDRV) bl = role_val(d, q, R_BLEND, 0.0f);
-    else bl *= (1.0f - 0.8f * dr);                     /* Klon: clean path fades as gain rises */
+    bl *= (1.0f - 0.8f * dr);                     /* Klon: clean path fades as gain rises */
     e->drv_blend = bl;
-    e->drv_level = DRV_TRIM[t] * 2.0f * level;
+#ifdef PX_FIT
+    if (px_fit_drv_on) { e->drv_level = px_fit_drv_trim * 2.0f * level; return; }
+#endif
+    e->drv_level = DRV_TRIM[t] * 2.0f * level * powf(10.0f, DRV_DB[t] * 0.05f);   /* (v36 trim: before the amp) */
 }
 
 static void rc_amp(px_engine *e)
@@ -962,6 +887,9 @@ static void rc_amp(px_engine *e)
     float sr = e->sr, osr = sr * PX_OVERSAMPLE;
     int t = p->type[PX_B_AMP] % PX_AMP_COUNT;
     const amp_v *v = &AV[t];
+#ifdef PX_FIT
+    if (px_fit_on) v = &px_fit_amp;                   /* the fitter's candidate (tests/fit/fitlib.c) */
+#endif
     const uint8_t *q = p->p[PX_B_AMP];
     float gain = f01(q[0]);
     float userg = 0.3f + gain * gain * 3.2f;
@@ -987,7 +915,15 @@ static void rc_amp(px_engine *e)
     e->amp_bk = (v->n >= 4 ? 0.45f : 0.35f) * e->amp_envk;   /* env is kept pre-scaled by the depth (0.45 / 0.35) */
     e->amp_pw = (float)v->pw10 * 0.1f;
     e->amp_pwn = 1.0f / px_tanh(e->amp_pw);
-    e->amp_out = AMP_TRIM[t] * 0.84f;
+    {   /* v36: the level at each GAIN setting, measured (px_trim.h): every amp at the same loudness at noon, +-3 dB
+         * over the whole knob, so a clean and a high-gain preset sit together */
+        float gi = gain * 10.0f; int i0 = (int)gi; if (i0 > 9) i0 = 9;
+        float db = AMP_LVL[t][i0] + (AMP_LVL[t][i0 + 1] - AMP_LVL[t][i0]) * (gi - (float)i0);
+        e->amp_out = powf(10.0f, db * 0.05f);
+    }
+#ifdef PX_FIT
+    if (px_fit_on) e->amp_out = px_fit_trim;
+#endif
 }
 
 /* cabinet fine structure, one sample: sparse taps on a 64-sample ring + breakup resonators, h[k] = A dec^k sin(kw)
@@ -1014,6 +950,9 @@ static void rc_cab(px_engine *e)
     float sr = e->sr;
     int t = p->type[PX_B_CAB] % PX_CAB_COUNT;
     const cab_v *c = &CV[t];
+#ifdef PX_FIT
+    if (px_fit_cab_on) c = &px_fit_cab;               /* the fitter's candidate (the type still sets open back) */
+#endif
     const uint8_t *q = p->p[PX_B_CAB];
     if (t == PX_CAB_DI) { e->cab_n = 0; e->cab_firon = 0; return; }
     px_bq f[8];
@@ -1026,8 +965,11 @@ static void rc_cab(px_engine *e)
     if (c->d2) bq_peak(&f[n++], sr, (float)c->d2, 1.5f, (float)c->d2db);
     if (c->p1) bq_peak(&f[n++], sr, (float)c->p1, 1.4f, (float)c->p1db + bright);
     if (c->p2) bq_peak(&f[n++], sr, (float)c->p2, 1.6f, (float)c->p2db + bright * 0.6f);
-    bq_lowpass(&f[n++], sr, (float)c->lp * mic, 0.9f);
-    bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, 0.8f);
+    {
+        float lq = c->lpq > 0.0f ? c->lpq : 0.9f;      /* the cone's top: the knee's sharpness */
+        bq_lowpass(&f[n++], sr, (float)c->lp * mic, lq);
+        bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, lq * (0.8f / 0.9f));
+    }
     /* fine structure: what a real speaker adds to the smooth curve above. Sparse taps (direct sound, the mic's
      * off-axis comb, the back wave of open cabinets) + the cone's breakup modes as 2-pole resonators: the same
      * impulse response as v25's 128-tap FIR (A dec^k sin kw per mode), without its cost on the pedal. */
@@ -1044,8 +986,7 @@ static void rc_cab(px_engine *e)
         if (ti == 0) e->cab_tg[0] += 0.20f * (1.0f - tf); else { e->cab_ti[nt] = (uint8_t)ti; e->cab_tg[nt++] = 0.20f * (1.0f - tf); }
         e->cab_ti[nt] = (uint8_t)(ti + 1); e->cab_tg[nt++] = 0.20f * tf;
         /* open back: the rear wave comes round, inverted, ~0.8 ms later */
-        if (t == PX_CAB_110 || t == PX_CAB_112JN || t == PX_CAB_210 || t == PX_CAB_212BLUE || t == PX_CAB_410BASSMAN ||
-            t == PX_CAB_115) {
+        if (t == PX_CAB_112JN || t == PX_CAB_212BLUE) {
             static const float BW[5] = {-0.01f, -0.025f, -0.03f, -0.025f, -0.01f};
             int d = (int)(0.0008f * sr);
             if (d > 61) d = 61;
@@ -1249,50 +1190,97 @@ static void rc_delay(px_engine *e)
     }
 }
 
+/* the reverb's memory, laid out for type t (only when the type changes: the lines are cleared) */
+static void rv_layout(px_engine *e, int t, float srs)
+{
+    const rv_def *v = &RVD[t];
+    int n[13];
+    float f = 1.0f;
+    e->rv_alg = t == PX_REV_PLATE;
+    for (int pass = 0; pass < 2; pass++) {
+        float k = e->rv_alg ? srs * f * (44100.0f / 29761.0f) : srs * f * v->size;
+        float kd = srs * f * (44100.0f / 29761.0f) * (e->rv_alg ? 1.0f : (v->size < 1.0f ? 0.4f + 0.6f * v->size : 1.0f));
+        int pre = (int)(v->pre_ms * 0.001f * 44100.0f * srs) + 1, span = (int)(v->er_ms * 0.001f * 44100.0f * srs);
+        e->rv_pd = pre;
+        e->rv_ner = v->er > 0.0f ? 4 : 0;
+        for (int j = 0; j < 4; j++) { e->rv_ert[j] = pre + (int)(ER_T[j] * (float)span); e->rv_erg[j] = ER_G[j] * v->er; }
+        n[0] = pre + span + 2;
+        for (int i = 0; i < 4; i++) { n[1 + i] = (int)((float)RV_DIF[i] * kd) + 1; e->rv_dg[i] = RV_DIFG[i]; }
+        e->rv_mdep = (e->rv_alg ? 16.0f * (44100.0f / 29761.0f) : v->mod) * srs;
+        int ext = (int)(2.0f * e->rv_mdep) + 3;          /* room for the modulation and the interpolation */
+        for (int i = 0; i < 8; i++) {
+            float d = (float)(e->rv_alg ? PL_LEN[i] : RV_FDN[i]) * k;
+            int mod = e->rv_alg ? (i == 0 || i == 4) : i < 4;
+            e->rv_d[5 + i] = d;
+            n[5 + i] = (int)d + (mod ? ext : 0);
+        }
+        int tot = 0;
+        for (int u = 0; u < 13; u++) tot += n[u] + 1;
+        if (tot <= PX_RV_M) break;
+        f = (float)PX_RV_M / (float)tot * 0.98f;           /* (above 44.1 kHz only) shorter lines */
+    }
+    int b = 0;
+    for (int u = 0; u < 13; u++) { e->rv_b[u] = b; e->rv_n[u] = n[u]; b += n[u] + 1; }   /* a unit lives n + 1 slots */
+    for (int j = 0; j < 14; j++) {
+        int tp = (int)((float)PL_TAP[j] * srs * (44100.0f / 29761.0f));
+        e->rv_tap[j] = tp < n[PL_TU[j]] ? tp : n[PL_TU[j]] - 1;
+    }
+    memset(e->rv_m, 0, sizeof e->rv_m);
+    for (int i = 0; i < 8; i++) e->rv_s[i] = 0.0f;
+    e->rv_fl = e->rv_fr = 0.0f;
+    e->rv_inc1 = (e->rv_alg ? 1.0f : 0.53f) / (srs * 44100.0f);
+    e->rv_inc2 = 0.79f / (srs * 44100.0f);
+    e->rv_lay = t + 1;
+}
+#ifndef SHIM_K
+#define SHIM_K 0.8f                                    /* shimmer: octave fed back (v35: about as much as v34) */
+#endif
 static void rc_reverb(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
     float sr = e->sr;
     const uint8_t *q = p->p[PX_B_REVERB];
     int t = p->type[PX_B_REVERB] % PX_REV_COUNT;
+    const rv_def *v = &RVD[t];
     float d = f01(q[0]), tone = f01(q[1]);
-    float scale = 1.0f, rt = 2.0f, damp = 0.3f;
-    const int *ap = RV_AP;
-    e->rv_ag = 0.5f; e->rv_shim = 0.0f; e->rv_gate = 0; e->sp_on = 0;
-    switch (t) {
-    case PX_REV_ROOM:      scale = 0.5f;  rt = 0.3f + d * 0.9f;  damp = 0.2f + (1.0f - tone) * 0.5f; break;
-    case PX_REV_HALL:      scale = 1.3f;  rt = 1.2f + d * 2.8f;  damp = 0.2f + (1.0f - tone) * 0.5f; break;
-    case PX_REV_CATHEDRAL: scale = 1.7f;  rt = 3.0f + d * 7.0f;  damp = 0.3f + (1.0f - tone) * 0.45f; break;
-    case PX_REV_PLATE:     scale = 0.85f; rt = 0.6f + d * 4.4f;  damp = 0.05f + (1.0f - tone) * 0.3f; e->rv_ag = 0.7f; break;
-    case PX_REV_SPRING:    scale = 0.45f; rt = 1.5f + d * 2.5f;  damp = 0.35f + (1.0f - tone) * 0.35f; e->rv_ag = 0.65f;
-        ap = RV_AP_SPRING; e->sp_on = 1; e->sp_a = 0.5f + f01(q[3]) * 0.25f; break;
-    case PX_REV_SHIMMER:   scale = 1.3f;  rt = 2.0f + d * 6.0f;  damp = 0.15f + (1.0f - tone) * 0.4f;
-        e->rv_shim = f01(q[3]) * 0.6f; break;
-    case PX_REV_GATED:     scale = 0.9f;  rt = 2.5f;             damp = 0.15f + (1.0f - tone) * 0.4f;
-        e->rv_gate = 1; e->rv_hold = (0.15f + d * 0.45f) * sr; e->rv_gate_rel = onepole_k(sr, 0.02f); break;
-    default:               scale = 1.7f;  rt = 6.0f + d * 14.0f; damp = 0.45f + (1.0f - tone) * 0.4f; e->rv_ag = 0.6f; break;
+    e->rv_shim = 0.0f; e->rv_gate = 0; e->sp_on = 0;
+    if (t == PX_REV_SPRING) { e->sp_on = 1; e->sp_a = 0.5f + f01(q[3]) * 0.25f; }
+    if (t == PX_REV_SHIMMER) e->rv_shim = f01(q[3]) * SHIM_K;
+    if (t == PX_REV_GATED) { e->rv_gate = 1; e->rv_hold = (0.15f + d * 0.45f) * sr; e->rv_gate_rel = onepole_k(sr, 0.02f); }
+    e->rv_sr = sr * 0.5f;                              /* the tank runs at half rate (tails need no more than 11 kHz) */
+    if (e->rv_lay != t + 1) rv_layout(e, t, e->rv_sr / 44100.0f);
+    float rt = v->rt0 + d * v->rt1;
+    sr = e->rv_sr;
+    if (e->rv_alg) {                                   /* plate: 4 decay gains per trip round the tank */
+        float loop = 0.0f;
+        for (int i = 0; i < 8; i++) loop += e->rv_d[5 + i];
+        loop += e->rv_mdep * 2.0f;
+        e->rv_dec = powf(10.0f, -3.0f * loop / (4.0f * rt * sr));
+        float dd = e->rv_dec + 0.15f;
+        e->rv_dd2 = dd < 0.25f ? 0.25f : (dd > 0.5f ? 0.5f : dd);
+        e->rv_damp = 0.05f + (1.0f - tone) * 0.3f;
+        e->rv_bw = 0.9995f;
+    } else {                                           /* FDN: decay time per line at low frequencies and at 4 kHz */
+        float rth = rt * (v->hf0 + v->hf1 * tone), c = cosf(2.0f * PI_F * 4000.0f / sr);
+        for (int i = 0; i < 8; i++) {
+            float L = e->rv_d[5 + i] + (i < 4 ? e->rv_mdep : 0.0f);
+            float g = powf(10.0f, -3.0f * L / (rt * sr)), r = powf(10.0f, -3.0f * L / (rth * sr)) / g;
+            /* one pole g (1 - p) / (1 - p z^-1): |H(4 kHz)| / H(0) = r  ->  (1-r^2) p^2 - 2 (1 - r^2 c) p + (1-r^2) = 0 */
+            float r2 = r * r, A = 1.0f - r2, B = 1.0f - r2 * c, pl = 0.0f;
+            if (A > 1e-6f) pl = (B - sqrtf(B * B - A * A)) / A;
+            e->rv_p[i] = pl;
+            e->rv_g[i] = g * (1.0f - pl);
+        }
     }
-    float srs = sr / 44100.0f;
-    for (int i = 0; i < 8; i++) {
-        int l = (int)((float)RV_COMB[i] * scale * srs);
-        if (l > PX_RV_C - 1) l = PX_RV_C - 1;
-        if (l < 64) l = 64;
-        e->rv_cl[i] = l;
-        if (e->rv_cw[i] >= l) e->rv_cw[i] = 0;
-        float g = expf(-6.9077553f * (float)l / (rt * sr));
-        e->rv_g[i] = g > 0.985f ? 0.985f : g;
-    }
-    for (int i = 0; i < 4; i++) {
-        int l = (int)((float)ap[i] * srs);
-        if (l > PX_RV_A - 1) l = PX_RV_A - 1;
-        e->rv_al[i] = l;
-        if (e->rv_aw[i] >= l) e->rv_aw[i] = 0;
-    }
-    e->rv_damp = damp; e->rv_mix = f01(q[2]);
+    e->rv_in = 0.25f;
+    e->rv_out = v->out;
+    e->rv_mix = f01(q[2]);
+    sr = e->sr;                                        /* the filters after the tank run at the full rate */
     if (t == PX_REV_SPRING) bq_lowpass(&e->rv_tone, sr, 2500.0f + tone * 2500.0f, 0.8f);
     else bq_lowpass(&e->rv_tone, sr, 3000.0f + tone * 9000.0f, 0.7f);
     bq_highpass(&e->rv_hp, sr, t == PX_REV_SPRING ? 120.0f : 50.0f, 0.7f);
     e->sh_k = onepole_k(sr, 1.0f / (2.0f * PI_F * 5000.0f));
+    e->sh_hk = onepole_k(sr, 1.0f / (2.0f * PI_F * 300.0f));
 }
 
 
@@ -1455,6 +1443,15 @@ static void px_recalc(px_engine *e)
     rc_delay(e);
     rc_reverb(e);
     rc_syn(e);
+    /* v36: each type's level at noon, measured (px_trim.h): switching a block on keeps the loudness */
+    const px_preset_t *p = &e->cur;
+    static const float *const DB[PX_NBLK] = {0, CMP_DB, PIT_DB, SFX_DB, 0, 0, CAB_DB, 0, MOD_DB, DLY_DB, REV_DB, SYN_DB};
+    static const uint8_t NT[PX_NBLK] = {1, PX_CMP_COUNT, PX_PIT_COUNT, PX_SFX_COUNT, PX_DRV_COUNT, 1, PX_CAB_COUNT, 1,
+                                        PX_MOD_COUNT, PX_DLY_COUNT, PX_REV_COUNT, PX_SYN_COUNT};
+    for (int b = 0; b < PX_NBLK; b++)
+        e->btr[b] = DB[b] ? powf(10.0f, DB[b][p->type[b] % NT[b]] * 0.05f) : 1.0f;
+    /* preset LEVEL (v36): -15..+15 dB, 0.3 dB a step, kept in the gate block's spare 5th setting */
+    e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
 }
 
 void px_engine_init(px_engine *e, float sr)
@@ -1541,23 +1538,142 @@ static inline float rd_frac(const float *buf, int mask, float pos)   /* pos in [
     int i = (int)pos; float fr = pos - (float)i;
     return buf[i] + (buf[(i + 1) & mask] - buf[i]) * fr;
 }
-static inline float dly_read(const float *buf, float pos)
+static inline float hermite(float y0, float y1, float y2, float y3, float f)   /* 4-point cubic between y1 and y2 */
 {
-    int i = (int)pos; float fr = pos - (float)i;
-    int j = i + 1; if (j >= PX_DLY_N) j = 0;
-    return buf[i] + (buf[j] - buf[i]) * fr;
+    float c1 = 0.5f * (y2 - y0), c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2), c2 = y0 - y1 + c1 - c3;
+    return ((c3 * f + c2) * f + c1) * f + y1;
+}
+static inline float rd_herm(const float *buf, int mask, float pos)
+{
+    int i = (int)pos; float f = pos - (float)i;
+    return hermite(buf[(i - 1) & mask], buf[i & mask], buf[(i + 1) & mask], buf[(i + 2) & mask], f);
+}
+/* 16-bit memories: values are rounded (exact decay times); once a tail is down near the last bits, they are cut
+ * towards zero instead, so the loop dies out instead of holding a tiny pattern for ever (limit cycle) */
+#define DL_Q 16384.0f                                  /* delay memory: 16 bits, +-2.0 */
+static inline int16_t dl_q(float v, float rq)
+{
+    v = v * DL_Q + (v >= 0.0f ? rq : -rq);
+    if (v > 32767.0f) v = 32767.0f; else if (v < -32767.0f) v = -32767.0f;
+    return (int16_t)v;
+}
+static inline float dly_read(const int16_t *buf, int i, float f)   /* between i and i + 1 (i in 0..N-1) */
+{
+    int a = i - 1, b = i + 1, c = i + 2;
+    if (a < 0) a += PX_DLY_N;
+    if (b >= PX_DLY_N) b -= PX_DLY_N;
+    if (c >= PX_DLY_N) c -= PX_DLY_N;
+    return hermite((float)buf[a], (float)buf[i], (float)buf[b], (float)buf[c], f) * (1.0f / DL_Q);
 }
 static inline float dly_tap(const px_engine *e, float d)
 {
-    float pos = (float)e->dly_w - d;
-    if (pos < 0.0f) pos += (float)PX_DLY_N;
-    return dly_read(e->dly_buf, pos);
+    int di = (int)d;                                   /* whole samples apart from the fraction: no float wrap */
+    float f = d - (float)di;
+    int i = e->dly_w - di - 1;                         /* d = di + f behind the write: between i and i + 1, 1 - f */
+    if (i < 0) i += PX_DLY_N;
+    return dly_read(e->dly_buf, i, 1.0f - f);
 }
 static inline float mod_tap(const px_engine *e, float d)
 {
     float pos = (float)e->mod_w - d;
     if (pos < 0.0f) pos += 2048.0f;
-    return rd_frac(e->mod_buf, 2047, pos);
+    return rd_herm(e->mod_buf, 2047, pos);
+}
+/* ---- reverb (v35) ----
+ * One 16-bit ring for every line: the write pointer turns once per tick, unit u writes at (ptr + base u) and what it
+ * wrote k ticks ago is at (ptr + base u + k). The tank works in the ring's units (x RV_Q): no scaling per access. */
+#define RV_Q 16384.0f                                  /* reverb memory: 16 bits, +-2.0 */
+#define RV_MASK (PX_RV_M - 1)
+#define RV_RD(u, k) ((float)m[(p + b[u] + (k)) & RV_MASK])
+static inline int16_t rv_q(float v, float rq)          /* rq: 0.5 = rounded, 0 = cut towards zero */
+{
+    union { float f; uint32_t u; } a, r;
+    a.f = v; r.f = rq; r.u |= a.u & 0x80000000u;        /* rq with v's sign */
+    v += r.f;
+    v = v > 32767.0f ? 32767.0f : v;
+    v = v < -32767.0f ? -32767.0f : v;
+    return (int16_t)v;
+}
+#define RV_WR(u, v) (m[(p + b[u]) & RV_MASK] = rv_q((v), rq))
+static inline float rv_lin(const int16_t *m, int at, float k)      /* fractional read, k ticks back from `at` */
+{
+    int ki = (int)k; float f = k - (float)ki;
+    float a = (float)m[(at + ki) & RV_MASK];
+    return a + ((float)m[(at + ki + 1) & RV_MASK] - a) * f;
+}
+/* pre-delay, early reflections, Dattorro's 4 input diffusers */
+static inline float rv_front(px_engine *e, int16_t *m, int p, const int *b, float rq, float in, float *er)
+{
+    RV_WR(0, in);
+    float r = 0.0f;
+    for (int j = 0; j < e->rv_ner; j++) r += e->rv_erg[j] * RV_RD(0, e->rv_ert[j]);
+    *er = r;
+    float d = RV_RD(0, e->rv_pd);
+    if (e->rv_alg) { e->rv_s[0] += e->rv_bw * (d - e->rv_s[0]); d = e->rv_s[0]; }
+    float t, w;                                        /* gains 0.75, 0.75, 0.625, 0.625 */
+    t = RV_RD(1, e->rv_n[1]); w = d - 0.75f * t;  RV_WR(1, w); d = t + 0.75f * w;
+    t = RV_RD(2, e->rv_n[2]); w = d - 0.75f * t;  RV_WR(2, w); d = t + 0.75f * w;
+    t = RV_RD(3, e->rv_n[3]); w = d - 0.625f * t; RV_WR(3, w); d = t + 0.625f * w;
+    t = RV_RD(4, e->rv_n[4]); w = d - 0.625f * t; RV_WR(4, w); d = t + 0.625f * w;
+    return d;
+}
+static float rv_fdn(px_engine *e, float in)
+{
+    int16_t *m = e->rv_m; const int p = e->rv_ptr, *b = e->rv_b; const float rq = e->rv_rq;
+    float er, d = rv_front(e, m, p, b, rq, in * RV_Q, &er), y[8];
+    e->rv_ph1 = wrap1(e->rv_ph1 + e->rv_inc1);
+    e->rv_ph2 = wrap1(e->rv_ph2 + e->rv_inc2);
+    float md = e->rv_mdep;
+    y[0] = rv_lin(m, p + b[5], e->rv_d[5] + md * (1.0f + lfo_sin(e->rv_ph1)));
+    y[1] = rv_lin(m, p + b[6], e->rv_d[6] + md * (1.0f + lfo_sin(wrap1(e->rv_ph1 + 0.25f))));
+    y[2] = rv_lin(m, p + b[7], e->rv_d[7] + md * (1.0f + lfo_sin(e->rv_ph2)));
+    y[3] = rv_lin(m, p + b[8], e->rv_d[8] + md * (1.0f + lfo_sin(wrap1(e->rv_ph2 + 0.25f))));
+    y[4] = RV_RD(9, e->rv_n[9]); y[5] = RV_RD(10, e->rv_n[10]); y[6] = RV_RD(11, e->rv_n[11]); y[7] = RV_RD(12, e->rv_n[12]);
+    float o = (y[0] - y[1] + y[2] - y[3] + y[4] - y[5] + y[6] - y[7]) * 0.35355339f;
+    float *s = e->rv_s;
+    for (int i = 0; i < 8; i++) s[i] = e->rv_g[i] * y[i] + e->rv_p[i] * s[i];   /* decay + damping per line */
+    float a0 = s[0] + s[1], a1 = s[0] - s[1], a2 = s[2] + s[3], a3 = s[2] - s[3];    /* Hadamard 8 */
+    float a4 = s[4] + s[5], a5 = s[4] - s[5], a6 = s[6] + s[7], a7 = s[6] - s[7];
+    float b0 = a0 + a2, b1 = a1 + a3, b2 = a0 - a2, b3 = a1 - a3;
+    float b4 = a4 + a6, b5 = a5 + a7, b6 = a4 - a6, b7 = a5 - a7;
+    const float h = 0.35355339f;
+    RV_WR(5, (b0 + b4) * h + d);  RV_WR(6, (b1 + b5) * h - d);
+    RV_WR(7, (b2 + b6) * h + d);  RV_WR(8, (b3 + b7) * h - d);
+    RV_WR(9, (b0 - b4) * h + d);  RV_WR(10, (b1 - b5) * h - d);
+    RV_WR(11, (b2 - b6) * h + d); RV_WR(12, (b3 - b7) * h - d);
+    return (o + er) * (1.0f / RV_Q);
+}
+static float rv_plate(px_engine *e, float in)
+{
+    int16_t *m = e->rv_m; const int p = e->rv_ptr, *b = e->rv_b; const float rq = e->rv_rq;
+    float er, d = rv_front(e, m, p, b, rq, in * RV_Q, &er);
+    e->rv_ph1 = wrap1(e->rv_ph1 + e->rv_inc1);
+    float md = e->rv_mdep, dec = e->rv_dec, dm = e->rv_damp, g2 = e->rv_dd2, t, w;
+    /* left half of the tank: modulated all-pass (-0.7), delay, damping, decay, all-pass, delay, decay */
+    t = rv_lin(m, p + b[5], e->rv_d[5] + md * (1.0f + lfo_sin(e->rv_ph1)));
+    w = d + e->rv_fr + 0.7f * t; RV_WR(5, w);
+    float l = t - 0.7f * w;
+    t = RV_RD(6, e->rv_n[6]); RV_WR(6, l);
+    e->rv_s[1] = t + (e->rv_s[1] - t) * dm;
+    t = RV_RD(7, e->rv_n[7]); w = e->rv_s[1] * dec - g2 * t; RV_WR(7, w);
+    l = t + g2 * w;
+    t = RV_RD(8, e->rv_n[8]); RV_WR(8, l);
+    float lend = t * dec;
+    /* right half */
+    t = rv_lin(m, p + b[9], e->rv_d[9] + md * (1.0f + lfo_sin(wrap1(e->rv_ph1 + 0.25f))));
+    w = d + e->rv_fl + 0.7f * t; RV_WR(9, w);
+    float r = t - 0.7f * w;
+    t = RV_RD(10, e->rv_n[10]); RV_WR(10, r);
+    e->rv_s[2] = t + (e->rv_s[2] - t) * dm;
+    t = RV_RD(11, e->rv_n[11]); w = e->rv_s[2] * dec - g2 * t; RV_WR(11, w);
+    r = t + g2 * w;
+    t = RV_RD(12, e->rv_n[12]); RV_WR(12, r);
+    e->rv_fl = lend; e->rv_fr = t * dec;
+    /* output: Dattorro's left and right taps, summed */
+    const int *tp = e->rv_tap;
+    float o = RV_RD(10, tp[0]) + RV_RD(10, tp[1]) - RV_RD(11, tp[2]) + RV_RD(12, tp[3]) - RV_RD(6, tp[4]) - RV_RD(7, tp[5]) - RV_RD(8, tp[6])
+            + RV_RD(6, tp[7]) + RV_RD(6, tp[8]) - RV_RD(7, tp[9]) + RV_RD(8, tp[10]) - RV_RD(10, tp[11]) - RV_RD(11, tp[12]) - RV_RD(12, tp[13]);
+    return o * (0.3f / RV_Q);
 }
 static inline float ps_voice(const float *buf, int w, float *ph, float inc, float W)
 {                                                      /* plain 2-tap shifter (shimmer: smeared anyway) */
@@ -1869,14 +1985,17 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
     const int syn_t = p->type[PX_B_SYN] % PX_SYN_COUNT;
     /* the blocks to run, in this preset's order (GATE always: it carries the anti-denormal offset) */
     uint8_t st[PX_NBLK];
+    float tr[PX_NBLK];                                 /* each block's level trim */
     int ns = 0, ip_drv = -100, ip_amp = -200;
     for (int i = 0; i < PX_NBLK; i++) {
         int b = e->ord[i];
         if (b != PX_B_GATE && !p->on[b]) continue;
         if (b == PX_B_DRIVE) ip_drv = ns;
         if (b == PX_B_AMP) ip_amp = ns;
+        tr[ns] = e->btr[b];
         st[ns++] = (uint8_t)b;
     }
+    const float pg = e->patch_g;
     /* DRIVE right before AMP: one oversampled section for both (set A). Otherwise each its own: the amp keeps
      * set A, a drive elsewhere takes set B (set A when the amp does not oversample). */
     const int pair = drv_on && amp_on && ip_amp == ip_drv + 1;
@@ -1890,7 +2009,7 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
         float x = in[k] + e->dn;
         { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
 
-        for (int s = 0; s < ns; s++) switch (st[s]) {
+        for (int s = 0; s < ns; s++) { switch (st[s]) {
         case PX_B_GATE:
             /* ---- gate ---- */
             if (p->on[PX_B_GATE]) {
@@ -1911,9 +2030,12 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
                 e->cmp_env = a + (e->cmp_env - a) * c;
                 if (cmp_t == PX_CMP_SWELL) {
                     e->cmp_slow += (e->cmp_env - e->cmp_slow) * e->cmp_slowk;
-                    if (e->cmp_env > 1.8f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack */
+                    if (e->cmp_env > 1.5f * e->cmp_slow + e->cmp_thr) e->cmp_sw = 0.0f;   /* new pick attack (v36: 1.5, was 1.8) */
                     else e->cmp_sw += (1.0f - e->cmp_sw) * e->cmp_rise;
-                    x *= e->cmp_sw * e->cmp_sw * e->cmp_make;
+                    /* v36: the gain acts 2.9 ms late (look-ahead): the attack is caught before it is heard */
+                    e->cmp_la[e->cmp_lw] = x;
+                    e->cmp_lw = (e->cmp_lw + 1) & 127;
+                    x = e->cmp_la[e->cmp_lw] * e->cmp_sw * e->cmp_sw * e->cmp_make;
                 } else {
                     float y = x * e->cmp_make / (1.0f + e->cmp_k * e->cmp_env * 4.0f);
                     x = x + (y - x) * e->cmp_mix;
@@ -2187,7 +2309,7 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
                     float c = (float)e->rev_cnt, wg = c * e->rev_xf, w2 = (float)(G - e->rev_cnt) * e->rev_xf;
                     if (wg > w2) wg = w2;
                     if (wg > 1.0f) wg = 1.0f;
-                    d = e->dly_buf[rp] * wg;
+                    d = (float)e->dly_buf[rp] * (1.0f / DL_Q) * wg;
                     e->rev_cnt++;
                     fsrc = d;
                 } else if (dly_t == PX_DLY_SPACE) {
@@ -2208,7 +2330,10 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
                 }
                 float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
                 if (e->dly_sat > 0.0f) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
-                e->dly_buf[e->dly_w] = x + fbk;
+                float wv = x + fbk, av = px_abs(wv);
+                e->dly_env = av > e->dly_env ? av : e->dly_env * 0.99995f;
+                e->dly_rq = e->dly_env < 2e-4f ? 0.0f : 0.5f;
+                e->dly_buf[e->dly_w] = dl_q(wv, e->dly_rq);
                 if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
                 x = x + d * e->dly_mix;
             }
@@ -2216,33 +2341,34 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
         case PX_B_REVERB:
             /* ---- reverb ---- */
             if (p->on[PX_B_REVERB]) {
-                float inr = x * 0.25f + e->sh_out, acc = 0.0f;
+                float inr = x * e->rv_in + e->sh_out + e->dn;
                 if (e->sp_on) {                            /* spring dispersion: chirpy all-pass chain */
                     float a = e->sp_a;
                     for (int i = 0; i < 6; i++) { float y = -a * inr + e->sp_z[i]; e->sp_z[i] = inr + a * y; inr = y; }
                 }
-                for (int i = 0; i < 8; i++) {
-                    float y = e->rv_c[i][e->rv_cw[i]];
-                    e->rv_cs[i] = y + (e->rv_cs[i] - y) * e->rv_damp;
-                    e->rv_c[i][e->rv_cw[i]] = inr + e->rv_cs[i] * e->rv_g[i];
-                    if (++e->rv_cw[i] >= e->rv_cl[i]) e->rv_cw[i] = 0;
-                    acc += y;
+                float acc;
+                if (!e->rv_tick) { e->rv_xa = inr; e->rv_tick = 1; acc = e->rv_y1; }
+                else {                                     /* one tick of the tank every 2 samples */
+                    float in2 = 0.5f * (e->rv_xa + inr);
+                    float y = e->rv_alg ? rv_plate(e, in2) : rv_fdn(e, in2), aa = px_abs(y) + px_abs(in2);
+                    e->rv_ptr = (e->rv_ptr - 1) & RV_MASK;
+                    e->rv_env = aa > e->rv_env ? aa : e->rv_env * 0.9999f;
+                    /* the last bits of a tail: fade it out over ~0.5 s, then let the ring empty itself (cut towards zero) */
+                    if (e->rv_env < 5e-4f) e->rv_fade *= 0.9997f; else e->rv_fade = 1.0f;
+                    e->rv_rq = e->rv_fade < 0.03f ? 0.0f : 0.5f;
+                    y *= e->rv_fade;
+                    e->rv_y0 = e->rv_y1; e->rv_y1 = y; e->rv_tick = 0;
+                    acc = 0.5f * (e->rv_y0 + y);
                 }
-                acc *= 0.2f;
-                for (int i = 0; i < 4; i++) {
-                    float b = e->rv_a[i][e->rv_aw[i]];
-                    float o = b - e->rv_ag * acc;
-                    e->rv_a[i][e->rv_aw[i]] = acc + e->rv_ag * o;
-                    if (++e->rv_aw[i] >= e->rv_al[i]) e->rv_aw[i] = 0;
-                    acc = o;
-                }
+                acc *= e->rv_out;
                 acc = bq_run(&e->rv_hp, bq_run(&e->rv_tone, acc));
                 if (e->rv_shim > 0.0f) {                   /* octave-up shifter in the feedback loop */
                     e->sh_buf[e->sh_w] = acc;
                     float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
                     if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
                     e->sh_lp += (s - e->sh_lp) * e->sh_k;
-                    e->sh_out = e->sh_lp * e->rv_shim;
+                    e->sh_hp += (e->sh_lp - e->sh_hp) * e->sh_hk;   /* v35: only the upper octave goes round again */
+                    e->sh_out = (e->sh_lp - e->sh_hp) * e->rv_shim;
                 } else e->sh_out = 0.0f;
                 if (e->rv_gate) {
                     float a = px_abs(x);
@@ -2258,10 +2384,14 @@ void px_engine_process(px_engine *e, const float *in, float *out, int n)
             }
         break;
         default: break;
-        }
+        } x *= tr[s]; }
 
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
-        if (x > 1.2f) x = 1.2f; else if (x < -1.2f) x = -1.2f;
+        x *= pg;
+        {   /* v36: soft limiter instead of a hard clip: transparent up to 0.8, then rounds off smoothly to 1.2 */
+            float a = px_abs(x);
+            if (a > 0.8f) { float y = 0.8f + 0.4f * px_tanh((a - 0.8f) * 2.5f); x = x > 0.0f ? y : -y; }
+        }
         out[k] = x;
     }
 }

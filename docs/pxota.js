@@ -200,6 +200,21 @@ export class Updater {
     const dev = await this.find((id) => MODELS.includes(id.model));
     if (!dev) throw fail("notfound", "pedal not found", this.seen());
     if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the pedal is a ${dev.id.text}, the package is ${product}`, dev.id.text); }
+    return this.installOn(dev, image, product, step);
+  }
+
+  // rescue (issue #1): a pedal that restarts every few seconds. The first pedal that answers gets the package of
+  // its model at once (pick(model) -> { image, product }, already fetched): the upgrade command stops its DSP.
+  async rescue(pick, onStep) {
+    const step = onStep || (() => {});
+    const dev = await this.find((id) => MODELS.includes(id.model));
+    if (!dev) return null;
+    const pkg = pick(dev.id.model);
+    if (!pkg) { dev.link.close(); throw fail("pkg", dev.id.model, dev.id.model); }
+    return this.installOn(dev, pkg.image, pkg.product, step);
+  }
+
+  async installOn(dev, image, product, step) {
     step("start", dev.id.text);
     dev.link.send(UPGRADE);
     await sleep(this.t.afterUpgrade);

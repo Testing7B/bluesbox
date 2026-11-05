@@ -97,8 +97,23 @@ await page.waitForTimeout(1500);
 ok(/OpenPocket v24/.test(await page.textContent("#d-fw")), "the page now sees OpenPocket v24");
 await page.screenshot({ path: join(OUT, "page_3_done.png"), fullPage: true });
 ok(simLog.some((l) => /step2 rc=0/.test(l)), "the simulated pedal wrote the new app");
+
+// rescue mode: armed with no pedal; the install starts by itself when the pedal appears (issue #1)
+sim.stdin.end(); sim = null; simLog.length = 0; buf = "";
+await page.reload();
+await page.waitForTimeout(300);
+await page.check("#rescueOn");
+await page.waitForFunction(() => /rescue mode armed/.test(document.getElementById("log").textContent), null, { timeout: 15000 });
+await page.click("#connect");
+await page.waitForTimeout(300);
+ok(!/PocketX_9/.test(await page.textContent("#msg")), "rescue: armed, nothing happens without a pedal");
+startSim();
+await page.waitForFunction(() => /PocketX_924/.test(document.getElementById("msg").textContent), null, { timeout: 240000 });
+ok(/PocketX_924/.test(await page.textContent("#msg")), "rescue: the pedal appears, the install runs by itself");
+ok(!(await page.isChecked("#rescueOn")), "rescue: the mode turns itself off once done");
+await page.screenshot({ path: join(OUT, "page_4_rescue.png"), fullPage: true });
 await browser.close();
-sim.stdin.end();
+if (sim) sim.stdin.end();
 server.close();
 console.log(failed ? `${failed} FAILED` : "page test passed", "| screenshots:", OUT);
 process.exit(failed ? 1 : 0);

@@ -1,11 +1,13 @@
-# OpenPocket: publish on GitHub, from this folder (PUBLISH-GITHUB.bat). Modelled on CLIPPER's publish script.
-#   1. the source: openpocket.bundle (git history) -> the repository OWNER/REPO (created if it does not exist),
-#      branch main, the tag vNN
-#   2. the release vNN: the .fwsc packages build.bat made (docs\firmware)
+# OpenPocket: publish on GitHub, from this folder (PUBLISH-GITHUB.bat, PUBLISH-SOURCE.bat).
+#   1. the source: GitHub's branch main gets exactly the files of THIS folder (v36: whatever was on GitHub before):
+#      the commits of openpocket.bundle are merged in when it is here (history), then the folder's files are
+#      committed on top. Never forced: GitHub's own history (edits made on the site) is kept underneath.
+#      The tag vNN is set on that commit.
+#   2. the release vNN: the .fwsc packages build.bat made (docs\firmware), notes from docs\WHATS-NEW-*.md
 #   3. the web installer on GitHub Pages (branch gh-pages: docs\ with the packages)
-# Uses your own Git and GitHub CLI (gh) and your own GitHub login. Nothing is ever forced on main: a repository that
-# already has another history stops the script. gh-pages is generated: it is replaced each time.
-param([string]$Owner = "", [string]$Repo = "openpocket")
+#   -SourceOnly: step 1 only (no build needed)
+# Uses your own Git and GitHub CLI (gh) and your own GitHub login. gh-pages is generated: it is replaced each time.
+param([string]$Owner = "", [string]$Repo = "openpocket", [switch]$SourceOnly)
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path $PSScriptRoot)
 function Fail([string]$m) { Write-Host ""; Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
@@ -55,51 +57,98 @@ $work = Join-Path "build" "publish"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Force $work | Out-Null
 
-# 1. the source
+# 1. the source: GitHub's main + (the bundle's history) + exactly this folder's files
+$src = (Get-Location).Path
 $repoDir = Join-Path $work "repo"
-if (-not (Test-Path "openpocket.bundle")) { Fail "openpocket.bundle not found in this folder" }
-Step "The source (from openpocket.bundle)"
-git clone --quiet --branch main openpocket.bundle $repoDir
-if ($LASTEXITCODE -ne 0) { Fail "git clone of the bundle" }
-Push-Location $repoDir
+Step "The source of $Tag -> $full (branch main)"
 gh repo view $full *> $null
-if ($LASTEXITCODE -ne 0) {
+$exists = $LASTEXITCODE -eq 0
+if (-not $exists) {
   Step "Creating the public repository $full"
   gh repo create $full --public --description "OpenPocket: open-source guitar firmware for the Donner Pocket X / M-VAVE BlackBox" --homepage $pages
-  if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "creating the repository $full" }
+  if ($LASTEXITCODE -ne 0) { Fail "creating the repository $full" }
 }
-git remote remove origin *> $null
-git remote add origin "https://github.com/$full.git"
+$hasMain = $exists -and ("$(git ls-remote --heads "https://github.com/$full.git" main)".Trim() -ne "")
+if ($hasMain) {
+  git clone --quiet --branch main "https://github.com/$full.git" $repoDir
+  if ($LASTEXITCODE -ne 0) { Fail "git clone of https://github.com/$full" }
+  Push-Location $repoDir
+} else {
+  New-Item -ItemType Directory -Force $repoDir | Out-Null
+  Push-Location $repoDir
+  git init --quiet
+  git checkout --quiet -b main
+  git remote add origin "https://github.com/$full.git"
+}
+git config user.name "$Owner"
+git config user.email "$email"
+git config core.autocrlf false
+# the history: the bundle's commits (each version's own commit messages), when the bundle is here
+$bundle = Join-Path $src "openpocket.bundle"
+$bundleOk = $false
+if (Test-Path $bundle) {
+  git fetch --quiet $bundle "main:refs/bundle/main"
+  if ($LASTEXITCODE -eq 0) {
+    $bundleOk = $true
+    if ($hasMain) { git merge --quiet --no-edit -X ours --allow-unrelated-histories -m "OpenPocket ${Tag}: merge the version history" refs/bundle/main }
+    else { git reset --quiet --hard refs/bundle/main }
+    if ($LASTEXITCODE -ne 0) { git merge --abort *> $null; Write-Host "  (the history could not be merged: only the files are published)" -ForegroundColor Yellow }
+  }
+}
+# the files: the version's file list (the bundle's), each one taken from this folder; without a bundle, the whole
+# folder. (.gitignore keeps builds, packages and backups out; files left over from older versions are not published.)
+$list = @()
+if ($bundleOk) { $list = @(git ls-tree -r --name-only refs/bundle/main) }
+git rm -r -q --cached . *> $null
+Get-ChildItem -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
+if ($list.Count -gt 0) {
+  git checkout --quiet refs/bundle/main -- .
+  foreach ($f in $list) {
+    $from = Join-Path $src ($f -replace '/', '\')
+    if (Test-Path -LiteralPath $from -PathType Leaf) { Copy-Item -LiteralPath $from -Destination ($f -replace '/', '\') -Force }
+  }
+} else {
+  robocopy $src . /E /XD (Join-Path $src ".git") (Join-Path $src "build") (Join-Path $src "firmware\build") /XF openpocket.bundle /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) { Pop-Location; Fail "copying the folder's files (robocopy $LASTEXITCODE)" }
+}
+git add -A
+$changes = "$(git status --porcelain)".Trim()
+if ($changes) {
+  Write-Host "  files that differ from GitHub (+ the history merged):" -ForegroundColor DarkGray
+  git diff --cached --stat HEAD | Select-Object -Last 12
+  git commit --quiet -m "OpenPocket ${Tag}: the source of the release"
+  if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "git commit" }
+}
 Step "Pushing the main branch to $full"
 git push -u origin main
-if ($LASTEXITCODE -ne 0) {
-  # commits made on GitHub since (e.g. the README edited on the site): put this version on top of them, never force
-  Step "GitHub has changes that are not in the bundle (edits made on the site): adding this version on top of them"
-  git fetch --quiet origin main
-  git -c user.name="$Owner" -c user.email="$email" rebase origin/main
-  if ($LASTEXITCODE -ne 0) {
-    git rebase --abort *> $null
-    Pop-Location; Fail "the changes on GitHub conflict with this version (same lines edited). Nothing was forced."
-  }
-  git push -u origin main
-  if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "git push was refused ($full may have another history). Nothing was forced: PUBLISH-GITHUB.bat -Repo another-name" }
-}
-if (-not "$(git ls-remote --tags origin "refs/tags/$Tag")".Trim()) {
-  git -c user.name="$Owner" -c user.email="$email" tag -a $Tag -m "OpenPocket $Tag"
-  git push origin $Tag
+if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "git push was refused (someone pushed meanwhile?): run it again. Nothing was forced." }
+# the tag vNN on that commit (moved if it already pointed elsewhere: v30..v33 pointed at an old main)
+$head = "$(git rev-parse HEAD)".Trim()
+$remoteTag = "$(git ls-remote --tags origin "refs/tags/$Tag^{}")".Trim()
+if (-not $remoteTag) { $remoteTag = "$(git ls-remote --tags origin "refs/tags/$Tag")".Trim() }
+if (-not $remoteTag -or -not $remoteTag.StartsWith($head)) {
+  if ($remoteTag) { git push --quiet origin ":refs/tags/$Tag" }
+  git tag -f -a $Tag -m "OpenPocket $Tag"
+  git push --quiet origin $Tag
+  if ($LASTEXITCODE -ne 0) { Write-Host "  (the tag $Tag could not be pushed)" -ForegroundColor Yellow }
 }
 Pop-Location
+Write-Host "Source:      https://github.com/$full/tree/main   (tag $Tag)" -ForegroundColor Green
+if ($SourceOnly) { Write-Host ""; Write-Host "Source only: no release, no installer update (PUBLISH-GITHUB.bat does all three)."; exit 0 }
 
 # 2. the release
 $pk = @(Get-ChildItem "docs\firmware\*.fwsc" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 if ($pk.Count -eq 0) { Fail "no package in docs\firmware: run build.bat first" }
 $notes = Join-Path $work "notes.md"
-$text = "OpenPocket $Tag`n`nInstall from the browser (Chrome / Edge): $pages`n`nPackages: PocketX_9$ver.fwsc (Donner Pocket X), BlackBox_9$ver.fwsc (M-VAVE BlackBox)."
+$text = "OpenPocket $Tag`n`nInstall from the browser (Chrome / Edge): $pages`nPreset editor (v32 and newer): ${pages}editor.html`nWithout internet: INSTALL-OFFLINE.bat in the source.`n`nPackages: PocketX_9$ver.fwsc (Donner Pocket X), BlackBox_9$ver.fwsc (M-VAVE BlackBox).`nSource: https://github.com/$full/tree/$Tag"
+$wn = Get-ChildItem "docs\WHATS-NEW-*.md" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+if ($wn) { $text += "`n`n" + [IO.File]::ReadAllText($wn.FullName) }
 [IO.File]::WriteAllText($notes, $text, (New-Object Text.UTF8Encoding $false))
 gh release view $Tag --repo $full *> $null
 if ($LASTEXITCODE -eq 0) {
-  Step "The release $Tag exists: updating its files"
+  Step "The release $Tag exists: updating its files and notes"
   gh release upload $Tag @pk --repo $full --clobber
+  gh release edit $Tag --repo $full --notes-file $notes --latest *> $null
 } else {
   Step "Creating the release $Tag"
   gh release create $Tag @pk --repo $full --latest --title "OpenPocket $Tag" --notes-file $notes
@@ -127,3 +176,4 @@ Write-Host ""
 Write-Host "Repository:  https://github.com/$full" -ForegroundColor Green
 Write-Host "Release:     https://github.com/$full/releases/tag/$Tag" -ForegroundColor Green
 Write-Host "Installer:   $pages   (the first time, GitHub takes a minute or two)" -ForegroundColor Green
+Write-Host "Editor:      ${pages}editor.html" -ForegroundColor Green

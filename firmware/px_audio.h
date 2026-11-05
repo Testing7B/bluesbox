@@ -90,6 +90,8 @@ static volatile float a_gain = 0.64f;                  /* MASTER volume (knob), 
 static volatile uint32_t a_load, a_peak, a_blocks;     /* DSP load in % */
 static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boot, safe mode) */
 static volatile uint8_t a_mute;                      /* output zeros (a flash write is coming) */
+static volatile uint8_t a_tmute;                     /* v36: tuner open: the output fades to silence (5 ms) */
+static float a_mg = 1.0f;
 static volatile uint8_t a_nan;                         /* engine output a NaN/Inf: needs a reset */
 static volatile uint32_t a_nan_count;
 static int a_running;
@@ -113,6 +115,13 @@ static void dsp_block(void)
     }
     if (a_nan) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     if (a_mute) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+    {   /* tuner mute, with a short ramp both ways (no click) */
+        float tg = a_tmute ? 0.0f : 1.0f;
+        if (a_mg != tg) {
+            for (uint32_t i = 0; i < A_FR; i++) { a_mg += (tg - a_mg) * 0.005f; a_out[i] *= a_mg; }
+            if (tg > 0.5f ? a_mg > 0.999f : a_mg < 0.0005f) a_mg = tg;
+        } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+    }
     float g = a_gain * 8388607.0f;
     for (uint32_t i = 0; i < A_FR; i++) {
         float v = a_out[i] * g;
@@ -312,7 +321,7 @@ static void audio_bench(void)
     px_preset_t pp;
     static const char *NAMES[4] = {"AMP ONLY     ", "+ CAB        ", "+ DRIVE/GATE ", "ALL ON       "};
     for (int c = 0; c < 4; c++) {
-        px_preset_factory(&pp, 15);                    /* GROOVE METAL: 4-stage 5150 III */
+        px_preset_factory(&pp, 17);                    /* 5150 RHYTHM: 4-stage 5150 */
         for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0;
         pp.on[PX_B_AMP] = 1;
         if (c >= 1) pp.on[PX_B_CAB] = 1;

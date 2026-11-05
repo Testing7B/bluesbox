@@ -2,27 +2,34 @@
 
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
-install here "for the Donner Pocket X. NOT for the M-VAVE BlackBox yet (boot loop, issue #1)" : https://isod89.github.io/openpocket/
-NEW WEB EDITOR : https://isod89.github.io/openpocket/editor.html
+Install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
+NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · What's new since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
 
-![OpenPocket screens](docs/ui-v23.png)
+![OpenPocket screens](docs/ui-v36.png)
 
 ## What it does
 
-- **12-block chain, 129 models**, in any order you like (double-click PUSH to move a block; the order is saved with
+- **12-block chain, 77 models**, in any order you like (double-click PUSH to move a block; the order is saved with
   the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB
 - **Synths, keyboards and other guitars** from a normal guitar (no MIDI pickup): organ, church organ, string machine,
   choir, mono synth with pitch tracking and a resonant ladder filter, PWM synth, bass synth, 12-string, acoustic,
   sitar (bridge buzz + sympathetic strings), baritone
-- **29 amps** (Twin, Deluxe, Princeton, Tweed Bassman, Champ, AC30, AC15, JTM45, Plexi, JCM800, JVM, Hiwatt, Orange,
-  Matchless, Dumble ODS, SLO, Mark IIC+, Rectifier, 5150 / 5150 III, Ecstasy, Friedman BE, VH4, Powerball, Revv,
-  JC-120, Supro, Two-Rock, SVT), tube stages oversampled ×4, real tone stacks, power-amp sag, all level-matched
-- **15 cabinets** (Greenback, V30, T75, H30, Alnico Blue, Jensen, Cream, JBL 15", 8x10 bass…) with a MIC position
-- **27 drives / fuzzes / boosts** (TS808, TS9, SD-1, Klon, BD-2, OCD, RAT, DS-1, Distortion+, Bluesbreaker, King of
-  Tone, Timmy, Zendrive, three Big Muffs, two Fuzz Faces, Tone Bender, Octavia, Fuzz Factory, Rangemaster, EP Booster,
-  HM-2, Metal Zone, Precision Drive, B7K)
+- **8 amps fitted to captures of the real ones** (v34): Twin Reverb, AC15 Top Boost, JCM900, JCM2000, Mark IV,
+  Dirty Shirley, Pro Mod, 5150. A computer sets the engine's numbers (tube stages oversampled ×4, tone stack, power
+  amp, sag) so that it matches a Neural Amp Modeler capture of each amp on real guitar playing; same CPU cost as a
+  voiced-by-ear amp. Method and results: [docs/FITTED-MODELS.md](docs/FITTED-MODELS.md)
+- **4 drives fitted the same way** (TS9, Klon, MXR M77, HM-2) and **7 cabinets** (the 4x12 V30 fitted to measurements;
+  Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
+- **Pro levels (v36)**: every amp, block and preset at the same loudness (-23 LUFS, measured on real guitar);
+  24 factory presets round the fitted amps, 28 USER slots; a PRESET LVL per preset; soft output limiter
+- What changed since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+- **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
+  page with big values and bars
+- **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no
+  metallic tail), the decay time you set (low and high frequencies apart), and Dattorro's plate; **delays up to 2 s**
 - **11 modulations, 8 delays, 8 reverbs**, octaver / polyphonic octave / Whammy / harmonizer / detune, envelope filter,
   ring modulator, bitcrusher, slicer, square-wave synth, 4 compressors, 3 EQs
 - **52 preset slots you can overwrite** (hold PUSH = SAVE; power-cut safe, kept across updates), 52 factory presets
@@ -43,12 +50,32 @@ USB, press **Connect**, then **Install**. The page also takes the pedal back to 
 official `.fwsc` from the maker, it is checked in the browser.
 
 On the **Donner Pocket X** the page works: updating OpenPocket → a newer OpenPocket is tested (2026-11-02, your saved
-presets are kept), and other Pocket X owners have installed it from the page. The **M-VAVE BlackBox is not supported
-yet**: on a BlackBox, OpenPocket restarts in a loop a moment after starting ([issue #1](https://github.com/isod89/openpocket/issues/1)),
-so the page does not install it there; a BlackBox that runs OpenPocket can be taken back to its official firmware
-from the page (step 3). It is the same JieLi update system as the M-VAVE FM-1, where this method is
+presets are kept), and other Pocket X owners have installed it from the page. On the **M-VAVE BlackBox**, OpenPocket up to v30 restarted every ~4.3 s after
+the pedal was switched off and on ([issue #1](https://github.com/isod89/openpocket/issues/1)). M-VAVE's firmware
+turns the chip's **long-press reset** off as its very first step (P33 `PINR_CON = 0`); OpenPocket did not, and on the
+BlackBox a pin sits at its active level, so the chip reset itself 4 s after each start. Right after an install the
+setting was still the official firmware's (it survives a warm reset), so the pedal worked until the next power cycle.
+**v31 turns it off at start** (confirmed on the BlackBox). The boot screen shows `RST <reset source> PINR <value found>`.
+(v30 to v32 also set the power supplies the way the official firmware does; it was not needed, and on a Pocket X it made
+the DSP slower and crackle, so v33 leaves them as the boot loader does again.) Being tested on the BlackBox. For a pedal that
+restarts in a loop, the page has a **rescue mode** (step 2): tick it, press Connect, plug the pedal in; the install
+starts the moment the pedal answers and halts its DSP at once. A BlackBox can always go back to its official firmware from the page (step 3). It is the same JieLi update system as the M-VAVE FM-1, where this method is
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
+
+**Without internet**: double-click `INSTALL-OFFLINE.bat` in this folder (Windows). It builds the packages if
+`docs\firmware` has none (`INSTALL-OFFLINE.bat build` rebuilds them), serves the installer and the packages from this
+folder on this computer only (`http://localhost:8765`, a small PowerShell server: `tools/serve_offline.ps1`) and opens
+it in Chrome or Edge. Same page, same steps; keep its window open while you install. `INSTALL-OFFLINE.bat editor`
+opens the web editor the same way.
+
+## Preset editor
+
+From OpenPocket **v32**, the **Preset editor** page (`editor.html`, linked from the installer) edits the pedal live over
+USB, in Chrome or Edge: the 52 presets (load, save, save as, move up / down, back to factory), the current sound (every
+block, type and setting, on / off, the block order by dragging the tiles, the name), and preset files (export one or
+all 52 as JSON, import one to try it or many back into their slots). What you change on the page plays at once, and
+what you change on the pedal shows on the page. The protocol: [`docs/EDITOR-PROTOCOL.md`](docs/EDITOR-PROTOCOL.md).
 
 ## Build
 
@@ -62,6 +89,10 @@ Windows: install WSL and the JieLi toolchain once (`wsl bash firmware/setup.sh`)
 Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
 **`PUBLISH-GITHUB.bat`** does everything in one click: it runs `build.bat`, then publishes the source, a release with
 the packages, and the installer on GitHub Pages (with your own `git` / `gh` and GitHub login; never a forced push).
+GitHub's `main` becomes exactly this folder's files (v36): the version history from `openpocket.bundle` is merged in,
+edits made on the GitHub site stay underneath, and the tag `vNN` points at that commit. **`PUBLISH-SOURCE.bat`**
+publishes the source only, without building. Edit the README in this folder rather than on the site: the next publish
+replaces the files with this folder's.
 
 ## Test (no pedal needed)
 
@@ -74,6 +105,9 @@ the packages, and the installer on GitHub Pages (with your own `git` / `gh` and 
   `ldr_core.c`) on a simulated flash: update, install over the official firmware, wrong model refused, damaged package
   refused before anything is erased, way back to the official firmware (its loader staged and checked);
 - the page itself in headless Chromium (Playwright), clicking Connect and Install.
+- the preset editor against a simulated pedal that runs the pedal's real editor code (`px_editor.h`) and preset store
+  on a simulated flash: every command, pushes both ways, a power cycle; then the editor page in Chromium (sliders,
+  drag and drop, save, move, export / import).
 
 ## Layout
 
@@ -90,5 +124,9 @@ the packages, and the installer on GitHub Pages (with your own `git` / `gh` and 
 ## Licence
 
 GPL-3.0-only. Board support and loader: MPL-2.0 (felucca-bsp). JieLi SDK files: Apache-2.0. Inter: OFL 1.1.
+The fitted models were computed from the NAM captures of [pelennor2170/NAM_models](https://github.com/pelennor2170/NAM_models)
+(GPL-3.0, thanks to their authors) and the DI recordings of
+[Alec-Wright/Automated-GuitarAmpModelling](https://github.com/Alec-Wright/Automated-GuitarAmpModelling) (GPL-3.0); neither is shipped.
+Product names are trademarks of their owners, used only to describe the sound.
 See [NOTICE.md](NOTICE.md). Not affiliated with Donner or M-VAVE. Install at your own risk.
 

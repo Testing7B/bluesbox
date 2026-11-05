@@ -169,3 +169,96 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   (v25..v28) is converted at boot; the first save writes format 2 to the other copy.
 - Instructions per sample (PC, scalar): B3 ORGAN 2,329 (the heaviest new preset, as heavy as DOOM SLUDGE 2,311);
   others 709–1,795. Engine 339,660 bytes in POOL (344,064).
+
+## v30: the power supplies at start (issue #1, BlackBox boot loop)
+- Report: OpenPocket on a BlackBox worked for an hour after the install, then, after the power switch, restarted every
+  ~4.3 s (USB up 2.9 s, down 1.3 s), on battery and on USB alike.
+- BlackBox_020 and PocketX_016 drive the hardware identically (same pins, same register values, same `isd_config`);
+  both run the same power init at start (BB `f_0200698a`, PX `f_0200664a`): P3_ANA_CON0 LDO on → DC-DC on → LDO off
+  (1 ms apart), CON1 0x20, CON5 0x40 → [3:0] 4 → [5:4] 3 (0x74), CON6 12 → [2:0] 7, CON7 0xA5, CON8 0x96,
+  CON9 |= 0x10 (SYSVDD_VOL_HD_SEL) → [3:0] 15, CON0 |= 0x80, ANA_KEEP [5:0] 0, CON2 |= 0x40.
+- OpenPocket did none of it (the BSP had `fm1_vdc14_raise`, `fm1_sysvdd_raise`, `fm1_power_stock`, never called). The
+  always-on P33 keeps these across a warm reset, so after an install (the official firmware ran last) the levels
+  were the stock ones; after a power cycle, the boot loader's (VDC14 3 = 1.40 V, SYSVDD 11 = 1.26 V, LDO), too low
+  for both cores at full load on some units.
+- `fm1_cstart` now raises VDC14 to 7 and SYSVDD to 15 (a level per 100 us), sets the stock CON6 / CON9 bits, moves
+  the 1.3 V supply onto the DC-DC, CON5 0x74, before anything else runs. The boot screen shows `PWR a>b c>d DCDC ...`
+  (as found > as set).
+- Boot OK now at 6 s (4.5 s of DSP), so a pedal that resets under load is caught by the guard and the safe mode.
+- Installer: rescue mode (packages fetched beforehand; the install starts the moment a pedal answers; the upgrade
+  command halts the DSP and the second core at once). BlackBox install allowed again, with a note.
+
+## v31: the long-press reset (issue #1, the real cause)
+- v30 on the BlackBox: `PWR 3>7 11>15 DCDC OFF>ON` (supplies set), and still a reset: "LAST BOOT FAILED, STOPPED AT
+  FIRST 6 S", no crash, BLOCKS 976 (2.8 s of audio), LOAD 40 %, NAN 0. The .noinit diagnostics survived, so a chip
+  reset, not a power loss; no CPU exception.
+- The period, ~4.3 s, matches the long-press reset (P3_PINR_CON, 0x94: the SDK's `struct long_press` offers 4 s or
+  8 s, rising or falling edge, on one wake-up pin) + the boot. BlackBox_020's app entry (`f_0200698a`) writes
+  PINR_CON = 0 before anything else; OpenPocket never touched it. The always-on P33 keeps 0 across a warm reset (an
+  install), not across a power cycle: then the boot loader / power-on value applies, and on the BlackBox the pin
+  sits at its active level (the Pocket X's does not).
+- `fm1_cstart` now reads P3_RST_SRC and PINR_CON, then writes PINR_CON = 0, first thing. The boot screen shows
+  `RST <source> PINR <found>`, and "LAST BOOT FAILED" shows "RESET BY: ..." (P3_RST_SRC bits: 0 power-on,
+  1 VDDIO low, 2 watchdog, 3 VCM, 4 long press, 5 1.2 V, 6 soft).
+
+## v32: the web editor
+- `firmware/px_editor.h`: SysEx `F0 7D 4F 50 cmd ... F7` (docs/EDITOR-PROTOCOL.md), frames from usb.c's `sx_frame`
+  (`ota_frame_get`), handled in the main loop before `ota_service` (which takes any frame), replies through
+  `ota_wire_send`, as Felucca's editor.c. It edits `PRESET` directly: `audio_poll` applies, `ui_render` redraws.
+- Pushes: while watched, a hash of PRESET + slot + focused block + `st_gen`; a change made by the editor itself updates
+  the hash, so only the pedal's own changes are pushed (40 ms apart at most). The watch ends 5 s after the last request
+  (the page pings every second; PING also returns the DSP load).
+- Slots: `SLOT_PUT` changes `st_slot` in RAM; `COMMIT` (or bit 1) writes the whole store once (`st_commit`): an import
+  of 52 presets is one flash write. `BLK_COL` moved to `ui_colors.h` for `CAT_BLOCK`.
+- `tests/edsim.c` compiles px_editor.h + px_store.h + the engine catalogue on the PC (stdin / stdout like devsim).
+
+## v33: the supplies back to the boot loader's levels
+- On a Pocket X with v32: DOOM SLUDGE C1 77 % (61 % on v28/v29, same engine), SMOOTH LEAD in BYP (92 %), crackles on
+  nearly every sound. The engine code has not changed since v29; v30 added the stock power settings (VDC14 7,
+  SYSVDD 15, CON6 / CON9 bits, the 1.3 V supply on the DC-DC, CON5 0x74). They were not what fixed issue #1 (the
+  long-press reset, v31, was), so v33 removes them: the boot screen only shows the levels found (`PWR 3 11`).
+- Not proven yet: the Pocket X test of v33 (C1 % back to ~61 %, no crackle) decides. If it does not, the next suspect is
+  the code cache (the DSP runs from XIP: px_engine_process 17 KB, the hot path ~20 KB, shared with CPU0).
+- Confirmed on both pedals with v31's boot line: a Pocket X starts with `PINR 08` (bit 0, the enable, clear: the
+  long-press reset off), Megal's BlackBox with `PINR 09` (bit 0 set: on). Bit 0 is the enable in the SDK's
+  `long_press_reset_enable` (cpu.a power_wakeup.c: P33 0x94 bit 0, and 0x95 bit 0).
+
+## v34: amps, drives and the V30 cab fitted to captures
+- The 29 amps / 27 drives / 15 cabinets voiced by ear make way for 8 amps, 4 drives and 7 cabinets whose numbers are
+  fitted by computer to Neural Amp Modeler captures of the real units, on real DI guitar
+  ([FITTED-MODELS.md](FITTED-MODELS.md)). Same engine, same CPU (+3 % on average, the heaviest preset a little
+  lighter), only the tables change.
+- Presets saved before v34 are converted at boot to the nearest new type (store format 3, `px_type_v34`); the other
+  blocks are untouched. Six factory presets are renamed (their old amp no longer exists).
+
+## v35: new reverbs, 2 s delay, 16-bit delay lines (89 KB of RAM freed)
+- RAM: the engine filled 332 of the 336 KB POOL. The delay line (1 s in 32-bit floats: 188 KB) and the reverb
+  (107 KB) are now 16-bit (rounded; once a tail is down to the last bits it is cut towards zero, so a loop cannot
+  hold a tiny pattern for ever). Engine: 247 KB, 89 KB free (for BLE / MIDI later), with a delay twice as long.
+- Reverb: v34's was a Freeverb (8 combs + 4 all-pass): metallic on long tails, the same decay at every frequency
+  whatever DECAY said. v35: an 8-line FDN (Hadamard, per-line decay at low frequencies and at 4 kHz, 4 slowly
+  modulated lines, early reflections) and Dattorro's plate, at 22.05 kHz in one 16-bit ring (32 KB). Measured with
+  a noise burst: the decay time now matches DECAY (HALL at noon 2.6 s target: 2.60 s), and the tail's fine spectrum
+  is 1.5 to 2.5 dB closer to a dense random field on HALL, CATHEDRAL, PLATE, SHIMMER, AMBIENT (less ringing).
+  Each type's level matches v34's (on guitar, within 0.2 dB); SHIMMER's octave builds up about as in v34.
+- Delay: TIME up to 2 s (0–80 = 20–1000 ms, 80–100 = 1–2 s), cubic (Hermite) reads in the delay, chorus,
+  flanger, vibrato, rotary. Presets saved before v35 are converted at boot (store format 4) and on import in the
+  editor (files without `"v": 35`). The read position is now split into whole samples and a fraction before
+  wrapping round the line, so it can never land past the end.
+- CPU (PC, instructions per sample): reverb presets +80 to +100, delay + reverb presets up to +200, 1,889 on average
+  over the 52 presets (v34: 1,807); the heaviest, SMOOTH LEAD, 2,582 (v34: 2,418). To be checked on the pedal.
+
+## v36: levels, 24 factory presets, a new screen
+- Levels, measured as loudness (ITU-R BS.1770, gated) on real DI guitar at the pedal's level, by
+  `tools/calib_levels.py` (writes `engine/px_trim.h`): each amp has a level curve over GAIN (11 points: noon at
+  -23 LUFS for every amp, +-3 dB over the knob; v35 spread 46 dB between JCM900 at 0 and full), every cabinet sits
+  with the 1x12, and every other type (knobs at noon) keeps the loudness when switched on. The 52 v35 presets
+  spanned -53 to -10 LUFS; the 24 v36 presets are all at -23.0 +-0.2 LUFS (`tools/level_presets.py`).
+- The preset LEVEL: GT block, 3rd setting "PRESET LVL" (-15..+15 dB, 0.3 dB a step). Store format 5 and the editor
+  (files without `"v": 36`) set it to 0 dB on older presets.
+- Output: a soft limiter (transparent to 0.8, rounds off to 1.2) instead of the hard clip at 1.2.
+- SLOW SWELL: 2.9 ms look-ahead and a more sensitive attack detector, so a pick attack is not heard before the swell.
+- 24 factory presets round the fitted amps (near noon); 25..52: USER (clean TWIN + 1x12 + room).
+- Screen: PLAY (number and name large, amp / cab, the chain in colour, the selected block) and EDIT (the block on its
+  colour, model, 5 settings with value + bar), new Inter fonts (26 and 58 px). `tests/uisim.c` draws every page on
+  the PC and checks that each full page paints every pixel.
