@@ -12,13 +12,6 @@
 
 typedef union { float f; uint32_t i; } fbits;
 
-/* v37: in RAM on the pedal (the engine calls these per sample, from its own RAM code) */
-#ifdef __PI32V2__
-#define PXM_HOT __attribute__((section(".ram_text")))
-#else
-#define PXM_HOT
-#endif
-
 /* sin/cos: reduction to [-pi/4, pi/4] (pi/2 split in two parts to keep precision) + polynomials.
  * Crucial for low-frequency biquads at high sample rates (30 Hz at 176 kHz:
  * w = 1e-3, cos(w) = 1 - w^2/2 must be accurate to 1e-8, otherwise the filter goes unstable -> NaN). */
@@ -33,18 +26,18 @@ static float reduce(float x, int *q)
     *q = k & 3;
     return (x - (float)k * PIO2_HI) - (float)k * PIO2_LO;
 }
-PXM_HOT float sinf(float x)
+float sinf(float x)
 {
     int q; float r = reduce(x, &q);
     switch (q) { case 0: return k_sin(r); case 1: return k_cos(r); case 2: return -k_sin(r); default: return -k_cos(r); }
 }
-PXM_HOT float cosf(float x)
+float cosf(float x)
 {
     int q; float r = reduce(x, &q);
     switch (q) { case 0: return k_cos(r); case 1: return -k_sin(r); case 2: return -k_cos(r); default: return k_sin(r); }
 }
 
-PXM_HOT float expf(float x)
+float expf(float x)
 {
     if (x > 88.0f) x = 88.0f;
     if (x < -87.0f) return 0.0f;
@@ -56,7 +49,7 @@ PXM_HOT float expf(float x)
     return p * s.f;
 }
 
-PXM_HOT float logf(float x)
+float logf(float x)
 {
     if (x <= 0.0f) return -1.0e30f;
     fbits b; b.f = x;
@@ -69,13 +62,13 @@ PXM_HOT float logf(float x)
     return (float)e * LN2_F + l;
 }
 
-PXM_HOT float powf(float x, float y)
+float powf(float x, float y)
 {
     if (x <= 0.0f) return 0.0f;                        /* the engine only uses bases > 0 (10^x) */
     return expf(y * logf(x));
 }
 
-PXM_HOT float sqrtf(float x)
+float sqrtf(float x)
 {
     if (x <= 0.0f) return 0.0f;
     fbits b; b.f = x;
@@ -87,4 +80,4 @@ PXM_HOT float sqrtf(float x)
     return y;
 }
 
-PXM_HOT float fabsf(float x) { return x < 0.0f ? -x : x; }
+float fabsf(float x) { return x < 0.0f ? -x : x; }

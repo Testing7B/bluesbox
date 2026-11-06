@@ -22,16 +22,17 @@
 - The 8 fitted amps of v34 stay available as AMP types, and your saved presets keep the amp they use.
 
 ## Faster engine
-- The audio path now runs from the chip's RAM instead of the flash (no cache misses in the per-sample code): the
-  engine itself, the reverbs, the pitch shifters and the math functions.
-- The NAM network has a hand-written routine for the pedal's CPU, checked against the C version at every start-up.
+- The NAM network has a hand-written routine for the pedal's CPU (in RAM), checked against the C version at every
+  start-up. A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
 
 ## For developers
 - Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).
 - `tools/train_a2.py` (JAX) trains an A2-Lite network from a capture; `tools/mk_nam_factory.py` builds the factory
   set; `tests/test_nam.py` checks the fixed-point engine against a float reference.
-- Memory: the NAM history buffers (83 KB) sit in the POOL region beside the engine, and the RAM code window is 40 KB,
-  so that 88 KB of ordinary RAM stay for the rest (and Bluetooth later).
+- Memory: the NAM history buffers (83 KB) sit in the POOL region beside the engine, so that the ordinary RAM keeps
+  about 47 KB free (for Bluetooth later).
+- `tools/check_calls.py` (run by `firmware/build.sh`): refuses a direct call between the flash code and the RAM code,
+  which is out of the CPU's call range, and names it.
 
 ## Please report
 The CPU load cannot be measured off the pedal. Please send the `C1 nn%` shown at the bottom right on a few factory

@@ -274,9 +274,11 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   accumulators, `acc += [w++] * x` with the load in the multiply-add; LeakyReLU, the head sum and the residual 1x1
   follow. 5 instructions per 3 multiply-adds (the compiler's C: about 14). `px_nam_check()` runs it against the C
   routine at boot on a fixed pattern and keeps the C one if a single bit differs.
-- Memory: the rings (83.4 KB) in the POOL region beside the engine, the model (weights converted, 8 KB) in RAM; the
-  RAM code window grows to 40 KB (about 32 KB used: the engine's per-sample code, the NAM layer, the math functions,
-  moved there from the flash), which leaves 88 KB of ordinary RAM.
+- Memory: the rings (83.4 KB) in the POOL region beside the engine, the model (weights converted, 8 KB) in RAM. The
+  layer routine is the only NAM code in RAM (.ram_text, 284 bytes): a direct call between the flash (0x02xxxxxx) and
+  the RAM code (0x01C0xxxx) is out of the call instruction's +-4 MiB, so the engine calls it through a pointer and it
+  calls nothing. `tools/check_calls.py`, run by `firmware/build.sh` before linking, refuses any such direct call and
+  names it (a first v37 build put the whole audio path in RAM: the linker refused 478 calls, naming only one).
 - User models: 16 slots of 8 KiB at 0xC0000 (`firmware/px_models.h`), written by the editor (protocol 2); the update
   loader keeps that range (`loader/ldr_core.c`, `LDR_NAM_LO/HI`). The weights are read from the flash (SPI, with the
   audio held) when a preset picks the model.

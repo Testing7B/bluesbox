@@ -13,16 +13,12 @@
  */
 #include "px_dsp.h"
 #include "px_nam.c"                                     /* v37: NAM A2-Lite (one translation unit: every build gets it) */
-#ifdef __PI32V2__
-/* v37: the per-sample code runs from RAM on the pedal (as the stock firmware's audio code does): no flash fetches
- * through the cache in the audio path */
-#define PX_HOT __attribute__((section(".ram_text")))
-#else
+/* The engine runs from the flash (XIP), as in v36: a direct call between the flash (0x02xxxxxx) and the RAM code
+ * (0x01C0xxxx) is out of the CPU's call range, so code in RAM may call nothing in the flash and the reverse, except
+ * through a pointer (FL_FAR in fm1_flash.h). Only the NAM layer routine is in RAM (px_nam.c, called through a
+ * pointer). */
 #define PX_HOT
-#endif
-/* (this old compiler does not inline into a function with a section of its own: the helpers it calls per sample
- * are forced inline, so they come along into RAM) */
-#define PX_INL __attribute__((always_inline))
+#define PX_INL
 #include <math.h>
 #include <string.h>
 
@@ -1831,7 +1827,7 @@ static inline float ps_voice(const float *buf, int w, float *ph, float inc, floa
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
 #define PS_OFFMAX 512                                  /* one period of low E */
-PX_HOT __attribute__((noinline)) static float ps_align(const float *buf, int w, float d_ref, float d_new)
+PX_HOT static float ps_align(const float *buf, int w, float d_ref, float d_new)
 {                                                      /* SOLA: offset that puts the fading-in tap in phase */
     int r0 = w - (int)d_ref, best = 0;
     float bc = -1e30f;

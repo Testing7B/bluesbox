@@ -11,18 +11,15 @@
 #include "px_nam.h"
 #include <string.h>
 
-#ifndef PXN_HOT
-#ifdef __PI32V2__
-#define PXN_HOT __attribute__((section(".ram_text")))   /* on the pedal the per-sample code runs from RAM */
-#else
+/* Everything here runs from the flash but the hand-written layer routine, which is in RAM (.ram_text): the flash and
+ * the RAM code are out of each other's direct call range, so it is called through a pointer (pxn_layer_fn) and calls
+ * nothing itself. */
 #define PXN_HOT
-#endif
-#endif
 
 static const uint8_t pxn_k[PXN_NL] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6};
 static const uint16_t pxn_d[PXN_NL] = {1, 3, 7, 17, 41, 101, 239, 1, 3, 7, 17, 41, 101, 239, 1, 13,
                                        1, 3, 7, 17, 41, 101, 239};
-static const int32_t pxn_one[PXN_N] = {1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA,
+static int32_t pxn_one[PXN_N] =                          /* in RAM: the routine reads it as a tap */ {1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA,
                                        1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA,
                                        1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA, 1 << PXN_QA,
                                        1 << PXN_QA};
@@ -126,17 +123,16 @@ __asm__(
     "\tif (r13 != r14) goto .Lpxn_frame\n"
     "\t{pc, r15-r4} = [sp++]\n"
     "\t.previous\n");
-static uint8_t pxn_asm_ok;              /* the hand routine gave the C one's results at start-up */
 #else
 #define PXN_ASM 0
 #endif
+/* the layer routine in use: the C one until the start-up check (pxn_selftest) picks the hand-written one. Called
+ * through this pointer (volatile: the compiler cannot turn it back into a direct call, out of range on the pedal). */
+static void (*volatile pxn_layer_fn)(const pxn_job *) = pxn_layer_c;
 
 static inline __attribute__((always_inline)) void pxn_layer_go(const pxn_job *j)
 {
-#if PXN_ASM
-    if (pxn_asm_ok) { pxn_layer_asm(j); return; }
-#endif
-    pxn_layer_c(j);
+    pxn_layer_fn(j);
 }
 
 /* runs both on a fixed random pattern (both signs, the largest values a model meets, 47 taps, 16 frames, with and
@@ -153,16 +149,19 @@ int pxn_selftest(int32_t *scratch)
         data[i] = (int32_t)r >> (i < 47 * 24 + 47 * 3 + 12 ? 6 : 8);          /* +-32 (Q20 data, Q24 weights) */
     }
     for (int i = 0; i < 47; i++) pt[i] = data + i * 24 + (i & 7);
-    pxn_asm_ok = 1;
+    void (*volatile hand)(const pxn_job *) = pxn_layer_asm;   /* through a pointer: in RAM, out of call range */
+    int ok = 1;
+    pxn_layer_fn = pxn_layer_c;
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < 3 * PXN_N; i++) { hs0[i] = hs1[i] = i * 77; xn0[i] = xn1[i] = -1; }
         pxn_job j = {pt, wt, x + 3, 40 * 4, rr, hs0, pass ? 0 : xn0, pass ? 20 : 47, pass ? 13 : PXN_N};
-        pxn_layer_asm(&j);
+        hand(&j);
         j.hs = hs1; j.xn = pass ? 0 : xn1;
         pxn_layer_c(&j);
-        if (memcmp(hs0, hs1, 3 * PXN_N * 4u) || memcmp(xn0, xn1, 3 * PXN_N * 4u)) pxn_asm_ok = 0;
+        if (memcmp(hs0, hs1, 3 * PXN_N * 4u) || memcmp(xn0, xn1, 3 * PXN_N * 4u)) ok = 0;
     }
-    return pxn_asm_ok;
+    if (ok) pxn_layer_fn = pxn_layer_asm;
+    return ok;
 #else
     (void)scratch;
     return 0;

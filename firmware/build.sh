@@ -37,6 +37,8 @@ $CC $FP -O2 -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_ds
 $CC $FP -O2 -fno-builtin -c "$HERE/px_math.c" -o "$O/px_math.o"
 # official JieLi I2S driver (LLVM bitcode from the AC79 SDK, Apache-2.0) -> pi32v2 object
 $CC -Os -c -x ir "$HERE/sdk/iis.bc" -o "$O/iis.o"
+# a direct call between the flash code and the RAM code is out of the CPU's call range: refuse it with its name
+python3 "$HERE/../tools/check_calls.py" "$O/crt0.o" "$O/vec.o" "$O/isr.o" $CPU1OBJ "$O/openpocket.o" "$O/px_dsp.o" "$O/px_math.o"
 "$TC/pi32v2/bin/ld" -T "$HERE/app.ld" "$O/crt0.o" "$O/vec.o" "$O/isr.o" $CPU1OBJ "$O/openpocket.o" "$O/px_dsp.o" "$O/px_math.o" "$O/iis.o" -o "$O/openpocket.elf"
 # symbol map: used to translate a crash address (PC) into a function name
 "$TC/common/bin/objdump" -t "$O/openpocket.elf" 2>/dev/null | sort > "$O/symbols.txt" || true
