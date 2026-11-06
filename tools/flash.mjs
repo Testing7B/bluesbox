@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { webcrypto } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Updater, IS_OTA, MODELS, TIMING } from "../docs/pxota.js";
+import { Updater, IS_OTA, OUR_LOADER, MODELS, TIMING } from "../docs/pxota.js";
 import { verifyPackage } from "../docs/pxpkg.js";
 
 globalThis.crypto ??= webcrypto;                             // Node 18 has no global; the page's browser does
@@ -118,6 +118,7 @@ async function rescue(args, given, access, t, say) {
         const want = pkgs[dev.id.model];
         if (IS_OTA(dev.id)) {
           if (!given) throw refuse(`the pedal is in update mode (${dev.id.text}), which does not tell its model: add --package FILE to finish the update. Nothing was sent.`);
+          if (!OUR_LOADER(dev.id)) throw refuse(`the pedal is in the update mode of another firmware (${dev.id.text}); a rescue only finishes an OpenPocket update. Nothing was sent.`);
           say(`it is in update mode (${dev.id.text}); a real rescue would finish the update with ${given.product}.`);
         } else if (!want) throw refuse(`wrong model: the pedal is a ${dev.id.text}, no package given for it. Nothing was sent.`);
         say(`dry run ok: a rescue would install ${want ? want.product : given.product} on ${dev.id.text}. Nothing was written.`);
