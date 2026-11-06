@@ -347,14 +347,14 @@ static void audio_bench(void)
             fm1_wdt_feed();
         }
     }
-    /* one kernel-6 layer, 16 frames (960 multiply-adds): cycles per multiply-add (x 100); data in RAM / in POOL */
+    /* one kernel-6 layer, 32 frames (gather, 3 rows, post: 1920 multiply-adds): cycles per multiply-add (x 100); data in RAM / in POOL */
     l[0] = 0; b_str(l, "LAYER CYC/MAC HAND ");
-    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 1, 64) * 15u * 100u / (64u * 960u)); b_str(l, "/");
-    b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 960u));
+    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u)); b_str(l, "/");
+    b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u));
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "              C    ");
-    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 0, 64) * 15u * 100u / (64u * 960u)); b_str(l, "/");
-    b_fix2(l, pxn_bench_layer(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 960u));
+    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u)); b_str(l, "/");
+    b_fix2(l, pxn_bench_layer(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u));
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 14;
     fm1_wdt_feed();
     /* whole presets: % of the real-time budget */

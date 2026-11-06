@@ -63,9 +63,12 @@ trained at 44.1 kHz and are not affected.
 - `engine/px_nam.c`: the network in fixed point (activations with 20 fraction bits, weights with 24, 64-bit sums),
   checked against a float reference (`tools/nam_a2.py`) for every factory model by `tests/test_nam.py`: about 99 dB
   signal to error.
-- On the pedal, one layer is a hand-written routine (pi32v2 assembly, the CPU's hardware loop: 5 instructions per 3
-  multiply-adds). At start-up it is run against the C version on a test pattern, and the C version is used if they
-  differ by a single bit.
+- Blocks of 32 frames, layer by layer: each frame's inputs to the layer are gathered into one row (3 words moved
+  by one instruction), then each output is a dot product with 4 frames at a time (a weight read once for 4 frames),
+  then LeakyReLU, the head sum and the residual. On the pedal these three steps are hand-written (pi32v2 assembly:
+  hardware loops, multiply-adds paired with loads, no branch per sample), because this CPU has no data cache in front
+  of its RAM and a taken branch costs about 8 cycles. At start-up they are run against the C versions on a test
+  pattern, and the C versions are used if they differ by a single bit.
 - 1,730 multiply-adds per sample in 23 layers; the history buffers take 83 KB of RAM, a model 7.5 KB.
 - The second core runs it with the rest of the chain. The load shows at the bottom right of the screen (`C1 nn%`).
 

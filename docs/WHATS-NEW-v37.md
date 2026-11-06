@@ -22,8 +22,8 @@
 - The 8 fitted amps of v34 stay available as AMP types, and your saved presets keep the amp they use.
 
 ## Faster engine
-- The NAM network has a hand-written routine for the pedal's CPU (in RAM), checked against the C version at every
-  start-up. A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
+- The NAM network has hand-written routines for the pedal's CPU (blocks of 32 frames, a weight read once for 4
+  frames, multiply-adds paired with loads), checked against the C versions at every start-up. A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
 
 ## For developers
 - Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).
