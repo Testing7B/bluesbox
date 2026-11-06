@@ -4,6 +4,7 @@
 // .bat files only call this. Every Docker command line lives here.
 //   node tools/op.mjs doctor | build | test | package | clean | shell | image | serve [editor|build]
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
+//   node tools/op.mjs rescue-check   (the UBOOT rescue tool against a simulated pedal: Python 3 only, no Docker)
 // NATIVE=1 runs the commands on this machine (toolchain from firmware/setup.sh) instead of in the container.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -92,6 +93,12 @@ const commands = {
     const r = spawnSync(py[0], [...py.slice(1), "tools/serve.py", arg === "editor" ? "editor.html" : "index.html"], { stdio: "inherit", cwd: root });
     if (r.error) fail("Python 3 is needed to serve the installer offline (python.org).");
     return r.status ?? 0;
+  },
+  "rescue-check"() {
+    const py = process.platform === "win32" ? ["py", "-3"] : ["python3"];
+    const r = spawnSync(py[0], [...py.slice(1), "tests/test_uboot_rescue.py"], { stdio: "inherit", cwd: root });
+    if (r.error) fail("Python 3 is needed for the rescue tool tests (python.org).");
+    return r.status ?? 1;
   },
   render([input, output, preset]) {
     if (!input) fail("usage: render in.wav [out.wav] [preset 1..52]");

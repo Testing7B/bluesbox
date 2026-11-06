@@ -117,6 +117,10 @@ if (make.status === 0) {
   const calls = readFileSync(log, "utf8").trim().split("\n").map((l) => l.split("\t"));
   assert.equal(calls.at(-1)[2], "-it", "make shell goes through op.mjs");
   assert.ok(calls.at(-1).includes("openpocket-build") && calls.at(-1).at(-1) === "bash");
+  rmSync(log, { force: true });
+  const rc = spawnSync("make", ["-C", repo, "rescue-check"], { env, encoding: "utf8" });
+  assert.equal(rc.status, 0, rc.stdout + rc.stderr);
+  assert.ok(!existsSync(log), "make rescue-check needs no docker");
 } else {
   console.log("(make not installed: Makefile delegation skipped)");
 }
