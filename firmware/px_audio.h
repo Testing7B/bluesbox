@@ -335,13 +335,35 @@ static void audio_bench(void)
     /* cycles at 360 MHz (x 100) for one loop of each instruction kind, then the parts of a NAM layer */
     int32_t *pool = px_nam_scratch();
     for (int i = 0; i < 1024; i++) b_ram[i] = i * 3 - 1500;
-    static const char *K[8] = {"LD ", "LDD ", "LDM3 ", "ST ", "RMAC ", "PAIR ", "FMAC ", "RMAC2 "};
-    for (int k = 0; k < 8; k++) {
-        if (k % 3 == 0) l[0] = 0;
-        int n = 1;
-        uint32_t tk = pxn_bench_ops(k, b_ram, 32, &n, b_ticks);
-        b_str(l, K[k]); b_fix2(l, tk * 15u * 100u / (32u * (uint32_t)n)); b_str(l, " ");
-        if (k % 3 == 2 || k == 7) { lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12; }
+    /* v37 diagnostic 4: the same work with its data in the cache RAM (0x01F28000) and in the ordinary RAM */
+    {
+        static const char *S[6] = {"OFF", "READY", "EXT MEM", "TIMEOUT", "WAY FAIL", "MEM FAIL"};
+        const int cr = pxc_status == PXC_READY;
+        int32_t *c = (int32_t *)PXC_BEGIN, *xr = pool + 8192, *wr = pool + 8192 + 1700, *zr = pool + 8192 + 1800;
+        l[0] = 0; b_str(l, "CACHE RAM: "); b_str(l, S[pxc_status < 6u ? pxc_status : 0]);
+        lcd_text(4, y, l, cr ? GRN : RED, UI_BG, 1); y += 12;
+        if (cr) {
+            int n = 1;
+            l[0] = 0; b_str(l, "CR LD ");
+            b_fix2(l, pxn_bench_ops(0, c, 32, &n, b_ticks) * 15u * 100u / (32u * (uint32_t)n));
+            b_str(l, " FMAC "); b_fix2(l, pxn_bench_ops(6, c, 32, &n, b_ticks) * 15u * 100u / (32u * (uint32_t)n));
+            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        }
+        l[0] = 0; b_str(l, "DOT CPU ");
+        b_fix2(l, pxn_bench_dot(xr, wr, zr, 0, b_ticks, 16) * 15u * 100u / (16u * 1920u));
+        if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_dot(c, c + 1700, c + 1800, 0, b_ticks, 16) * 15u * 100u / (16u * 1920u)); }
+        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        if (pxn_vec_check() >= 0) {
+            l[0] = 0; b_str(l, "DOT VEC ");
+            b_fix2(l, pxn_bench_dot(xr, wr, zr, 1, b_ticks, 16) * 15u * 100u / (16u * 1920u));
+            if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_dot(c, c + 1700, c + 1800, 1, b_ticks, 16) * 15u * 100u / (16u * 1920u)); }
+            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        }
+        l[0] = 0; b_str(l, "POST/F ");
+        b_fix2(l, pxn_bench_post(pool, b_ticks, 16) * 15u * 100u / (16u * 32u));
+        if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_post(c, b_ticks, 16) * 15u * 100u / (16u * 32u)); }
+        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        if (cr) for (uint32_t *p = (uint32_t *)PXC_BEGIN; p < (uint32_t *)PXC_END; p++) *p = 0;
     }
     fm1_wdt_feed();
     l[0] = 0; b_str(l, "DOT/MAC ");
@@ -355,10 +377,6 @@ static void audio_bench(void)
         if (vc >= 0) { b_str(l, " "); b_fix2(l, pxn_bench_part(pool, b_ticks, 3, 64) * 15u * 100u / (64u * 1920u)); }
         lcd_text(4, y, l, vc >= 0 ? GRN : RED, UI_BG, 1); y += 12;
     }
-    l[0] = 0; b_str(l, "POST/F ");
-    b_fix2(l, pxn_bench_part(pool, b_ticks, 2, 64) * 15u * 100u / (64u * 32u));
-    b_str(l, " LAYER/MAC "); b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u));
-    lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 14;
     fm1_wdt_feed();
     /* whole presets: % of the real-time budget */
     px_preset_t pp;

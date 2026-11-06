@@ -479,6 +479,45 @@ uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int
     return ticks() - t0;
 }
 
+/* ticks for `reps` runs of a layer's dot work over 32 frames (3 rows of 20: 1,920 multiply-adds), on buffers given
+ * (x: 33 rows of PXN_S words, w: 64 words, z: 100 words), by the CPU routine (vec 0) or the vector unit (vec 1);
+ * then of the post over 32 frames on one buffer (4,000 words: z, X rows, rr, hs, out). For the bench screen:
+ * where the data sits changes the cost on this chip. */
+uint32_t pxn_bench_dot(int32_t *x, int32_t *w, int32_t *z, int vec, uint32_t (*ticks)(void), int reps)
+{
+    uint32_t r = 777u;
+    for (int i = 0; i < 33 * PXN_S; i++) { r = r * 1103515245u + 12345u; x[i] = (int32_t)r >> 10; }
+    for (int i = 0; i < 64; i++) { r = r * 1103515245u + 12345u; w[i] = (int32_t)r >> 10; }
+    pxn_dot d = {w, x, 20, PXN_S * 4, z, 8};
+    uint32_t t0 = ticks();
+    for (int k = 0; k < reps; k++) {
+#if PXN_ASM
+        if (vec) { for (int o = 0; o < 3; o++) pxn_vdot(w + 20 * o, x, 20, PXN_S * 4, z + o, 32); }
+        else pxn_dot3x4_asm(&d);
+#else
+        (void)vec;
+        pxn_dot3x4_c(&d);
+#endif
+    }
+    return ticks() - t0;
+}
+uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps)
+{
+    int32_t *z = b, *x = b + 100, *rr = b + 100 + 33 * PXN_S, *hs = rr + 16, *out = hs + 100;
+    uint32_t r = 99u;
+    for (int i = 0; i < 4000; i++) { r = r * 1103515245u + 12345u; b[i] = (int32_t)r >> 10; }
+    pxn_post p = {z, x + 17, PXN_S * 4, rr, hs, out, 32};
+    uint32_t t0 = ticks();
+    for (int k = 0; k < reps; k++) {
+#if PXN_ASM
+        pxn_post_asm(&p);
+#else
+        pxn_post_c(&p);
+#endif
+    }
+    return ticks() - t0;
+}
+
 #if PXN_ASM
 /* one instruction (or pair) n times in the hardware loop: what each kind costs on this CPU */
 #define PXN_UB(name, body)                                                                                        \
