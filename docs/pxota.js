@@ -217,16 +217,19 @@ export class Updater {
   // rescue for a program with no button to press again (the command line): rescue() again and again until a pedal is
   // installed or timeoutMs has passed. The time bounds the waiting only; an install that has started is never cut short.
   // A pedal that vanished before the first transfer finished has had nothing written (stopped, lost): wait for it again.
-  // The update loader that a lost attempt left behind is resumed. onEvent("wait", msLeft) and onEvent("retry", error)
-  // report on the way. Returns the version the pedal reports, or null when no pedal answered in time.
-  async rescueWithin(pick, onStep, { timeoutMs, onEvent } = {}) {
+  // The update loader that a lost attempt left behind is resumed with the package of the pedal that was picked, else with
+  // `loader` ({ image, product }): a loader does not report its model, so the caller names the package.
+  // onEvent("wait", msLeft) and onEvent("retry", error) report on the way. Returns the version the pedal reports, or null
+  // when no pedal answered in time.
+  async rescueWithin(pick, onStep, { timeoutMs, onEvent, loader = null } = {}) {
     const end = Date.now() + timeoutMs, tell = onEvent || (() => {});
     let pkg = null;
     for (;;) {
       try {
         const done = await this.rescue((model) => (pkg = pick(model)), onStep);
         if (done) return done;
-        if (pkg && await this.resume(pkg.image, pkg.product, onStep)) return pkg.product;
+        const half = pkg || loader;
+        if (half && await this.resume(half.image, half.product, onStep)) return half.product;
       } catch (e) {
         if (!["stopped", "lost", "noloader"].includes(e.code)) throw e;
         tell("retry", e);

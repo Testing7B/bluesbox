@@ -116,9 +116,11 @@ async function rescue(args, given, access, t, say) {
         const dev = found[0];
         say(`pedal answered: ${dev.id.text} on "${dev.name}"`);
         const want = pkgs[dev.id.model];
-        if (IS_OTA(dev.id)) say(`it is in update mode (${dev.id.text}); a real rescue would finish the update with an OpenPocket package.`);
-        else if (!want) throw refuse(`wrong model: the pedal is a ${dev.id.text}, no package given for it. Nothing was sent.`);
-        say(`dry run ok: a rescue would install ${want ? want.product : "OpenPocket"} on ${dev.id.text}. Nothing was written.`);
+        if (IS_OTA(dev.id)) {
+          if (!given) throw refuse(`the pedal is in update mode (${dev.id.text}), which does not tell its model: add --package FILE to finish the update. Nothing was sent.`);
+          say(`it is in update mode (${dev.id.text}); a real rescue would finish the update with ${given.product}.`);
+        } else if (!want) throw refuse(`wrong model: the pedal is a ${dev.id.text}, no package given for it. Nothing was sent.`);
+        say(`dry run ok: a rescue would install ${want ? want.product : given.product} on ${dev.id.text}. Nothing was written.`);
         return 0;
       }
       if (Date.now() >= end) throw Object.assign(new Error(`no pedal answered in ${args.timeout} s`), { code: "timeout" });
@@ -139,12 +141,12 @@ async function rescue(args, given, access, t, say) {
   let reported;
   try {
     reported = await new Updater(access, null, t).rescueWithin((m) => (pkgs[m] ? { image: pkgs[m].image, product: pkgs[m].product } : null),
-      step, { timeoutMs: Math.max(0, end - Date.now()), onEvent });
+      step, { timeoutMs: Math.max(0, end - Date.now()), onEvent, loader: given ? { image: given.image, product: given.product } : null });
   } catch (e) {
     if (e.code === "pkg") throw refuse(`wrong model: the pedal is a ${e.detail}, the package is ${Object.values(pkgs).map((p) => p.product).join(", ")}. Nothing was sent.`);
     throw e;
   }
-  if (reported === null) throw Object.assign(new Error(`no pedal answered in ${args.timeout} s. A pedal that never answers the MIDI identity query (a crash before USB is up, or the chip's boot loader WL80UBOOT) cannot be reached this way`), { code: "timeout" });
+  if (reported === null) throw Object.assign(new Error(`no pedal answered in ${args.timeout} s. A pedal that never answers the MIDI identity query (a crash before USB is up, or the chip's boot loader WL80UBOOT) cannot be reached this way. A pedal left in update mode by an interrupted install is only finished when --package names its file`), { code: "timeout" });
   const want = Object.values(pkgs).map((p) => p.product);
   if (!want.includes(reported)) throw new Error(`the pedal reports ${reported}, expected ${want.join(" or ")}`);
   say(`done: the pedal reports ${reported}.`);

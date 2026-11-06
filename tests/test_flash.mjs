@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main } from "../tools/flash.mjs";
+import { Updater } from "../docs/pxota.js";
+import { logicalImage } from "../docs/pxpkg.js";
 import { nodeMidiAccess } from "../tools/midi-node.mjs";
 import { loopAccess, simAccess } from "./simpedal.mjs";
 
@@ -187,6 +189,28 @@ const rescueArgs = ["--rescue", "--confirm-flash", "--package", px, "--manifest"
 {
   const r = await rescueRun([...rescueArgs, "--timeout", "30"], { answerOn: 1, vanishAfterSends: 3 });
   ok(r.code === 0 && /went away/.test(r.out) && /done: the pedal reports PocketX_924/.test(r.out), `rescue: the pedal vanishes mid-transfer, returns, and is installed ${r.code ? "\n" + r.out : ""}`);
+}
+
+// 11. a fresh --rescue finds the pedal in the OpenPocket update loader an interrupted install left behind
+async function loaderRun(argv) {
+  const dump = join(TMP, `dump${Math.random().toString(36).slice(2)}.bin`);
+  const sim = simAccess([old, "--dump", dump]);
+  await sim.ready;
+  const up = new Updater(sim.access, null, FAST);
+  try { await up.installOn(await up.find((id) => id.model === "PocketX"), logicalImage(readFileSync(px)), "PocketX_924", (s) => { if (s === "loader") throw new Error("interrupted"); }); } catch (_) { /* left in the loader */ }
+  const lines = [];
+  const code = await main(argv, { access: sim.access, say: (l) => lines.push(l), timing: FAST });
+  await sim.end();
+  return { code, out: lines.join("\n"), log: sim.log, dump: readFileSync(dump) };
+}
+{
+  const r = await loaderRun([...rescueArgs, "--timeout", "30"]);
+  const f = join(TMP, "loader_rescued.bin"); writeFileSync(f, r.dump);
+  ok(r.code === 0 && /done: the pedal reports PocketX_924/.test(r.out) && appIn(f) === "PocketX_924 CRC-OK", `rescue: a pedal left in its update loader is finished with the given package ${r.code ? "\n" + r.out : ""}`);
+}
+{
+  const r = await loaderRun(["--rescue", "--confirm-flash", "--manifest", man, "--timeout", "2"]);
+  ok(r.code === 1 && /no pedal answered in 2 s/.test(r.out) && /--package/.test(r.out) && !r.log.some((l) => /step2/.test(l)), "rescue: a loader without --package is not guessed at, the timeout says to name the package");
 }
 
 console.log(failed ? `\n${failed} FAILED` : "\nall flasher tests passed");
