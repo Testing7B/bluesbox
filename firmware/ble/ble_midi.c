@@ -57,6 +57,15 @@ static uint8_t ble_peer[6];                                     /* little endian
 static uint32_t ble_links, ble_writes, ble_pairs, ble_drop_reason;
 static uint32_t ble_ev[8], ble_ev_n;                            /* the last events the host passed on, without Number Of Completed Packets: type, code, subevent or status, status */
 
+/* as the SDK after a disconnection too: the controller keeps neither the parameters nor the data from one advertising run to the next */
+static int ble_adv_on(void)
+{
+    ble_user_cmd_prepare(BLE_CMD_ADV_PARAM, 3, BLE_ADV_INTERVAL, BLE_ADV_IND, BLE_ADV_CHMAP);
+    ble_user_cmd_prepare(BLE_CMD_ADV_DATA, 2, (int)sizeof ble_adv_data, ble_adv_data);
+    ble_user_cmd_prepare(BLE_CMD_RSP_DATA, 2, (int)sizeof ble_scan_rsp, ble_scan_rsp);
+    return ble_user_cmd_prepare(BLE_CMD_ADV_ENABLE, 1, 1);
+}
+
 static uint16_t att_read(uint16_t con, uint16_t handle, uint16_t offset, uint8_t *buf, uint16_t size)
 {
     (void)con;
@@ -92,7 +101,7 @@ static void ble_on_event(uint8_t type, uint16_t chan, uint8_t *p, uint16_t size)
     if (p[0] == HCI_EVENT_DISCONNECTION_COMPLETE) {
         ble_conn = 0;
         ble_drop_reason = p[5];
-        ble_user_cmd_prepare(BLE_CMD_ADV_ENABLE, 1, 1);
+        ble_adv_on();
     } else if (p[0] == HCI_EVENT_LE_META) {
         const uint8_t *q = 0;
         if (p[2] == HCI_SUBEVENT_LE_CONNECTION_COMPLETE && !p[3]) q = p + 14;
@@ -137,11 +146,8 @@ static void ble_advertise(void)
 {
     ble_stage_set(BLE_STAGE_ADV);
     le_controller_set_mac(ble_adv_mac);                         /* the public address slot is zero otherwise (ble_adv.h) */
-    ble_user_cmd_prepare(BLE_CMD_ADV_PARAM, 3, BLE_ADV_INTERVAL, BLE_ADV_IND, BLE_ADV_CHMAP);
-    ble_user_cmd_prepare(BLE_CMD_ADV_DATA, 2, (int)sizeof ble_adv_data, ble_adv_data);
-    ble_user_cmd_prepare(BLE_CMD_RSP_DATA, 2, (int)sizeof ble_scan_rsp, ble_scan_rsp);
     ble_stage_set(BLE_STAGE_ENABLE);
-    int rc = ble_user_cmd_prepare(BLE_CMD_ADV_ENABLE, 1, 1);
+    int rc = ble_adv_on();
     if (rc) ble_fail(BLE_FAIL_ADV_ENABLE, rc); else ble_state = BLE_ADV;
 }
 
