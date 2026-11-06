@@ -63,11 +63,10 @@ starts the moment the pedal answers and halts its DSP at once. A BlackBox can al
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
 
-**Without internet**: double-click `INSTALL-OFFLINE.bat` in this folder (Windows). It builds the packages if
-`docs\firmware` has none (`INSTALL-OFFLINE.bat build` rebuilds them), serves the installer and the packages from this
-folder on this computer only (`http://localhost:8765`, a small PowerShell server: `tools/serve_offline.ps1`) and opens
-it in Chrome or Edge. Same page, same steps; keep its window open while you install. `INSTALL-OFFLINE.bat editor`
-opens the web editor the same way.
+**Without internet**: run `make serve` (macOS, Linux) or double-click `INSTALL-OFFLINE.bat` (Windows). It serves the installer
+and the packages from this folder on this computer only (`http://localhost:8765`, `tools/serve.py`, needs Python 3) and
+opens them in Chrome or Edge. Same page, same steps; keep it running while you install. `INSTALL-OFFLINE.bat editor`
+opens the web editor the same way. The packages must be built first (`make build`, see below).
 
 ## Preset editor
 
@@ -79,14 +78,15 @@ what you change on the pedal shows on the page. The protocol: [`docs/EDITOR-PROT
 
 ## Build
 
-Windows: install WSL and the JieLi toolchain once (`wsl bash firmware/setup.sh`), then run **`build.bat`**. It makes:
+The same on macOS, Linux and Windows, in one container (Docker and Node 18+): **`make package`** (Windows:
+**`build.bat`**), then **`make test`**. Details, pinned versions, the toolchain's licence and troubleshooting:
+[`docs/BUILDING.md`](docs/BUILDING.md). The build makes:
 
 - `firmware/openpocket.bin`, the app;
 - `docs/firmware/PocketX_9NN.fwsc`, `BlackBox_9NN.fwsc`, `manifest.json`, the installer's packages
   (`tools/pxpkg.py`, with the update loader built from `loader/`);
-- `fm1-300.bin` only if your factory backup `fm1-1.bin` is in the folder (SD-card recovery image).
+- `fm1-300.bin` with `make appimage DUMP=fm1-1.bin` (or `makeimage.bat`), from your factory backup (SD-card recovery image).
 
-Linux: `JIELI_TOOLCHAIN=~/.jieli/toolchain firmware/build.sh`.
 **`PUBLISH-GITHUB.bat`** does everything in one click: it runs `build.bat`, then publishes the source, a release with
 the packages, and the installer on GitHub Pages (with your own `git` / `gh` and GitHub login; never a forced push).
 GitHub's `main` becomes exactly this folder's files (v36): the version history from `openpocket.bundle` is merged in,

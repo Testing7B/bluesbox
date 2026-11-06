@@ -1,0 +1,7 @@
+.git
+build
+firmware/build
+docs/firmware/*.fwsc
+node_modules
+fm1-1.bin
+fm1-300.bin

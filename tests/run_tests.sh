@@ -1,5 +1,5 @@
 #!/bin/sh
-# OpenPocket host tests (Linux / WSL / macOS; no pedal, no JieLi toolchain needed):
+# OpenPocket host tests (Linux / macOS, or in the container: tools/op.mjs test; no pedal, no JieLi toolchain needed):
 #   tests/run_tests.sh [PocketX_016.fwsc]
 #  - engine: every block x model x extreme knob, signal / silence / overload, with the pedal's own libm (px_math.c):
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
@@ -23,6 +23,8 @@ $CC -O1 -Wall -Wno-unused-function -o build/devsim tests/devsim.c
 if [ -n "$1" ]; then echo "== packages"; python3 tests/test_pxpkg.py "$1"; fi
 echo "== installer"
 node tests/test_installer.mjs "$1"
+echo "== build entry point (tools/op.mjs)"
+node tests/test_op.mjs
 echo "== editor"
 $CC -O1 -Wall -Wno-unused-function -o build/edsim tests/edsim.c engine/px_dsp.c firmware/px_math.c -lm
 node tests/test_editor.mjs
