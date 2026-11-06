@@ -22,6 +22,8 @@
  *   in   "#vol N"                the MASTER knob, 0..100
  *   in   "#bat MV [USB_MV]"      the battery voltage (and the 5 V supply) the screen shows
  *   in   "#hz F"                 the pitch the tuner page hears (0: none)
+ *   in   "#dsp load N"           the load the status text shows, measured by the page that runs the sound (tools/sim/)
+ *   in   "#dsp bypass 0|1"       the bypass state: the status text shows "BYP" and the sound passes the dry input
  *   in   "#status"               one JSON line: slot, mode, focused block, volume, the whole current sound, ...
  *   in   "#screen"               "#screen " + 240*240 RGB565 pixels, 4 hex digits each, row by row
  *   in   "#flash PATH"           writes the 1 MiB flash to PATH
@@ -106,8 +108,10 @@ static volatile uint8_t a_tmute;
 static float tuner_hz;
 #include "../firmware/ui_text.h"
 #include "../firmware/ui.h"
-static uint32_t ed_load(void) { return 42u; }
-static uint32_t ed_flags(void) { return 2u; }
+static uint32_t dsp_load = 42u;
+static int dsp_bypass;
+static uint32_t ed_load(void) { return dsp_load; }
+static uint32_t ed_flags(void) { return (dsp_bypass ? 1u : 0u) | 2u; }
 
 /* ---- SysEx in/out ---- */
 static uint8_t frame[2048];
@@ -231,7 +235,9 @@ static void buttons_service(uint32_t now)
 static void frame_draw(void)                           /* what the main loop does after each pass */
 {
     ui_render();
-    ui_status("C1 42%", 0);
+    char c[12];
+    snprintf(c, sizeof c, "%s %u%%", dsp_bypass ? "BYP" : "C1", dsp_load);
+    ui_status(c, dsp_bypass);
     if (ui_mode == M_TUNER) tuner_draw(tuner_hz);
 }
 static void json_str(const char *s)
@@ -332,6 +338,14 @@ static void command(const char *l)
     } else if (sscanf(l, "#hz %lf", &d) == 1) {
         tuner_hz = (float)d;
         printf("#hz ok\n");
+        fflush(stdout);
+    } else if (sscanf(l, "#dsp load %d", &v) == 1 && v >= 0 && v <= 999) {
+        dsp_load = (uint32_t)v;
+        printf("#dsp ok\n");
+        fflush(stdout);
+    } else if (sscanf(l, "#dsp bypass %d", &v) == 1) {
+        dsp_bypass = v != 0;
+        printf("#dsp ok\n");
         fflush(stdout);
     } else if (!strcmp(l, "#status")) status();
     else if (!strcmp(l, "#screen")) screen();

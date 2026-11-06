@@ -17,3 +17,4 @@ export NODE_PATH="$PW_DIR/node_modules"
 node tests/test_page.mjs build/page
 node tests/test_editor_page.mjs build/editor
 node tests/test_pedal_page.mjs build/pedal
+node tests/test_audio_page.mjs build/audio

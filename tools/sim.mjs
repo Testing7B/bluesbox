@@ -16,6 +16,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "build", "sim");
 const BIN = join(BUILD, `${process.platform}-${process.arch}`);   // the container shares build/ with the host: one binary each
 const SIM_FILES = join(ROOT, "tools", "sim");
+const SIM_SERVED = new Set(["webmidi-shim.js", "pedal-input.js", "pedal-audio.js", "pedal-worklet.js", "px-engine.js", "px_engine.wasm"]);
+const LOOPS = join(ROOT, "assets", "loops");
 
 // ---- the native simulators, built with the host's C compiler (no JieLi toolchain, no Docker) ----
 const PROGRAMS = {
@@ -143,7 +145,7 @@ function png(be, scale = 1) {
 }
 
 // ---- HTTP ----
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".css": "text/css", ".md": "text/plain; charset=utf-8" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".css": "text/css", ".md": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".wav": "audio/wav" };
 const BUTTONS = ["fs_up", "fs_dn", "fx", "home", "push", "mod", "amp", "cab", "dly", "rev"];
 const CONTROLS = [...BUTTONS, "push_long", "dpush", "home_long"];
 const SHIM_TAG = '<script src="/sim/webmidi-shim.js"></script>';
@@ -238,6 +240,8 @@ export async function startSim(opts = {}) {
     if (what === "volume") return json(res, await ok(`#vol ${Math.trunc(num(a, 0, 100, "volume"))}`));
     if (what === "battery") return json(res, await ok(`#bat ${Math.trunc(num(a, 0, 6000, "battery mV"))} ${b === undefined ? "" : Math.trunc(num(b, 0, 6000, "USB mV"))}`));
     if (what === "tuner") return json(res, await ok(`#hz ${num(a, 0, 5000, "tuner Hz")}`));
+    if (what === "load") return json(res, await ok(`#dsp load ${Math.trunc(num(a, 0, 999, "DSP load"))}`));
+    if (what === "bypass") return json(res, await ok(`#dsp bypass ${Math.trunc(num(a, 0, 1, "bypass"))}`));
     throw new HttpError(404, "no such endpoint");
   }
 
@@ -261,7 +265,8 @@ export async function startSim(opts = {}) {
       if (req.method !== "GET") throw new HttpError(405, "GET");
       if (path === "/") return file(res, join(SIM_FILES, "pedal.html"));
       if (path === "/plain") return file(res, join(SIM_FILES, "page.html"));
-      if (path === "/sim/webmidi-shim.js" || path === "/sim/pedal-input.js") return file(res, join(SIM_FILES, path.slice(5)));
+      if (path.startsWith("/sim/") && SIM_SERVED.has(path.slice(5))) return file(res, join(SIM_FILES, path.slice(5)));
+      if (path.startsWith("/loops/")) return file(res, within(LOOPS, path.slice(7)));
       if (path.startsWith("/site/")) { const p = within(join(ROOT, "docs"), path.slice(6) || "index.html"); return file(res, p, extname(p) === ".html"); }
       throw new HttpError(404, "not found");
     } catch (e) {

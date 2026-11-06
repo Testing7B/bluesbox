@@ -40,6 +40,7 @@ Run it first whenever anything looks off.
 | Screen layout | `cc ... tests/uisim.c` (see toolchain skill), `build/uisim build/ui` | PPM pages, `never drawn` absent from the log |
 | The pedal as a user plays it: footswitches, knob, pages, save, tuner, the live screen | `node tools/op.mjs sim`, then the HTTP API (skill `openpocket-simulator`, `docs/SIMULATOR.md`) | `GET /api/state` and `/api/screen.png` after each press; the flash file `build/sim/flash.bin` survives a restart |
 | The pedal skin: every control by mouse, touch and keyboard, the backlights, the live LCD | `pages.sh` (runs `tests/test_pedal_page.mjs`) | `build/pedal/pedal-skin*.png`, last line `pedal page: ok` |
+| The sound in the simulator: the engine on known signals, against its native build; the input picker, meters, bypass, the preset heard | `node tests/test_audio.mjs`, `pages.sh` (runs `tests/test_audio_page.mjs`) | every line `ok`; `build/audio/sound.png`; `node tools/sim/render.mjs DIR` renders WAV files to listen to |
 | Editor and installer pages by hand or with `chrome-devtools-axi` | `sim` serves them at `/site/editor.html` and `/site/index.html` with a virtual Web MIDI | Connect finds "OpenPocket"; an edit shows in `/api/state` |
 | MIDI musical messages | see `features/midi-usb.md` | host simulator tests when the USB-MIDI feature is in; hardware: `docs/MIDI-TEST.md` |
 
@@ -51,7 +52,7 @@ the map lists more.
 Screenshots and logs go to `build/` (gitignored); copy what you cite to a folder outside the repo. Proof standards: run the
 real code (the simulators compile the firmware's own `px_editor.h`, `px_store.h`, `ui.h`, `ota.c`), not a re-implementation;
 a mocked boundary is only Web MIDI/USB (already isolated by the tests); state what was exercised and what was not.
-**Not verifiable here:** audio, DSP load and glitches, USB enumeration on a real host, Bluetooth, flashing, the screen on
+**Not verifiable here:** audio on the pedal, its DSP load and glitches, USB enumeration on a real host, Bluetooth, flashing, the screen on
 the real LCD. Say so, and point to `docs/MIDI-TEST.md` (hardware checklist) when it exists.
 
 ## Cleanup
