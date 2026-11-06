@@ -114,7 +114,7 @@ trip, two jitter buffers and the page's main thread. In Chrome on a Mac the cont
 at 44.1 kHz as at the sound card's 48 kHz; the output device adds what it adds (168 ms reported on that Mac's output),
 and the page shows the sum. Fidelity:
 it is the same code with the same 128-frame blocks and the firmware's own `px_math.c`; `tests/test_audio.mjs` holds it to
-the native build within 1e-5 of the peak. Effort: Node has no WebSocket server, and the repository has no dependencies.
+the native build exactly, on all 52 factory presets (the pedal's MASTER is scaled by 0.25 there so nothing clips, which is exact). Effort: Node has no WebSocket server, and the repository has no dependencies.
 The price is a committed binary: `tools/sim/px_engine.wasm` (82 KB), so that the simulator still needs only a C
 compiler. `node tools/op.mjs wasm` (`make wasm`) rebuilds it in the container with Debian's clang and lld. Next to it,
 `px_engine.wasm.sources` holds the sources' checksum, and the test fails when the engine changes without a rebuild.
@@ -216,7 +216,8 @@ fake packages for a try.
 
 ## Tests
 
-`tests/test_audio.mjs` feeds test tones and the loops through the WebAssembly engine and checks the output, and
+`tests/test_audio.mjs` feeds a test tone and each loop through the WebAssembly engine and the native build for all 52 presets (identical, all finite), checks each loop against `manifest.json` and `ATTRIBUTION.md`, and
+(with `EVIDENCE_DIR` set) writes the largest difference per preset and signal to `audio-parity.tsv`;
 `tests/test_audio_page.mjs` drives the Sound section in Chromium with a fake audio input (with Playwright installed).
 `tests/test_sim.mjs` (part of `make test`) starts the simulator and checks every row above, then runs the real editor
 (`docs/pxedit.js`) and installer (`docs/pxota.js`) code over the shim. `tests/test_pedal_input.mjs` checks the skin's input
