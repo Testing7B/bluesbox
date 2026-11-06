@@ -57,6 +57,7 @@ Open a scanner (nRF Connect, LightBlue, or macOS *Audio MIDI Setup*; use active 
 
 The pedal has one link and stops advertising while it is in use, so a scanner sees nothing then. A Chocolate Plus with its switch on
 H connects by itself within seconds of the pedal starting. To reach the pedal from a Mac, put the Chocolate on O.
+`tools/chocolate/README.md` sets its footswitches up to switch the effects.
 
 If the screen reads `FAILED`, or nothing appears within a few seconds, please report the screen text, the pedal model,
 what the scanner shows and whether the pedal still works as a normal OpenPocket (audio, screen, USB MIDI).
