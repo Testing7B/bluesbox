@@ -47,7 +47,6 @@ SECTOR = 0x1000
 IO = 512
 WRITE_FROM = 0x4000
 WRITE_LIMIT = 0xFF000
-MAX_GAP = 2.0  # the loader resets the chip after about 3 s without a command
 
 def user_home():
     """The home of the person who typed sudo, not root's."""
@@ -141,8 +140,6 @@ class Uboot:
 
     def __init__(self, msc, window=None, clock=time.monotonic):
         self.msc, self.window, self.clock = msc, window, clock
-        self.last = None
-        self.max_gap = 0.0
 
     def _command(self, op, args, out=None, in_len=0, answer=False, tries=3, timeout=2000):
         if op not in READ_ONLY_OPS and not (self.window and op in WRITE_OPS):
@@ -150,9 +147,6 @@ class Uboot:
         cdb = (op.to_bytes(2, "big") + args).ljust(16, b"\xff")
         err = None
         for _ in range(tries):
-            now = self.clock()
-            if self.last is not None:
-                self.max_gap = max(self.max_gap, now - self.last)
             try:
                 data = self.msc.execute(cdb, out, 16 if answer else in_len, timeout)
             except DeviceGone:
@@ -160,8 +154,6 @@ class Uboot:
             except ScsiError as e:
                 err = e
                 continue
-            finally:
-                self.last = self.clock()
             if answer and (len(data) != 16 or int.from_bytes(data[:2], "big") != op):
                 err = ScsiError(f"command {op:04X}: wrong answer")
                 continue
@@ -173,7 +165,6 @@ class Uboot:
 
     def inquiry(self):
         data = self.msc.execute(b"\x12\x00\x00\x00\x24\x00", None, 36, 1000)
-        self.last = self.clock()
         text = lambda a, b: data[a:b].decode("ascii", "replace").strip()
         return text(8, 16), text(16, 32), text(32, 36)
 
