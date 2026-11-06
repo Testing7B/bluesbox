@@ -4,6 +4,7 @@
 #   make build      firmware/openpocket.bin, the update loader and docs/firmware/*.fwsc + manifest.json
 #   make test       the host tests (tests/run_tests.sh)
 #   make package    build + build/SHA256SUMS of the outputs
+#   make package-test   the MIDI test channel package (docs/firmware/midi-test/, never the installer default)
 #   make clean      remove every build output (needs no Docker)
 #   make shell      a shell in the build container
 #   make image      (re)build the container image
