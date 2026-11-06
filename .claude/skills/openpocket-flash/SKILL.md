@@ -77,7 +77,7 @@ processing, so the restarts stop) and installs the package of the pedal's model.
 the other model is refused before anything is sent. Without `--package` the manifest's package for the pedal's model is used.
 It waits `--timeout` seconds (default 180); an install already running is never cut short. A pedal that vanishes before the
 update finished has had nothing written: it is waited for again. `--rescue --dry-run` waits for the pedal and checks the model,
-writing nothing. Reached states: the running firmware's MIDI port, and an OpenPocket update loader left half-done. Not reached
+writing nothing. Reached states: the running firmware's MIDI port, and an OpenPocket update loader left half-done (finished only with `--package`: a loader does not report its model; a foreign loader is refused). Not reached
 (same as the page): a firmware that crashes before it answers, and the chip's mask-ROM loader `WL80UBOOT` (USB 4C4A:8057, no
 MIDI); both need the SD-card recovery. Timeout is exit 1 with the recovery text. One pedal on the bus: the first to answer is used.
 
