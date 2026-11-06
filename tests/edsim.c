@@ -27,6 +27,10 @@
  *   in   "#status"               one JSON line: slot, mode, focused block, volume, the whole current sound, ...
  *   in   "#screen"               "#screen " + 240*240 RGB565 pixels, 4 hex digits each, row by row
  *   in   "#flash PATH"           writes the 1 MiB flash to PATH
+ * Built with -DOP_BLE_TEST=1 it also answers DIAG, as the Bluetooth test image does, from the real text code (ble_diag.h):
+ *   in   "#ble adv I T"          advertising; the counters i and t
+ *   in   "#ble failed S C"       FAILED, step S, code C
+ *   in   "#ble safe"             the boot after a watchdog reset in the first 6 s: safe mode, Bluetooth off
  *   edsim [FLASH.bin] [--persist FILE] [--dump OUT.bin]
  * --persist FILE: the flash lives in FILE (read at the start when it exists, written again after each change);
  * --dump OUT.bin: the flash is written to OUT.bin when stdin closes. */
@@ -127,6 +131,26 @@ static int ota_wire_send(const uint8_t *p, uint32_t n)
 }
 
 #include "../firmware/px_store.h"
+#if OP_BLE_TEST
+#include "../firmware/ble/ble_diag.h"
+#define ED_DIAG_LINES 3u
+#define ED_DIAG_LEN 224u
+static uint32_t sim_safe, sim_rst = 0x40u;
+static void ed_diag_line(uint32_t i, char *out)
+{
+    if (i == 0u) ble_boot_text(out, 30000u, sim_safe, 8u, sim_rst, 0u);
+    else if (i == 1u) ble_last_text(out, &ble_last);
+    else if (ble_state == BLE_ADV) ble_adv_text(out, 0x2001u, 0x101u, 0u, 0x80u, 3u, 3u, 1u);
+    else ble_status_full(out);
+}
+static void sim_ble(const char *l)
+{
+    int a, b;
+    if (sscanf(l, "adv %d %d", &a, &b) == 2) { ble_state = BLE_ADV; ble_cnt_irq_ev = (uint32_t)a; ble_cnt_timer = (uint32_t)b; }
+    else if (sscanf(l, "failed %d %d", &a, &b) == 2) ble_fail((uint32_t)a, b);
+    else if (!strcmp(l, "safe")) { ble_state = BLE_OFF; sim_safe = 1; sim_rst = 4u; ble_last = (ble_boot_t){ .failed = 1, .stage = 7, .blocks = 9 }; }
+}
+#endif
 #include "../firmware/px_editor.h"
 
 static int hexv(int c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
@@ -302,6 +326,9 @@ static void command(const char *l)
     char name[32];
     double d;
     if (!strncmp(l, "#pedal ", 7)) pedal(l + 7);
+#if OP_BLE_TEST
+    else if (!strncmp(l, "#ble ", 5)) sim_ble(l + 5);
+#endif
     else if (!strcmp(l, "#dump")) {           /* "#state SLOT|NAME|WRITES_OK|FOCUS|ON..|TYPE..|P(AMP)..|ORDER.." */
         int i;
         printf("#state %u|%s|%d|%u|", cur_preset, PRESET.name, writes_ok, ui_blk);

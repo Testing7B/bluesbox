@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../firmware/ble/ble_status.h"
+#include "../firmware/ble/ble_diag.h"
 #include "../firmware/ble/ble_adv.h"
 
 static int bad;
@@ -112,5 +113,22 @@ int main(void)
       if (BLE_ADV_SCAN_IND != 2 || BLE_ADV_INTERVAL < 0x00A0 || BLE_ADV_INTERVAL > 0x4000 || BLE_ADV_CHMAP != 7 || BLE_ADV_FILTER != 0) {
           puts("FAIL: advertising parameters out of range"); bad++; } }
     puts(bad ? "ble status: FAILED" : "ble status: ok");
+    { /* the log channel's boot lines (ble_diag.h) */
+        char l[224];
+        ble_boot_t b = { 0 };
+        ble_boot_text(l, 12345u, 1u, 7u, 0x44u, 1u);
+        if (strcmp(l, "UP 12345 SAFE 1 STAGE 7 RST 44 GUARD 1")) { printf("FAIL boot line: %s\n", l); bad++; }
+        ble_last_text(l, &b);
+        if (strcmp(l, "LAST OK")) { printf("FAIL last boot, fine: %s\n", l); bad++; }
+        b.failed = 1; b.stage = 7; b.blocks = 9; b.load = 42; b.peak = 61; b.c1 = 1;
+        ble_last_text(l, &b);
+        if (strcmp(l, "LAST FAILED STAGE 7 BLOCKS 9 LOAD 42 PEAK 61 NAN 0 CPU1 1 LOOPS 0")) { printf("FAIL last boot, failed: %s\n", l); bad++; }
+        b.crashed = 1; b.vec = 0x3Fu; b.pc = 0x02000DC8u; b.rets = 0x02001234u; b.emu = 8u; b.uptime = 4100u;
+        ble_last_text(l, &b);
+        if (strcmp(l, "LAST FAILED STAGE 7 BLOCKS 9 LOAD 42 PEAK 61 NAN 0 CPU1 1 LOOPS 0 CRASH VEC 3F PC 2000DC8 RETS 2001234 DBG 0 EMU 8 UP 4100")) { printf("FAIL last boot, crash: %s\n", l); bad++; }
+        b.blocks = b.load = b.peak = b.nans = b.c1 = b.loops = b.vec = b.pc = b.rets = b.dbg = b.emu = b.uptime = 0xFFFFFFFFu; b.stage = 0xFFFFFFFFu;
+        ble_last_text(l, &b);
+        if (strlen(l) > 211u) { printf("FAIL last boot: the widest line is %u long, ED_DIAG_LEN is 224\n", (unsigned)strlen(l)); bad++; }
+    }
     return bad != 0;
 }

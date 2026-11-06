@@ -83,3 +83,6 @@ void ble_test_adv_line(char *out)
     ble_adv_text(out, *(volatile uint32_t *)0x28000u, *(volatile uint32_t *)0x28028u, *(volatile uint32_t *)0x28030u, *(volatile uint32_t *)0x28038u,
                  (FM1_ICFG(45) >> ((45u & 7u) * 4u)) & 0xFu, (FM1_ICFG(29) >> ((29u & 7u) * 4u)) & 0xFu, *(volatile uint32_t *)0x2FC80u);
 }
+
+/* the line the status area scrolls, and the log channel sends (out: 96 bytes) */
+void ble_test_line(char *out) { if (ble_state == BLE_ADV) ble_test_adv_line(out); else ble_status_full(out); }
