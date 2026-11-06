@@ -63,10 +63,11 @@ starts the moment the pedal answers and halts its DSP at once. A BlackBox can al
 used by Felucca, CLIPPER and SLOOP. Keep the SD-card recovery at hand (`flash/`: fm1buddy on an ESP32-S3,
 `makeimage.bat`).
 
-**Without internet**: run `make serve` (macOS, Linux) or double-click `INSTALL-OFFLINE.bat` (Windows). It serves the installer
-and the packages from this folder on this computer only (`http://localhost:8765`, `tools/serve.py`, needs Python 3) and
-opens them in Chrome or Edge. Same page, same steps; keep it running while you install. `INSTALL-OFFLINE.bat editor`
-opens the web editor the same way. The packages must be built first (`make build`, see below).
+**Without internet**: double-click `INSTALL-OFFLINE.bat` (Windows; nothing to install: a small PowerShell server,
+`tools/serve_offline.ps1`) or run `make serve` (macOS, Linux; `tools/serve.py`, needs Python 3). It serves the installer
+and the packages from this folder on this computer only (`http://localhost:8765`) and opens them in Chrome or Edge. Same
+page, same steps; keep it running while you install. `INSTALL-OFFLINE.bat editor` opens the web editor the same way. It
+builds the packages first when `docs\firmware` has none (`INSTALL-OFFLINE.bat build` rebuilds them).
 
 ## Preset editor
 
@@ -79,7 +80,8 @@ what you change on the pedal shows on the page. The protocol: [`docs/EDITOR-PROT
 ## Build
 
 The same on macOS, Linux and Windows, in one container (Docker and Node 18+): **`make package`** (Windows:
-**`build.bat`**), then **`make test`**. Details, pinned versions, the toolchain's licence and troubleshooting:
+**`build.bat`**), then **`make test`**. On Windows without Docker, `build.bat` builds in WSL instead, with the JieLi
+toolchain installed there once (`wsl sh firmware/setup.sh`). Details, pinned versions, the toolchain's licence and troubleshooting:
 [`docs/BUILDING.md`](docs/BUILDING.md). The build makes:
 
 - `firmware/openpocket.bin`, the app;
