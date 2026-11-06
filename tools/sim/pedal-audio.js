@@ -27,7 +27,7 @@ export class PedalAudio {
   async start() {
     this.ctx ??= new AudioContext({ sampleRate: ENGINE_RATE, latencyHint: "interactive" });
     const resumed = this.ctx.resume();
-    this.starting ??= this.build();
+    this.starting ??= this.build().catch((error) => { this.starting = null; throw error; });
     await this.starting;
     await resumed;
   }
