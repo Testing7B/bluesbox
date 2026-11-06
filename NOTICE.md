@@ -11,6 +11,7 @@ OpenPocket is GPL-3.0-only (`LICENSE`), except the parts below, which keep their
 | `third_party/jieli-ble/` (JieLi's Bluetooth LE controller, 33 objects of `btctrler.a` and 3 of `cpu.a`, as published LLVM bitcode, used only by the Bluetooth test image `make ble`) | JieLi AC79 SDK V1.2.0 (fw-AC79_AIoT_SDK, commit `0617f4c`), `cpu/wl82/liba/`; see `third_party/jieli-ble/README.md` | Apache-2.0 (`third_party/jieli-ble/LICENSE-JieLi-Apache-2.0`, `LICENSES/Apache-2.0.txt`) |
 | `firmware/ble/ble_cfg.c` | values and names from the same SDK's `apps/common/config/log_config/lib_btctrler_config.c` | Apache-2.0 |
 | `firmware/fonts.h` (bitmaps generated from Inter) | [Inter](https://rsms.me/inter/), Rasmus Andersson | SIL OFL 1.1 (`LICENSES/OFL-1.1-Inter.txt`) |
+| `assets/loops/*.wav` (guitar loops for the simulator) | cut from [Guitar-TECHS](https://zenodo.org/records/14963133), credits in `assets/loops/ATTRIBUTION.md` | CC BY 4.0 |
 
 Sound models: the names refer to the gear that inspired each voicing (circuit analyses published by ElectroSmash,
 Electric Druid, R.G. Keen / GEOFEX, Rob Robinette, Duncan's Tone Stack Calculator; speaker data sheets; manufacturers'
