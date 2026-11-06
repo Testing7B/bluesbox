@@ -125,6 +125,7 @@ and open `http://127.0.0.1:8766/`; see [`docs/SIMULATOR.md`](docs/SIMULATOR.md).
 | `tools/` | package builder, loader wrapper, font converter, flash image tools |
 | `tests/` | host tests and the simulated pedal |
 | `flash/` | SD-card recovery with fm1buddy (ESP32-S3) |
+| `firmware/ble/`, `third_party/jieli-ble/` | the optional advertise-only Bluetooth test image (`make ble`, [docs/BLE-TEST.md](docs/BLE-TEST.md)) and JieLi's Bluetooth controller it links |
 
 ## Licence
 
