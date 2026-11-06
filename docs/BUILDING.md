@@ -37,6 +37,7 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 | `make shell` | a shell in the container (as your user) |
 | `make serve` | the installer and editor on `http://localhost:8765/` (offline install; needs Python 3 on the host) |
 | `make flash ARGS="--dry-run"` | write a built package to a connected pedal over USB MIDI, no browser (`--confirm-flash` really writes; see below) |
+| `make log ARGS="--follow"` | read a connected pedal's state over USB MIDI, with the fields explained and a verdict (`docs/BLE-TEST.md`, "Reading the pedal from a computer") |
 | `make render IN=guitar.wav [OUT=..] [PRESET=1]` | a DI recording through the engine |
 | `make appimage DUMP=fm1-1.bin` | `fm1-300.bin` for the SD-card recovery |
 

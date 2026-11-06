@@ -12,10 +12,11 @@
 #   make serve      the installer and editor on http://localhost:8765/ (offline install)
 #   make serve-ble  the same, with the Bluetooth test packages (build/ble) to install; builds them first if missing
 #   make flash ARGS="--dry-run"   write a built package to a connected pedal (ARGS="--confirm-flash" to really write)
+#   make log ARGS="--follow"   read a connected pedal's state over USB MIDI, with the fields explained
 #   make render IN=guitar.wav [OUT=out.wav] [PRESET=1]   a WAV through the engine
 #   make appimage [DUMP=fm1-1.bin]   fm1-300.bin for the SD-card recovery
 # `make NATIVE=1 build` skips Docker (toolchain installed with firmware/setup.sh).
-.PHONY: doctor build ble test package package-test clean shell image serve serve-ble render appimage flash
+.PHONY: doctor build ble test package package-test clean shell image serve serve-ble render appimage flash log
 doctor build ble test package package-test clean shell image serve:
 	@node tools/op.mjs $@
 serve-ble:
@@ -24,5 +25,5 @@ render:
 	@node tools/op.mjs render "$(IN)" "$(OUT)" "$(PRESET)"
 appimage:
 	@node tools/op.mjs appimage "$(DUMP)"
-flash:
-	@node tools/op.mjs flash $(ARGS)
+flash log:
+	@node tools/op.mjs $@ $(ARGS)
