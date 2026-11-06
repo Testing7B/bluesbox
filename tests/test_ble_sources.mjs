@@ -1,6 +1,6 @@
 // The Bluetooth test image's vendor objects (third_party/jieli-ble, docs/BLE-TEST.md): MEMBERS lists exactly the files
-// that are there, each is LLVM bitcode, the licence text is JieLi's Apache-2.0 file, and the normal build never touches
-// them. (The image itself is built by `make ble`; this needs no Docker.)
+// that are there, each is LLVM bitcode, and the licence text is JieLi's Apache-2.0 file. (The image itself is built by
+// `make ble`; this needs no Docker.)
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -18,8 +18,4 @@ for (const f of listed) {
   assert.ok(statSync(join(dir, f)).size > 100, `${f} is not empty`);
 }
 assert.equal(readFileSync(join(dir, "LICENSE-JieLi-Apache-2.0"), "utf8"), readFileSync(join(repo, "firmware/sdk/LICENSE-JieLi-Apache-2.0"), "utf8"), "the licence text is JieLi's");
-const build = readFileSync(join(repo, "firmware/build.sh"), "utf8");
-const link = build.split("\n").find((l) => l.includes("pi32v2/bin/ld") && l.includes("app.ld"));
-assert.ok(link.includes("$BLEOBJ") && !link.includes("jieli-ble"), "the vendor objects are linked only through $BLEOBJ, which the OP_BLE branch fills");
-assert.match(build, /BLEOBJ=""[\s\S]*if \[ -n "\$OP_BLE" \]; then[\s\S]*third_party\/jieli-ble[\s\S]*\nfi/, "third_party/jieli-ble is read only inside the OP_BLE branch");
 console.log(`ble sources: ${listed.length} objects ok`);

@@ -201,6 +201,8 @@ int os_taskq_pend(const char *fmt, int *argv, int argc)
     msg_t m;
     int i;
     (void)fmt;
+    if (!cur)
+        return OS_TIMEOUT;
     for (;;) {
         local_irq_disable();
         if (cur->qn) {
@@ -220,6 +222,10 @@ int os_taskq_pend(const char *fmt, int *argv, int argc)
 
 void os_time_dly(int ticks)
 {
+    if (!cur)
+        return;
+    if (ticks < 1)
+        ticks = 1;
     cur->wake_ms = fm1_uptime_ms() + (uint32_t)ticks * OS_TICK_MS;
     cur->state = T_SLEEP;
     task_yield();
