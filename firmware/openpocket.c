@@ -696,12 +696,19 @@ static void app_main(void)
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
 #if OP_BLE_TEST
-                {   /* "ADVERTISING C1 42%": the Bluetooth state first */
-                    char b[40]; int k = 0, j; const char *w = ble_test_state();
-                    while (*w && k < 14) b[k++] = *w++;
-                    b[k++] = ' ';
-                    for (j = 0; c[j]; j++) b[k++] = c[j];
-                    b[k] = 0;
+                {   /* "ADVERTISING C1 42%": the Bluetooth state first; FAILED scrolls "FAILED 2 -7  step ... stage ..." instead (ble_status.h) */
+                    char b[48], full[96]; int k, j;
+                    static uint32_t scroll;
+                    ble_test_state(b);
+                    if (ble_state == BLE_FAILED) {   /* the line is longer than the status area: scroll it (ble_status.h) */
+                        ble_status_full(full);
+                        ble_marquee(full, scroll++, 11, b);
+                    } else {
+                        for (k = 0; b[k]; k++) ;
+                        b[k++] = ' ';
+                        for (j = 0; c[j]; j++) b[k++] = c[j];
+                        b[k] = 0;
+                    }
                     ui_status(b, a_bypass);
                 }
 #else

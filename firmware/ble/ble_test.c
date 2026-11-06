@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include "fm1_irq.h"
 #include "ble_os.h"
+#include "ble_status.h"
 
 /* the controller library's entry points (include_lib/btctrler/btctrler_task.h, ble/hci_ll.h; hci_transport.h) */
 extern int btctrler_task_init(const void *transport, const void *config);
@@ -22,9 +23,6 @@ extern int ll_hci_adv_enable(bool enable);
 extern int task_create(void (*fn)(void *), void *arg, const char *name);   /* ble_os.c */
 
 enum { ADV_SCAN_IND = 2 };
-enum { S_IDLE, S_STARTING, S_ADV, S_FAILED };
-
-static volatile uint32_t state;
 static uint32_t t_start;
 static uint8_t cfg[64];                                         /* the controller reads its host-side settings here: none */
 
@@ -40,33 +38,36 @@ static uint8_t scan_rsp[] = { 20, 0x09, 'O','p','e','n','P','o','c','k','e','t',
 static void test_task(void *arg)
 {
     uint8_t chmap = 7;                                          /* channels 37, 38, 39 */
+    int rc;
     (void)arg;
-    if (btctrler_task_init(hci_transport_h4_controller_instance(), cfg) || !btctrler_task_ready()) {
-        state = S_FAILED;
-        return;
-    }
+    ble_stage_set(BLE_STAGE_INIT);                              /* (BLE_STAGE_RF: ble_rf.c, inside the init) */
+    rc = btctrler_task_init(hci_transport_h4_controller_instance(), cfg);
+    if (rc) { ble_judge_start(rc, 0); return; }
+    ble_stage_set(BLE_STAGE_READY);
+    if (ble_judge_start(0, btctrler_task_ready())) return;
+    ble_stage_set(BLE_STAGE_ADV);
     ll_hci_adv_set_params(0x00A0, 0x00A0, ADV_SCAN_IND, 0, 0, chmap, 0);   /* 100 ms */
     ll_hci_adv_set_data(sizeof(adv_data), adv_data);
     ll_hci_adv_scan_response_set_data(sizeof(scan_rsp), scan_rsp);
-    state = ll_hci_adv_enable(true) ? S_FAILED : S_ADV;
+    ble_stage_set(BLE_STAGE_ENABLE);
+    rc = ll_hci_adv_enable(true);
+    if (rc) ble_fail(BLE_FAIL_ADV_ENABLE, rc); else ble_state = BLE_ADV;
 }
 
 void ble_test_start(void)
 {
-    state = S_STARTING;
+    ble_state = BLE_STARTING;
+    ble_stage_set(BLE_STAGE_TASK);
     t_start = fm1_uptime_ms();
     if (task_create(test_task, 0, "bletest"))
-        state = S_FAILED;
+        ble_fail(BLE_FAIL_TASK_CREATE, -1);
 }
 
 void ble_test_poll(void)
 {
     ble_poll();
-    if (state == S_STARTING && fm1_uptime_ms() - t_start > 5000u)
-        state = S_FAILED;                                       /* (the task, if it is still waiting, is left alone) */
+    if (ble_state == BLE_STARTING && fm1_uptime_ms() - t_start > 5000u)
+        ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);         /* (the task, if it is still waiting, is left alone) */
 }
 
-const char *ble_test_state(void)
-{
-    return state == S_ADV ? "ADVERTISING" : state == S_STARTING ? "STARTING" : state == S_FAILED ? "FAILED" : "OFF";
-}
+void ble_test_state(char *out) { ble_status_text(out); }

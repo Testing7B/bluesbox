@@ -8,12 +8,14 @@
  * The saved radio records (VM items 106, 107, 108, 187) are not read: the VM stays untouched. The records are given
  * as zeros, which leaves the crystal trim (106) and the other stored fields at the captured defaults. */
 #include "ble_os.h"
+#include "ble_status.h"
 #include "fm1_ble_rf.h"
 
 static const uint8_t no_record[68];
 
 void wf_rf_common_init(void)
 {
+    ble_stage_set(BLE_STAGE_RF);
     fm1_wdt_feed();                                              /* the replay takes a while: keep the watchdog fed around it */
     fm1_rf_cal_on = 1;
     fm1_ble_rf_run(no_record, no_record, no_record, no_record);

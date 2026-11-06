@@ -22,4 +22,4 @@ uint32_t ble_heap_min_free(void);
 /* ble_test.c */
 void ble_test_start(void);           /* radio on, controller up, one advertisement */
 void ble_test_poll(void);
-const char *ble_test_state(void);    /* a short word for the screen */
+void ble_test_state(char *out);      /* the short status text for the screen (ble_status.h), 24 bytes */

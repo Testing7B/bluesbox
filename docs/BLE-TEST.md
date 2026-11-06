@@ -41,7 +41,8 @@ OpenPocket (the stock-firmware scan was skipped on purpose).
    **Back to the official firmware** step. The SD-card recovery (`make appimage`) works as before.
 
 The status text at the bottom right of the screen starts with the Bluetooth state: `STARTING`, then `ADVERTISING`
-(or `FAILED`).
+(or `FAILED`), followed by the pedal's usual `C1 42%`. While starting it adds the stage; when it failed it shows only
+the failure, on one short line, so that the code is always on screen. See [Reading the status text](#reading-the-status-text).
 
 ## What you should see
 
@@ -59,6 +60,20 @@ The name appearing in a scanner is the whole success test. Connecting to it will
 
 If the screen reads `FAILED`, or nothing appears within a few seconds, please report the screen text, the pedal model,
 what the scanner shows and whether the pedal still works as a normal OpenPocket (audio, screen, USB MIDI).
+
+## Reading the status text
+
+| Text | Meaning |
+| --- | --- |
+| `STARTING n` | the last stage reached: 1 task created, 2 controller init called, 3 radio front end (the replayed start-up), 4 waiting for the controller task, 5 setting the advertisement, 6 enabling it |
+| `FAILED s c` | step `s` failed with return value `c`. The status area is only about 10 characters wide, so the whole line scrolls like a marquee (2 characters a second, resting 2 s on the start, then looping): `FAILED 2 -7  step btctrler_task_init stage ready-wait`. The short code is first, so it can be read before the scroll starts. The usual `C1 42%` is not shown while it has failed. |
+| `ADVERTISING` | the advertisement is on air |
+
+Failing steps: `1` `task_create` failed (`c` is -1); `2` `btctrler_task_init` returned `c` (not 0); `3`
+`btctrler_task_ready` returned `c` (0: the controller task did not answer); `4` `ll_hci_adv_enable` returned `c` (not
+0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). Example: `FAILED 5 3` is a hang
+in the radio front end replay. The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
+`tests/test_ble_status.c`. Please report the whole `FAILED s c` text.
 
 ## How it works
 
