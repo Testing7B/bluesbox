@@ -253,6 +253,7 @@ static void lcd_text(uint32_t x, uint32_t y, const char *str, uint16_t fg, uint1
 }
 /* ---- preset: the v2 engine's struct (engine/px_dsp.h), edited directly by the UI ---- */
 #include "px_dsp.h"
+#include "px_nam.h"           /* v37: NAM A2-Lite (the engine includes px_nam.c) */
 static px_preset_t PRESET;
 static uint32_t cur_preset = 0;
 static uint32_t master_vol = 80;        /* 0..100, follows the MASTER knob (ADC channel 2) */
@@ -302,7 +303,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "36"
+#define OP_VERSION_NUM "37"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -538,9 +539,15 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "ui.h"
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
+#include "px_models.h"      /* v37: the NAM user models in flash */
 #if !AUDIO_PROBE
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
+static void nm_changed(uint32_t s)   /* v37: a user model was written or erased: the engine reloads it if it plays it */
+{
+    if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
+    audio_apply();
+}
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #endif
 #endif
@@ -647,6 +654,8 @@ static void app_main(void)
     a_hold = 1;                          /* DSP bypassed until the UI is up and 1.5 s have passed */
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
+    nm_scan();                           /* v37: the NAM user models (names, levels) */
+    px_nam_check();                      /* v37: the NAM layer routine by hand (checked against the C one) */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);

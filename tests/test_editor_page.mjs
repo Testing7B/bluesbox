@@ -80,7 +80,7 @@ startSim(["--dump", join(TMP, "flash.bin")]);
 await sleep(200);
 await page.click("#connect");
 await page.waitForSelector("#ui:not([hidden])", { timeout: 20000 });
-ok(/PocketX · OpenPocket v36/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
+ok(/PocketX · OpenPocket v37/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
 ok(await page.locator("#list .row").count() === 52, "52 presets listed");
 ok(await page.inputValue("#name") === "TWIN CLEAN" && await page.textContent("#num") === "01", "header: 01 TWIN CLEAN");
 ok(await page.locator("#tiles .tile").count() === 12, "12 tiles");
@@ -211,6 +211,27 @@ await page.click("#askno");
 ok((await pedalState()).slot === 8, "Cancel: still on the same slot");
 ok((await pedalState()).writesOk, "the flash was written only inside the preset store");
 await shot("editor_5_imported.png");
+
+// ---- v37: a NAM A2 capture into a user slot ----
+{
+  const KS = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6];
+  const DS = [1, 3, 7, 17, 41, 101, 239, 1, 3, 7, 17, 41, 101, 239, 1, 13, 1, 3, 7, 17, 41, 101, 239];
+  let seed = 3; const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed / 4294967296 - 0.5; };
+  const w = Array.from({ length: 1871 }, () => rnd() * 0.6); w[1870] = 0.02;
+  const nam = { version: "0.7.0", architecture: "WaveNet", sample_rate: 44100, weights: w, config: { head: null, head_scale: 0.02, layers: [{
+    input_size: 1, condition_size: 1, head: { out_channels: 1, kernel_size: 16, bias: true }, channels: 3, bottleneck: 3,
+    kernel_sizes: KS, dilations: DS, activation: KS.map(() => ({ type: "LeakyReLU", negative_slope: 0.01 })),
+    head1x1: { active: false }, layer1x1: { active: true }, gating_mode: KS.map(() => "none") }] } };
+  const fn = join(TMP, "Page Amp.nam");
+  writeFileSync(fn, JSON.stringify(nam));
+  ok(await page.locator("#namlist .row").count() === 28, "NAM models: 12 factory + 16 user slots listed");
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.locator("#namlist .row").nth(12).locator("button").first().click()]);
+  await chooser.setFiles(fn);
+  await page.waitForFunction(() => /is in user slot 1/.test(document.getElementById("msg").textContent), null, { timeout: 20000 });
+  ok((await page.locator("#namlist .row").nth(12).textContent()).includes("PAGE AMP"), "NAM: an A2 file loaded into user slot 1 from the page");
+  ok((await pedalState()).writesOk, "the flash was written only inside the preset store and the model slots");
+  await shot("editor_6_nam.png");
+}
 
 // ---- phone width ----
 await page.setViewportSize({ width: 390, height: 844 });

@@ -3,7 +3,7 @@
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
 Install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
-NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · What's new since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · **v37: neural amp models (NAM A2), load your own from TONE3000**: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
@@ -12,11 +12,15 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 
 ## What it does
 
-- **12-block chain, 77 models**, in any order you like (double-click PUSH to move a block; the order is saved with
+- **12-block chain, 78 models**, in any order you like (double-click PUSH to move a block; the order is saved with
   the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB
 - **Synths, keyboards and other guitars** from a normal guitar (no MIDI pickup): organ, church organ, string machine,
   choir, mono synth with pitch tracking and a resonant ladder filter, PWM synth, bass synth, 12-string, acoustic,
   sitar (bridge buzz + sympathetic strings), baritone
+- **Neural amp models (v37)**: the AMP block's NAM type runs Neural Amp Modeler **A2** networks on the pedal: 12
+  factory models trained for it (Twin, AC15, Super 59, Dirty Shirley, JCM900, JCM2000, JVM, Mark IV, Pro Mod, 5150,
+  6505+) and 16 user slots you fill from the web editor with A2 captures (TONE3000...). All 24 factory presets use
+  them. Details: [docs/NAM.md](docs/NAM.md)
 - **8 amps fitted to captures of the real ones** (v34): Twin Reverb, AC15 Top Boost, JCM900, JCM2000, Mark IV,
   Dirty Shirley, Pro Mod, 5150. A computer sets the engine's numbers (tube stages oversampled ×4, tone stack, power
   amp, sag) so that it matches a Neural Amp Modeler capture of each amp on real guitar playing; same CPU cost as a
@@ -25,7 +29,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   Greenback, T75, Alnico Blue, Jensen, Cream, DI) with a MIC position
 - **Pro levels (v36)**: every amp, block and preset at the same loudness (-23 LUFS, measured on real guitar);
   24 factory presets round the fitted amps, 28 USER slots; a PRESET LVL per preset; soft output limiter
-- What changed since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+- What changed: [v37](docs/WHATS-NEW-v37.md), [since v33](docs/WHATS-NEW-v34-v36.md)
 - **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
   page with big values and bars
 - **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no

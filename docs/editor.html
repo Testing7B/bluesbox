@@ -74,6 +74,14 @@ button{cursor:pointer}
 .row.cur{background:var(--panel);box-shadow:inset 3px 0 0 var(--acc)}
 .row.cur .n{color:var(--acc)}
 .slotbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* v37: NAM models */
+.namlist{max-height:360px}
+.namlist .row{grid-template-columns:34px minmax(0,1fr) auto;cursor:default}
+.namlist .row .acts{display:flex;gap:4px}
+.namlist .row.empty .nm{color:var(--dim);font-weight:500}
+.side .note{margin:0;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.side .note code{font-size:12px}
+.a2{font-size:10px;letter-spacing:.06em;color:var(--acc);border:1px solid var(--acc);border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}
 .slotbar .lbl{font-size:12.5px;color:var(--dim);margin-right:auto}
 
 /* ---- the screen ---- */
@@ -174,6 +182,11 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
         <button class="btn small" id="down" disabled title="Move this preset down one slot">↓</button>
         <button class="btn small" id="factory" disabled title="Put this slot back to its factory preset">Factory</button>
       </div>
+      <h2 id="namh" hidden>NAM models<span class="a2">A2</span></h2>
+      <p class="note" id="namnote" hidden>The AMP block's <b>NAM</b> type plays these neural captures (pick one with its
+        MODEL setting). Load your own: an A2 capture (<code>.nam</code>, for example from TONE3000) into a user slot.</p>
+      <div class="list namlist" id="namlist" hidden aria-label="NAM models"></div>
+      <input type="file" id="namfile" accept=".nam,application/json" hidden>
     </aside>
 
     <main class="device">
@@ -216,6 +229,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
 
 <script type="module">
 import { Editor, presetToJSON, presetFromJSON, filePresets, parsePresetFile, clonePreset } from "./pxedit.js";
+import { parseNam, levelTrim, packModel, readDi } from "./pxnam.js";
 
 const $ = (id) => document.getElementById(id);
 let access = null, ed = null, cat = null, info = null;
@@ -262,6 +276,7 @@ async function connect() {
     st = await ed.state();
     focus = st.focus;
     slots = await ed.list();
+    await loadNam();
     ed.onState = onPush;
     await ed.watch(true);
     $("idle").hidden = true; $("ui").hidden = false; $("actions").hidden = false;
@@ -295,6 +310,74 @@ async function ping() {
   } catch (_) { }
 }
 $("connect").onclick = connect;
+
+// ---- v37: NAM models (factory + user slots) ----
+let nam = null, namDi = null, namSlot = -1;
+async function loadNam() {
+  const on = !!(ed && ed.hasNam);
+  ["namh", "namnote", "namlist"].forEach((id) => { $(id).hidden = !on; });
+  if (!on) return;
+  nam = await ed.namList();
+  renderNam();
+}
+function renderNam() {
+  const box = $("namlist");
+  box.textContent = "";
+  for (const m of nam.models) {
+    const row = document.createElement("div");
+    row.className = "row" + (m.user && !m.used ? " empty" : "");
+    row.innerHTML = `<span class="n">${m.user ? "U" + pad2(m.slot + 1) : "F" + pad2(m.index + 1)}</span><span class="nm"></span>` +
+      (m.user ? `<span class="acts"><button class="btn small">Load…</button>${m.used ? '<button class="btn small">Clear</button>' : ""}</span>`
+              : `<span class="tag">FACTORY</span>`);
+    row.querySelector(".nm").textContent = m.user && !m.used ? "empty" : m.name;
+    if (m.user) {
+      const b = row.querySelectorAll("button");
+      b[0].onclick = () => { namSlot = m.slot; $("namfile").value = ""; $("namfile").click(); };
+      if (b[1]) b[1].onclick = () => namClear(m);
+    }
+    box.appendChild(row);
+  }
+}
+async function namRefresh() {
+  nam = await ed.namList();
+  await ed.namTexts();
+  renderNam();
+  renderAll();
+}
+$("namfile").onchange = async () => {
+  const f = $("namfile").files[0];
+  if (!f || !ed || namSlot < 0) return;
+  if (busy) { say("Wait for the current operation to end.", "err"); return; }
+  busy = true;
+  try {
+    const m = parseNam(await f.text(), f.name);
+    say(`Measuring the level of ${m.name}…`); progress(0.02);
+    await sleep(30);
+    if (!namDi) namDi = readDi(await (await fetch("nam_di.wav")).arrayBuffer());
+    const lv = levelTrim(m.weights, namDi);
+    say(`Sending ${m.name} to user slot ${namSlot + 1}…`);
+    const rc = await ed.namUpload(namSlot, packModel(m.name, m.weights, lv), (x) => progress(0.05 + 0.95 * x));
+    progress(null);
+    if (rc) throw new Error(rc === 2 ? "the pedal could not write its flash" : "the pedal refused the model");
+    await namRefresh();
+    say(`${m.name} is in user slot ${namSlot + 1} (level ${lv >= 0 ? "+" : ""}${lv.toFixed(1)} dB). Choose it with the AMP ` +
+      `block's NAM type, MODEL "${m.name}".${m.note ? " Note: " + m.note + "." : ""}`, "ok");
+  } catch (e) {
+    progress(null);
+    say(`Model not loaded: ${e.message}`, "err");
+  } finally { busy = false; }
+};
+async function namClear(m) {
+  if (busy || !ed) return;
+  if (!await ask(`Clear user slot ${m.slot + 1} (${m.name})? Presets using it play without an amp until you load another model there.`, "Clear")) return;
+  busy = true;
+  try {
+    const rc = await ed.namErase(m.slot);
+    await namRefresh();
+    say(rc ? "The pedal could not erase the slot." : `User slot ${m.slot + 1} is empty.`, rc ? "err" : "ok");
+  } catch (e) { say(`Not cleared: ${e.message}`, "err"); }
+  finally { busy = false; }
+}
 
 // ---- pushes from the pedal ----
 function onPush(s) {

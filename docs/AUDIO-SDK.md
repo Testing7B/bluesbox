@@ -262,3 +262,25 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - Screen: PLAY (number and name large, amp / cab, the chain in colour, the selected block) and EDIT (the block on its
   colour, model, 5 settings with value + bar), new Inter fonts (26 and 58 px). `tests/uisim.c` draws every page on
   the PC and checks that each full page paints every pixel.
+
+## v37: NAM A2-Lite, user models, the audio path in RAM
+- AMP type 8, NAM: a Neural Amp Modeler A2-Lite network (3 channels, 23 dilated layers, LeakyReLU, 16-tap head;
+  1871 weights, about 1,730 multiply-adds a sample) in fixed point, `engine/px_nam.c` ([NAM.md](NAM.md)). Activations
+  Q20, weights Q24, 64-bit sums shifted by a constant; 16-frame chunks; each layer's history in a planar ring with a
+  copy of its first 16 frames after the end, so that every tap reads 16 frames without wrapping. Against the float
+  reference (`tools/nam_a2.py`): about 99 dB signal to error on every factory model (`tests/test_nam.py`).
+- On the pedal, a layer is one hand-written pi32v2 routine (`pxn_layer_asm`): per frame, every tap of the layer
+  (conv taps, then the input mixin, then the bias as a tap reading 1.0) in the CPU's hardware loop (`rep`), 3
+  accumulators, `acc += [w++] * x` with the load in the multiply-add; LeakyReLU, the head sum and the residual 1x1
+  follow. 5 instructions per 3 multiply-adds (the compiler's C: about 14). `px_nam_check()` runs it against the C
+  routine at boot on a fixed pattern and keeps the C one if a single bit differs.
+- Memory: the rings (83.4 KB) in the POOL region beside the engine, the model (weights converted, 8 KB) in RAM; the
+  RAM code window grows to 40 KB (about 32 KB used: the engine's per-sample code, the NAM layer, the math functions,
+  moved there from the flash), which leaves 88 KB of ordinary RAM.
+- User models: 16 slots of 8 KiB at 0xC0000 (`firmware/px_models.h`), written by the editor (protocol 2); the update
+  loader keeps that range (`loader/ldr_core.c`, `LDR_NAM_LO/HI`). The weights are read from the flash (SPI, with the
+  audio held) when a preset picks the model.
+- Level: every model plays at the same loudness: a trim per model (-20 LUFS on `docs/nam_di.wav`, measured by the
+  editor for user models and by `tools/mk_nam_factory.py` for the factory ones), then one constant that puts NAM +
+  1x12 at GAIN noon at the fitted amps' -23 LUFS.
+- 24 factory presets rebuilt on the 12 factory NAM models, levelled by `tools/level_presets.py`; USER slots: NAM TWIN.

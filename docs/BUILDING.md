@@ -38,7 +38,13 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 
 `make NATIVE=1 build` skips Docker and uses a toolchain installed on the machine (`sh firmware/setup.sh` installs it in
 `~/.jieli`; Linux x86-64 only). `tests/run_tests.sh` also runs directly on macOS and Linux with only a C compiler, Node and
-Python 3.
+Python 3. Its NAM check (`tests/test_nam.py`, the fixed-point network against the float reference) also needs NumPy
+and is skipped without it (the container has none).
+
+The NAM factory models (`engine/px_nam_factory.h`, v37) are generated, not hand-written: `tools/train_a2.py` trains each
+A2-Lite network from a capture (needs `pip install jax optax numpy scipy`, about 15 minutes a model on two CPU cores),
+then `tools/mk_nam_factory.py LIST.txt DIR docs/nam_di.wav` writes the header with each model's level trim
+([NAM.md](NAM.md)).
 
 The `.bat` files `makeimage.bat` and `render.bat` only check that Node is installed and call `tools/op.mjs`. `build.bat` does the same when Node and Docker are there, and otherwise builds in WSL (`build.bat docker` or `build.bat wsl` forces one way). `INSTALL-OFFLINE.bat` needs nothing installed: it serves `docs\` with PowerShell (`tools/serve_offline.ps1`), and falls back to Python (`tools/serve.py`) or WSL only if PowerShell cannot open a port. `tests/test_op.mjs` (part of `make test`) checks the Docker command lines, the friendly errors and `make clean` without Docker, using a fake `docker`. `PUBLISH-GITHUB.bat` and `PUBLISH-SOURCE.bat` (PowerShell
 `tools/publish_github.ps1`) are the maintainer's release tool and still need Windows; nothing else does.

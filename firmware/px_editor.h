@@ -9,19 +9,21 @@
  * editor made itself is not echoed back.
  * The including file provides: PRESET, cur_preset, load_preset, ui_blk / ui_mode / ui_item (ui.h), st_gen, the
  * store (px_store.h), BLK_COL (ui_colors.h), ota_frame_get / ota_frame_done / ota_wire_send, ms_now, OP_VERSION,
- * FELUCCA_ID_PTR, and ed_load / ed_flags (the DSP load for PING).
+ * FELUCCA_ID_PTR, ed_load / ed_flags (the DSP load for PING), and (v37) the NAM user models (px_models.h) with
+ * nm_changed(slot), called after a slot was written or erased.
  */
 #pragma once
 
 #define ED_H0 0x7Du
 #define ED_H1 0x4Fu
 #define ED_H2 0x50u
-#define ED_PROTO 1u
+#define ED_PROTO 2u                             /* 2: v37, NAM models (NAM_LIST .. NAM_ERASE) */
 #define ED_NAME_MAX 13u
 #define ED_P_SIZE 110u
 typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
 enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_ORDER, ED_NAME, ED_PUT, ED_SELECT,
-       ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING };
+       ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING,
+       ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE };
 
 static uint8_t ed_out[1024];
 static uint32_t ed_n;
@@ -231,6 +233,25 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
     case ED_PING:
         ed_b(ed_load() > 127u ? 127u : ed_load()); ed_b(ed_flags());
         break;
+    case ED_NAM_LIST: {                                /* v37: every model, factory first, then the user slots */
+        char nm[12];
+        ed_b(PX_NAM_NFACT); ed_b(PX_NAM_NUSER);
+        for (k = 0; k < PX_NAM_N; k++) { rc = px_nam_name((int)k, nm); ed_b(rc ? 1u : 0u); ed_str(nm, 11); }
+        break;
+    }
+    case ED_NAM_WRITE:                                 /* piece (2 bytes, 7 bits each), then 128 packed bytes */
+        if (n < 2u) return;
+        i = a[0] | (uint32_t)a[1] << 7;
+        rc = nm_write_piece(i, a + 2, n - 2u);
+        ed_b(a[0]); ed_b(a[1]); ed_b((uint32_t)rc);
+        break;
+    case ED_NAM_COMMIT:
+    case ED_NAM_ERASE:
+        if (n < 1u) return;
+        rc = cmd == ED_NAM_COMMIT ? nm_commit(a[0]) : nm_erase(a[0]);
+        nm_changed(a[0]);                              /* a sound playing that slot reloads it */
+        ed_b(a[0]); ed_b((uint32_t)rc);
+        break;
     default:
         return;
     }
@@ -251,7 +272,7 @@ static void ed_service(uint32_t now)
     if (!ota_frame_get(&p, &n) || n < 4u || p[0] != ED_H0 || p[1] != ED_H1 || p[2] != ED_H2)
         return;
     {
-        static uint8_t f[160];                         /* the longest request: SLOT_PUT, 4 + 2 + 110 bytes */
+        static uint8_t f[160];                         /* the longest requests: NAM_WRITE 4 + 1 + 2 + 128, SLOT_PUT */
         uint32_t k = n > sizeof f ? sizeof f : n, i;
         for (i = 0; i < k; i++) f[i] = p[i];
         ota_frame_done();                              /* free the frame buffer before replying */

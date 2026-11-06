@@ -1,8 +1,8 @@
-# OpenPocket — sounds and controls (v36)
+# OpenPocket — sounds and controls (v37)
 
 ![OpenPocket screens](ui-v23.png)
 
-## The chain (12 blocks, 77 models)
+## The chain (12 blocks, 78 models)
 Default order: `GT → CMP → PIT → SFX → SYN → DRV → AMP → CAB → EQ → MOD → DLY → REV`
 
 Since v29 every preset has its own block order: **double-click PUSH** on the chain to grab the selected block, turn
@@ -18,6 +18,12 @@ The names refer to the famous units the sounds are inspired by. Amps, drives and
 captures of the real units (v34); the effects follow published circuit analyses (ElectroSmash, Electric Druid,
 R.G. Keen, Boss/Roland/EHX manuals). They are digital models, not copies. The product names are trademarks of their
 owners, used only to describe the sound.
+
+### AMP — NAM: neural amp models (v37; MODEL, GAIN, BASS, MID, TREBLE)
+The ninth AMP type plays Neural Amp Modeler A2 networks: 12 factory models (TWIN, AC15, SUPER 59, SHIRL CL, JCM900,
+SHIRLEY, JCM2000, MARK IV, JVM OD2, PRO MOD, 5150, 6505 RED) and 16 user slots filled from the web editor with A2
+captures. MODEL picks the network, GAIN sets the level into it (±12 dB), BASS / MID / TREBLE are an EQ after it. The
+models have no cabinet: keep a CAB after the AMP. All the factory presets use NAM. Details: [NAM.md](NAM.md).
 
 ### AMP — 8 amps, fitted to captures of the real ones (GAIN, BASS, MID, TREBLE, PRESENCE)
 Since v34 there are fewer amps, and each one is fitted by computer to a capture of the real amp (method and
@@ -106,8 +112,8 @@ plate). DECAY sets the real decay time (RT60) of the lows: ROOM 0.3–1.2 s, HAL
 PLATE 0.6–5 s, SPRING 1.5–4 s, SHIMMER 2–8 s, AMBIENT 6–20 s. They run at 22 kHz in 16 bits (like the classic
 studio units), in a quarter of v34's memory.
 
-## Factory presets (v36): 24 sounds, all at the same loudness, then 28 USER slots
-Built round the fitted amps and drives, which sound like their captures near noon. Every preset is levelled to the
+## Factory presets (v37): 24 sounds, all at the same loudness, then 28 USER slots
+Built round the NAM models (v37; v36's were built round the fitted amps) and the fitted drives. Every preset is levelled to the
 same loudness (-23 LUFS, EBU R128, measured on real DI guitar by `tools/level_presets.py`): going from a clean to a
 high-gain preset no longer jumps by 20 dB.
 
@@ -120,7 +126,7 @@ high-gain preset no longer jumps by 20 dB.
 | | 05 SURF SPRING | 11 70S ROCK | | 21 DOOM | |
 | | 06 AMBIENT SWELL | 12 BOUTIQUE | | | |
 
-25–52: **USER 25 … USER 52**, a clean TWIN + 1x12 + a little room, to build your own.
+25–52: **USER 25 … USER 52**, a clean NAM TWIN + 1x12 + a little room, to build your own.
 
 **Levels (v36)**: every amp plays at the same loudness at GAIN noon and moves only +-3 dB over the whole knob; every
 block type, with its knobs at noon, keeps the loudness when switched on; each preset has its own **PRESET LVL**

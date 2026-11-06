@@ -8,8 +8,8 @@
 MEMORY
 {
     XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
-    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
-    RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
+    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0xA000    /* v37: 40 KB, the audio path runs from RAM (~32 KB) */
+    RAM    (rwx) : ORIGIN = 0x01C0A000, LENGTH = 88K
     POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000   /* free SRAM (like CLIPPER): DSP engine */
     NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
 }
