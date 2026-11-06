@@ -701,8 +701,8 @@ static void app_main(void)
                     char b[48], full[96]; int k, j;
                     static uint32_t scroll;
                     ble_test_state(b);
-                    if (ble_state == BLE_FAILED) {   /* the line is longer than the status area: scroll it (ble_status.h) */
-                        ble_status_full(full);
+                    if (ble_state == BLE_FAILED || ble_state == BLE_ADV) {   /* longer than the status area: scroll it (ble_status.h) */
+                        if (ble_state == BLE_FAILED) ble_status_full(full); else ble_test_adv_line(full);
                         ble_marquee(full, scroll++, 11, b);
                     } else {
                         for (k = 0; b[k]; k++) ;

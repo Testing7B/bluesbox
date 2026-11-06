@@ -67,12 +67,33 @@ what the scanner shows and whether the pedal still works as a normal OpenPocket 
 | --- | --- |
 | `STARTING n` | the last stage reached: 1 task created, 2 controller init called, 3 radio front end replay entered, 4 waiting for the controller task, 5 setting the advertisement, 6 enabling it, 7 the replay returned, 8 the baseband asked for its interrupts. The markers are set by two tasks, so 3 and 7 can appear after 4; the number shown is the last one set, not the highest |
 | `FAILED s c` | step `s` failed with return value `c`. The status area is only 11 characters wide, so the whole line scrolls like a marquee (2 characters a second, resting 2 s on the start, then looping): `FAILED 2 -7  step btctrler_task_init stage init`. The short code is first, so it can be read before the scroll starts. The usual `C1 42%` is not shown while it has failed. |
-| `ADVERTISING` | the advertisement is on air |
+| `ADVERTISING` | the controller accepted the command to advertise; it does not mean a packet was sent. The status shows the proof counters instead, as a marquee (below) |
 
 Failing steps: `1` `task_create` failed (`c` is -1); `2` `btctrler_task_init` returned `c` (not 0); `3`
 `btctrler_task_ready` returned `c` (0: the controller task did not answer); `4` `ll_hci_adv_enable` returned `c` (not
 0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). At a timeout the line ends with `wait XXXXXXXX`: the address of the semaphore or mutex the controller task is blocked on (look it up in `firmware/build-ble/symbols.txt`; a value below 0x10 is a task state instead). Example: `FAILED 5 3` only means the last marker passed was the entry of the radio replay; it does not say the replay hung. (In the second hardware run it was a deadlock after the radio start-up: see "Found on hardware" below.) The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
 `tests/test_ble_status.c`. Please report the whole `FAILED s c` text.
+
+### The advertising line (proof counters)
+
+The fourth flash showed `ADVERTISING` but neither a Mac nor a phone scanner saw the pedal, so while advertising the status area scrolls a line of counters and registers, with the numbers first: `ADV i12 e5 r0 t340 s0 CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1`.
+
+| Field | Meaning | What it tells |
+| --- | --- | --- |
+| `i` | baseband event interrupts (IRQ 45), counted by `ble_isr.S` before the library's own handler runs | above 0 and rising: the radio runs and events happen. 0: no event ever reaches the CPU |
+| `r` | receive interrupts (IRQ 29) | above 0: a scanner's request was heard, so the antenna works both ways |
+| `e` | HCI packets the controller returned (`hci_packet_handler`) | any controller answer |
+| `t` | library software timers that fired | the controller's tick source runs |
+| `s` | calls of the slot-timer stand-ins (`slot_timer_*`) | above 0: the link scheduler asked for a timer this image does not have (see below) |
+| `CON IEN IPND STAT` | baseband registers `0x28000`, `0x28028`, `0x28030`, `0x28038` in hex | enable, interrupt enables, pending, busy flags |
+| `IC45 IC29` | the interrupt configuration of the two lines (bit 0 enabled, bits 3:1 priority) | 0: the line is off |
+| `BEN` | BLE block enable `0x2FC80` | bit 0 clear: the block is off |
+
+Reading the next flash: `i` and `t` rising means the radio runs and the cause is on the air side (power, trims, address). `i` 0 with `IC45` 0 means the interrupt was never enabled; `i` 0 with `IC45` 3 and `IEN` 0 means the baseband never enabled its event; `t` 0 means the library's timers never fire.
+
+**Checked against the Core Specification** (`firmware/ble/ble_adv.h`, tested on the PC): the advertising data is two whole AD structures (flags 0x06, the complete 128-bit UUID list, little endian), 21 of 31 bytes; the scan response is the complete local name, 21 bytes; the PDU is ADV_SCAN_IND at 100 ms on channels 37, 38 and 39 with filter policy 0. One fault was found and fixed: the controller's public address was never set (the library reads it from a stored item this image does not have), so it was all zeros, which is not a valid device address. It is now `02:4F:50:42:4C:54` (locally administered, unicast; not an IEEE-assigned address). The library's own-address type is fixed at public in its HCI layer, so a random static address cannot be used from here.
+
+**Open suspicion, not a fix:** the link scheduler (`link_task.c`) arms its timer through `slot_timer_set` and its siblings, which are among the empty stand-ins in `ble_stubs.c` (the library's slot timer is not part of the linked archive). Whether a plain advertising event depends on them is not known. `s` counts the calls: if it is above 0 the next step is a real slot timer.
 
 ## Found on hardware
 

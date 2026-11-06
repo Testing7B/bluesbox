@@ -10,6 +10,7 @@
 #include "fm1_irq.h"
 #include "ble_os.h"
 #include "ble_status.h"
+#include "ble_adv.h"
 
 /* the controller library's entry points (include_lib/btctrler/btctrler_task.h, ble/hci_ll.h; hci_transport.h) */
 extern int btctrler_task_init(const void *transport, const void *config);
@@ -22,25 +23,16 @@ extern void ll_hci_adv_scan_response_set_data(uint8_t len, uint8_t *data);
 extern int ll_hci_adv_enable(bool enable);
 extern int task_create(void (*fn)(void *), void *arg, const char *name);   /* ble_os.c */
 extern uint32_t ble_task_waiting(const char *name);                        /* ble_os.c */
+extern int le_controller_set_mac(const uint8_t *mac);                       /* cpu.a/btctrler: the public address slot */
 extern int __crc16_mutex_init(void);        /* cpu.a crc16.c: creates the lock its CRC helpers take; the SDK's start-up calls it */
 
-enum { ADV_SCAN_IND = 2 };
 static uint32_t t_start;
 static uint8_t cfg[64];                                         /* the controller reads its host-side settings here: none */
-
-static uint8_t adv_data[] = {
-    2, 0x01, 0x06,                                              /* flags: LE general discoverable, no BR/EDR */
-    17, 0x07,                                                   /* complete list of 128-bit service UUIDs, little endian */
-    0x00, 0xC7, 0xC4, 0x4E, 0xE3, 0x6C, 0x51, 0xA7, 0x33, 0x4B, 0xE8, 0xED, 0x5A, 0x0E, 0xB8, 0x03,
-};
-static uint8_t no_addr[6];                                      /* direct address: unused by ADV_SCAN_IND, but the library reads six bytes */
-static uint8_t scan_rsp[] = { 20, 0x09, 'O','p','e','n','P','o','c','k','e','t','-','B','L','E','-','T','E','S','T' };
 
 /* btctrler_task_ready waits (on a semaphore) until the controller's own task has started, so this runs as a task of
  * its own: the main loop must never block there. */
 static void test_task(void *arg)
 {
-    uint8_t chmap = 7;                                          /* channels 37, 38, 39 */
     int rc;
     (void)arg;
     ble_stage_set(BLE_STAGE_INIT);                              /* (BLE_STAGE_RF: ble_rf.c, inside the init) */
@@ -49,9 +41,10 @@ static void test_task(void *arg)
     ble_stage_set(BLE_STAGE_READY);
     if (ble_judge_start(0, btctrler_task_ready())) return;
     ble_stage_set(BLE_STAGE_ADV);
-    ll_hci_adv_set_params(0x00A0, 0x00A0, ADV_SCAN_IND, 0, no_addr, chmap, 0);   /* 100 ms */
-    ll_hci_adv_set_data(sizeof(adv_data), adv_data);
-    ll_hci_adv_scan_response_set_data(sizeof(scan_rsp), scan_rsp);
+    le_controller_set_mac(ble_adv_mac);                         /* the public address slot is zero otherwise (ble_adv.h) */
+    ll_hci_adv_set_params(BLE_ADV_INTERVAL, BLE_ADV_INTERVAL, BLE_ADV_SCAN_IND, 0, ble_no_addr, BLE_ADV_CHMAP, BLE_ADV_FILTER);
+    ll_hci_adv_set_data(sizeof(ble_adv_data), ble_adv_data);
+    ll_hci_adv_scan_response_set_data(sizeof(ble_scan_rsp), ble_scan_rsp);
     ble_stage_set(BLE_STAGE_ENABLE);
     rc = ll_hci_adv_enable(true);
     if (rc) ble_fail(BLE_FAIL_ADV_ENABLE, rc); else ble_state = BLE_ADV;
@@ -79,4 +72,14 @@ void ble_test_poll(void)
     }
 }
 
+/* every packet the controller returns to its host: we have none, so this only counts them (h4_controller_interface.c) */
+int hci_packet_handler(uint8_t type, uint8_t *pkt, uint16_t size) { (void)size; return ble_count_hci(type, pkt); }
+
 void ble_test_state(char *out) { ble_status_text(out); }
+
+/* the long advertising line, with the baseband registers read now (0x28000 control, 0x28028 enables, 0x28030 pending, 0x28038 status) */
+void ble_test_adv_line(char *out)
+{
+    ble_adv_text(out, *(volatile uint32_t *)0x28000u, *(volatile uint32_t *)0x28028u, *(volatile uint32_t *)0x28030u, *(volatile uint32_t *)0x28038u,
+                 (FM1_ICFG(45) >> ((45u & 7u) * 4u)) & 0xFu, (FM1_ICFG(29) >> ((29u & 7u) * 4u)) & 0xFu, *(volatile uint32_t *)0x2FC80u);
+}

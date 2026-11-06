@@ -5,9 +5,11 @@
  * that returns 0 and counts the call in ble_stub_calls so a call that should not happen shows on the screen.
  * Generated from the link errors of the "ble" target (list the names with: grep BLE_STUB firmware/ble/ble_stubs.c). */
 #include <stdint.h>
+#include "ble_status.h"
 
 uint32_t ble_stub_calls;
 #define BLE_STUB(name) int name(void) { ble_stub_calls++; return 0; }
+#define BLE_STUB_SLOT(name) int name(void) { ble_stub_calls++; ble_cnt_slot++; return 0; }   /* the link scheduler's timer: counted apart */
 BLE_STUB(__ble5_hw_anchor_cnt_timeout)
 BLE_STUB(__ble5_hw_event_process)
 BLE_STUB(__ble5_hw_rx_process)
@@ -70,7 +72,6 @@ BLE_STUB(hci_lmp_link_policy_cmd_handler)
 BLE_STUB(hci_lmp_status_parameters_cmd_handler)
 BLE_STUB(hci_lmp_testing_cmd_handler)
 BLE_STUB(hci_lmp_vendor_cmd_handler)
-BLE_STUB(hci_packet_handler)
 BLE_STUB(hci_push_iso_sdu)
 BLE_STUB(hci_vendor_cmd_handler)
 BLE_STUB(le_controller_handler_for_ble5)
@@ -143,12 +144,12 @@ BLE_STUB(rf_dc_set_reload)
 BLE_STUB(set_hw_channel_selection_algorithm)
 BLE_STUB(set_tx_pdu_channel_selection_algorithm)
 BLE_STUB(slave_ll_receive_phy_req)
-BLE_STUB(slot_timer_disable)
-BLE_STUB(slot_timer_get)
-BLE_STUB(slot_timer_put)
-BLE_STUB(slot_timer_remain)
-BLE_STUB(slot_timer_reset)
-BLE_STUB(slot_timer_set)
+BLE_STUB_SLOT(slot_timer_disable)
+BLE_STUB_SLOT(slot_timer_get)
+BLE_STUB_SLOT(slot_timer_put)
+BLE_STUB_SLOT(slot_timer_remain)
+BLE_STUB_SLOT(slot_timer_reset)
+BLE_STUB_SLOT(slot_timer_set)
 BLE_STUB(suspend_init)
 BLE_STUB(tws_link_ble_slave_conn_establish_handler)
 BLE_STUB(tws_link_ble_slave_conn_establish_probe_handler)

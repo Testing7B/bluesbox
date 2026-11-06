@@ -326,11 +326,17 @@ void sys_timer_set_user_data(uint16_t id, void *p) { if (id && id <= MAXTIMER) t
 void *sys_timer_get_user_data(uint16_t id) { return id && id <= MAXTIMER ? timers[id - 1].priv : 0; }
 uint32_t sys_timer_get_ms(void) { return fm1_uptime_ms(); }
 
+/* ble_isr.S: counts the baseband interrupts, then continues in the library's own interrupt function (saved here) */
+void (*ble_irq_target_ev)(void), (*ble_irq_target_rx)(void);
+extern void ble_isr_ev(void), ble_isr_rx(void);
+
 /* ---- interrupt registration: the library hands over its own interrupt functions (already complete interrupt entries) */
 void request_irq(uint8_t idx, uint8_t prio, void (*handler)(void), uint8_t cpu)
 {
     (void)cpu;
     ble_stage_set(BLE_STAGE_BB);                    /* le_hw_init: the baseband is set up and asks for its interrupts */
+    if (idx == 45u) { ble_irq_target_ev = handler; handler = ble_isr_ev; }   /* ble_isr.S counts, then runs the library's entry */
+    else if (idx == 29u) { ble_irq_target_rx = handler; handler = ble_isr_rx; }
     fm1_irq_attach(idx, handler, prio);
 }
 void unrequest_irq(uint8_t idx, uint8_t cpu) { (void)cpu; FM1_ICFG(idx) &= ~(1u << ((idx & 7u) * 4u)); }
@@ -351,6 +357,7 @@ void ble_poll(void)
                 t->used = 0;
             else
                 t->due = now + t->period;
+            ble_cnt_timer++;
             t->fn(t->priv);
         }
     }

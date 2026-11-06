@@ -110,3 +110,51 @@ static void ble_marquee(const char *text, uint32_t tick, int win, char *out)
     }
     out[win] = 0;
 }
+
+/* ---- proof counters: does the radio run at all? Shown next to ADVERTISING (docs/BLE-TEST.md, "Reading the status text").
+ * ble_isr.S counts the two baseband interrupts as they arrive; the others are counted where the library calls us. */
+uint32_t ble_cnt_irq_ev;                  /* IRQ 45: baseband event (an advertising event, a transmit done) */
+uint32_t ble_cnt_irq_rx;                  /* IRQ 29: a packet received (a scanner's request) */
+static volatile uint32_t ble_cnt_timer;   /* the library's software timers that fired */
+static volatile uint32_t ble_cnt_hci;     /* HCI packets the controller returned (hci_packet_handler) */
+static volatile uint32_t ble_cnt_slot;    /* calls of the slot-timer stand-ins: the link scheduler wanting a timer we do not have */
+static volatile uint32_t ble_hci_last;    /* type << 8 | event code of the last HCI packet */
+
+static int ble_count_hci(uint8_t type, const uint8_t *pkt)
+{
+    ble_cnt_hci++;
+    ble_hci_last = ((uint32_t)type << 8) | (pkt ? pkt[0] : 0u);
+    return 0;
+}
+
+static char *ble__dec(char *o, uint32_t v) { return ble__num(o, (int32_t)(v > 0x7FFFFFFFu ? 0x7FFFFFFF : v)); }
+static char *ble__hex(char *o, uint32_t v)
+{
+    int i = 28;
+    while (i > 0 && !((v >> i) & 15u)) i -= 4;
+    for (; i >= 0; i -= 4) *o++ = "0123456789ABCDEF"[(v >> i) & 15u];
+    return o;
+}
+
+/* the advertising line, the numbers first so that they are on the screen before the marquee moves:
+ * "ADV i12 e5 r0 t340 s0 CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)
+ *   i interrupts 45   e HCI packets returned   r interrupts 29   t library timers   s slot-timer stand-in calls
+ *   CON/IEN/IPND/STAT baseband 0x28000/28/30/38   IC45, IC29 the interrupt configuration nibble (bit 0 = enabled, bits 3:1 =
+ *   priority; 0 = the line is off)   BEN the BLE block enable 0x2FC80 (bit 0) */
+static void ble_adv_text(char *out, uint32_t con, uint32_t ien, uint32_t ipnd, uint32_t stat, uint32_t ic45, uint32_t ic29, uint32_t ben)
+{
+    char *o = out;
+    o = ble__put(o, "ADV i"); o = ble__dec(o, ble_cnt_irq_ev);
+    o = ble__put(o, " e"); o = ble__dec(o, ble_cnt_hci);
+    o = ble__put(o, " r"); o = ble__dec(o, ble_cnt_irq_rx);
+    o = ble__put(o, " t"); o = ble__dec(o, ble_cnt_timer);
+    o = ble__put(o, " s"); o = ble__dec(o, ble_cnt_slot);
+    o = ble__put(o, " CON "); o = ble__hex(o, con);
+    o = ble__put(o, " IEN "); o = ble__hex(o, ien);
+    o = ble__put(o, " IPND "); o = ble__hex(o, ipnd);
+    o = ble__put(o, " STAT "); o = ble__hex(o, stat);
+    o = ble__put(o, " IC45 "); o = ble__hex(o, ic45);
+    o = ble__put(o, " IC29 "); o = ble__hex(o, ic29);
+    o = ble__put(o, " BEN "); o = ble__hex(o, ben);
+    *o = 0;
+}
