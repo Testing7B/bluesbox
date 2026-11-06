@@ -64,6 +64,23 @@ Same checks as the dry run, then: the pedal stages its update loader (step 1), t
 pedal restarts, and the command reads the version it reports. `done: the pedal reports PocketX_924.` is success (exit 0); a
 version that differs from the package is a failure. It takes about a minute. Report the full output to the captain.
 
+## 4b. A pedal that restarts in a loop (only on the captain's explicit instruction)
+
+```
+node tools/op.mjs flash --rescue --confirm-flash [--package FILE] [--manifest FILE] [--timeout SECONDS]
+make flash-rescue ARGS="--confirm-flash"
+```
+
+The installer page's rescue mode, on the command line. Start it first, then plug the pedal in or let it restart. It polls every
+MIDI port every 100 ms; the moment the pedal answers its identity query it sends the upgrade command (which stops the sound
+processing, so the restarts stop) and installs the package of the pedal's model. `--package` pins one package: a pedal of
+the other model is refused before anything is sent. Without `--package` the manifest's package for the pedal's model is used.
+It waits `--timeout` seconds (default 180); an install already running is never cut short. A pedal that vanishes before the
+update finished has had nothing written: it is waited for again. `--rescue --dry-run` waits for the pedal and checks the model,
+writing nothing. Reached states: the running firmware's MIDI port, and an OpenPocket update loader left half-done. Not reached
+(same as the page): a firmware that crashes before it answers, and the chip's mask-ROM loader `WL80UBOOT` (USB 4C4A:8057, no
+MIDI); both need the SD-card recovery. Timeout is exit 1 with the recovery text. One pedal on the bus: the first to answer is used.
+
 ## 5. Recovery
 
 A failure (exit 1) prints `FAILED: ...` and the recovery text. In order:
@@ -79,4 +96,5 @@ Never publish or commit a pedal backup (`fm1-1.bin`, `fm1-300.bin`): they hold t
 
 `node tests/test_flash.mjs` (part of `node tools/op.mjs test`) drives the real command against the simulated pedal that runs
 the pedal's own `ota.c` and loader code: update, dry run writes nothing, wrong model, damaged package, missing confirmation,
-no pedal, two pedals, failure with the recovery text. Real hardware is not covered by any test.
+no pedal, two pedals, failure with the recovery text, and `--rescue` against a pedal that restarts in a loop (answers on the
+Nth restart, never answers, vanishes mid-transfer, wrong model, missing confirmation). Real hardware is not covered by any test.
