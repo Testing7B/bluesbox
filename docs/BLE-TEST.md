@@ -66,7 +66,7 @@ what the scanner shows and whether the pedal still works as a normal OpenPocket 
 | Text | Meaning |
 | --- | --- |
 | `STARTING n` | the last stage reached: 1 task created, 2 controller init called, 3 radio front end (the replayed start-up), 4 waiting for the controller task, 5 setting the advertisement, 6 enabling it |
-| `FAILED s c` | step `s` failed with return value `c`. The status area is only about 10 characters wide, so the whole line scrolls like a marquee (2 characters a second, resting 2 s on the start, then looping): `FAILED 2 -7  step btctrler_task_init stage ready-wait`. The short code is first, so it can be read before the scroll starts. The usual `C1 42%` is not shown while it has failed. |
+| `FAILED s c` | step `s` failed with return value `c`. The status area is only 11 characters wide, so the whole line scrolls like a marquee (2 characters a second, resting 2 s on the start, then looping): `FAILED 2 -7  step btctrler_task_init stage init`. The short code is first, so it can be read before the scroll starts. The usual `C1 42%` is not shown while it has failed. |
 | `ADVERTISING` | the advertisement is on air |
 
 Failing steps: `1` `task_create` failed (`c` is -1); `2` `btctrler_task_init` returned `c` (not 0); `3`
