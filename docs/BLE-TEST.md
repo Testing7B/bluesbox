@@ -173,3 +173,12 @@ order I would suspect them:
 If the image does not start, the existing safety net applies: two failed boots go back to the update loader
 (`UBOOT`), and the web installer, the SD-card recovery (`make appimage`) and the official firmware's own updater all work as
 before. The image does not touch the flash outside the application area.
+
+## Found on hardware: the radio was silent for two reasons (fixed)
+
+The fifth flash showed `ADVERTISING` and event interrupts at the advertising rate, but no scanner saw the pedal. The cause was in our glue, found by comparing the stock BlackBox_016 start-up with this image:
+
+1. The library writes the modem's transmit I/Q trims (`keep_BT_CMPUK1/2/3`, `keep_BT_OFSI`, `keep_BT_OFSQ`, which stock fills from the Wi-Fi front-end calibration) into `0x2FC10` and `0x2FC08`. Here nothing set them, so the I and Q gains were zero. `ble_rf.c` now sets the neutral values (`0x80` for the two gains).
+2. `wf_rf_common_init` was `void`, so the library read a stray register value as its result and switched on the Wi-Fi/Bluetooth coexistence arbiter (`0x14000` bit 1). It now returns 0, as stock does on a first start.
+
+After the fix a Mac scan saw `OpenPocket-BLE-TEST` with the BLE-MIDI service UUID (206 sightings in 60 s, RSSI -51 to -36 dBm, not connectable) and the scan-request counter `r` rose. The stored radio records are also read now: the VM is plain flash (the XIP window decrypts it, so it must be read raw, `ble_vm.h`), VM 106 to 108 go to the replay, and VM 187 (the unit's calibration) replaces the measured one. The status line shows them as `V <mask> <area/4096> <first two bytes of VM 106>` (`V F BD B0B` on the test pedal). `bt_max_pwr_set(10, 5, 8, 9)` is called after the controller's own init. Which of these beyond the two fixes matters was not isolated. `t` and `e` stay 0 by design here (no software timer on the advertising path, no host packet handler), so they are not health signs.

@@ -29,6 +29,10 @@ extern int __crc16_mutex_init(void);        /* cpu.a crc16.c: creates the lock i
 static uint32_t t_start;
 static uint8_t cfg[64];                                         /* the controller reads its host-side settings here: none */
 
+/* the library's TX power ceilings (ble_txpwr_normal_set clamps to bits 15:12 of rf[0]); its .data default is 0 and the stock app sets them
+ * at start-up (SDK: bt_max_pwr_set(10, 5, 8, 9)): without this the advertisement is sent at the lowest level, if at all */
+extern void bt_max_pwr_set(uint8_t pwr, uint8_t pg_pwr, uint8_t iq_pwr, uint8_t ble_pwr);
+
 /* btctrler_task_ready waits (on a semaphore) until the controller's own task has started, so this runs as a task of
  * its own: the main loop must never block there. */
 static void test_task(void *arg)
@@ -40,6 +44,7 @@ static void test_task(void *arg)
     if (rc) { ble_judge_start(rc, 0); return; }
     ble_stage_set(BLE_STAGE_READY);
     if (ble_judge_start(0, btctrler_task_ready())) return;
+    bt_max_pwr_set(10, 5, 8, 9);                                /* after the controller's own init, which resets its power settings */
     ble_stage_set(BLE_STAGE_ADV);
     le_controller_set_mac(ble_adv_mac);                         /* the public address slot is zero otherwise (ble_adv.h) */
     ll_hci_adv_set_params(BLE_ADV_INTERVAL, BLE_ADV_INTERVAL, BLE_ADV_SCAN_IND, 0, ble_no_addr, BLE_ADV_CHMAP, BLE_ADV_FILTER);
@@ -52,6 +57,7 @@ static void test_task(void *arg)
 
 void ble_test_start(void)
 {
+    ble_vm_load();                                              /* the stored radio records, read once before the controller runs */
     __crc16_mutex_init();                                       /* else thread_create (ll_init) waits for ever in crc_get_32bit */
     ble_state = BLE_STARTING;
     ble_stage_set(BLE_STAGE_TASK);
@@ -80,6 +86,9 @@ void ble_test_state(char *out) { ble_status_text(out); }
 /* the long advertising line, with the baseband registers read now (0x28000 control, 0x28028 enables, 0x28030 pending, 0x28038 status) */
 void ble_test_adv_line(char *out)
 {
-    ble_adv_text(out, *(volatile uint32_t *)0x28000u, *(volatile uint32_t *)0x28028u, *(volatile uint32_t *)0x28030u, *(volatile uint32_t *)0x28038u,
+    ble_adv_text(out, ble_vm_have, ble_vm_area >> 12, ble_vm_trim(), *(volatile uint32_t *)0x28000u, *(volatile uint32_t *)0x28028u, *(volatile uint32_t *)0x28030u, *(volatile uint32_t *)0x28038u,
                  (FM1_ICFG(45) >> ((45u & 7u) * 4u)) & 0xFu, (FM1_ICFG(29) >> ((29u & 7u) * 4u)) & 0xFu, *(volatile uint32_t *)0x2FC80u);
 }
+
+/* the line the status area scrolls, and the log channel sends (out: 96 bytes) */
+void ble_test_line(char *out) { if (ble_state == BLE_ADV) ble_test_adv_line(out); else ble_status_full(out); }

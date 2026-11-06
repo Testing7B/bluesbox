@@ -137,11 +137,11 @@ static char *ble__hex(char *o, uint32_t v)
 }
 
 /* the advertising line, the numbers first so that they are on the screen before the marquee moves:
- * "ADV i12 e5 r0 t340 s0 CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)
+ * "ADV i12 e5 r0 t340 s0 V 7 A3 12AB CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)\n *   V  the stored radio records: bit mask of VM 106, 107, 108 found, the active VM area (flash address / 4096, 0 = none), the first two bytes of VM 106
  *   i interrupts 45   e HCI packets returned   r interrupts 29   t library timers   s slot-timer stand-in calls
  *   CON/IEN/IPND/STAT baseband 0x28000/28/30/38   IC45, IC29 the interrupt configuration nibble (bit 0 = enabled, bits 3:1 =
  *   priority; 0 = the line is off)   BEN the BLE block enable 0x2FC80 (bit 0) */
-static void ble_adv_text(char *out, uint32_t con, uint32_t ien, uint32_t ipnd, uint32_t stat, uint32_t ic45, uint32_t ic29, uint32_t ben)
+static void ble_adv_text(char *out, uint32_t vmhave, uint32_t vmarea, uint32_t vmtrim, uint32_t con, uint32_t ien, uint32_t ipnd, uint32_t stat, uint32_t ic45, uint32_t ic29, uint32_t ben)
 {
     char *o = out;
     o = ble__put(o, "ADV i"); o = ble__dec(o, ble_cnt_irq_ev);
@@ -149,6 +149,9 @@ static void ble_adv_text(char *out, uint32_t con, uint32_t ien, uint32_t ipnd, u
     o = ble__put(o, " r"); o = ble__dec(o, ble_cnt_irq_rx);
     o = ble__put(o, " t"); o = ble__dec(o, ble_cnt_timer);
     o = ble__put(o, " s"); o = ble__dec(o, ble_cnt_slot);
+    o = ble__put(o, " V "); o = ble__hex(o, vmhave);
+    o = ble__put(o, " "); o = ble__hex(o, vmarea);
+    o = ble__put(o, " "); o = ble__hex(o, vmtrim);
     o = ble__put(o, " CON "); o = ble__hex(o, con);
     o = ble__put(o, " IEN "); o = ble__hex(o, ien);
     o = ble__put(o, " IPND "); o = ble__hex(o, ipnd);
