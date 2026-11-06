@@ -39,6 +39,7 @@ Run it first whenever anything looks off.
 | Editor page | `pages.sh` (runs `tests/test_editor_page.mjs`) | `build/editor/editor_1..6*.png`, last line `editor page test passed` |
 | Screen layout | `cc ... tests/uisim.c` (see toolchain skill), `build/uisim build/ui` | PPM pages, `never drawn` absent from the log |
 | The pedal as a user plays it: footswitches, knob, pages, save, tuner, the live screen | `node tools/op.mjs sim`, then the HTTP API (skill `openpocket-simulator`, `docs/SIMULATOR.md`) | `GET /api/state` and `/api/screen.png` after each press; the flash file `build/sim/flash.bin` survives a restart |
+| The pedal skin: every control by mouse, touch and keyboard, the backlights, the live LCD | `pages.sh` (runs `tests/test_pedal_page.mjs`) | `build/pedal/pedal-skin*.png`, last line `pedal page: ok` |
 | Editor and installer pages by hand or with `chrome-devtools-axi` | `sim` serves them at `/site/editor.html` and `/site/index.html` with a virtual Web MIDI | Connect finds "OpenPocket"; an edit shows in `/api/state` |
 | MIDI musical messages | see `features/midi-usb.md` | host simulator tests when the USB-MIDI feature is in; hardware: `docs/MIDI-TEST.md` |
 

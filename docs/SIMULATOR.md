@@ -27,19 +27,50 @@ node tools/op.mjs sim --update FLASH.bin # the update flow, for the installer (s
 are the ones the tests use; `tools/sim.mjs` only talks to them on stdin/stdout. Their line protocol is documented in the
 header of each `.c` file; `tests/devsim.c` and the old `edsim` commands are unchanged.
 
-Only the control dispatch is mirrored: `press()` in `tests/edsim.c` follows what the main loop of
-`firmware/openpocket.c` does with a debounced press (PUSH, HOME, footswitches, the block buttons, a long press of PUSH
-or HOME, a double click on PUSH). If that loop changes, change `press()` with it.
+Only the control dispatch is mirrored: `press()` and the `button_*` functions in `tests/edsim.c` follow what the main
+loop of `firmware/openpocket.c` does with a debounced press (PUSH, HOME, footswitches, the block buttons, a long press of
+PUSH or HOME, a double click on PUSH, and their 800, 700 and 350 ms). If that loop changes, change them with it.
 
-**Not simulated:** sound (the DSP never runs; "DSP 42 %" is a fixed number), real time (a double click is one request,
-a long press is one request), the LEDs and any bypass footswitch (the firmware does not drive any), USB and Bluetooth,
-the debounce.
+**Not simulated:** sound (the DSP never runs; "DSP 42 %" is a fixed number), the LEDs and any bypass footswitch (the
+firmware does not drive any), USB and Bluetooth, the debounce. `POST press` has no timing: a double click or a long press
+is one request; `POST down` and `POST up` have the firmware's.
 
 ## In a browser
 
-`http://127.0.0.1:8766/` shows the screen, the controls (footswitches, FX, HOME, PUSH, MOD AMP CAB DLY REV, the knob,
-long and double presses, the volume knob, the battery, the tuner pitch) and the state. Keys: arrows are the
-footswitches (up and down) and the knob (left and right), Enter is PUSH, Escape is HOME.
+`http://127.0.0.1:8766/` is the pedal: its front panel, drawn in code (`tools/sim/pedal.html`), with the live screen in
+the LCD. It works as the pedal does, through `POST down` and `POST up`: a button acts when the firmware's does, so hold
+HOME 0.7 s for the tuner, hold PARA 0.8 s for SAVE, click PARA twice for MOVE.
+
+| Control | Mouse or touch | Keys |
+| --- | --- | --- |
+| Footswitches | press, hold, release | Up (right, next preset), Down (left, previous) |
+| HOME | press, hold | Escape or H |
+| FX, AMP, MOD, DLY, REV, CAB | press | F, A, M, D, R, C |
+| PARA, as a knob | drag (up or right: clockwise), wheel | Left, Right |
+| PARA, as PUSH | click, hold | Enter |
+| MASTER | drag, wheel | `[`, `]` |
+
+Tab reaches each control. On a button, Enter and Space press it. On MASTER, the arrows move it by 2, Page Up and Down by
+10, Home and End go to 0 and 100. On PARA, the four arrows turn it and Space presses it.
+
+A knob follows the firmware: PARA counts detents, and detents less than 45 ms apart are the fast turn (steps of 5).
+MASTER is 0..100 with the firmware's hysteresis of 2, so its smallest move is 2, and it always reaches 0 and 100. PARA
+waits 120 ms to tell a press from a turn, so its hold starts that much late. The skin draws 24 detents a turn: the
+firmware only counts them, so that number is an assumption.
+
+Scripts on the page have `window.pedal`: `down(name)`, `up(name)`, `tap(name, ms)`, `turn(detents, fast)`, `master(volume)`
+and `state()`. Each control has `data-control` (or the id `master` or `para`), and a button has `data-lit`.
+
+The firmware drives no LEDs, so the backlights are the skin's own reading of the state (`backlights()` in
+`tools/sim/pedal-input.js`). `data-lit` is `off`, `on` or `focus`. A block button is on when its block is on; FX when one
+of its seven blocks is on; a button is `focus` on its own page; HOME is `focus` on the chain page. A footswitch's ring
+brightens while it is held.
+
+The TUNER line on the panel is the stock firmware's: in OpenPocket both footswitches are two presses, and the tuner is a
+long press of HOME.
+
+`http://127.0.0.1:8766/plain` is the earlier plain page: the screen, every control as a button, the battery, the tuner
+pitch and the state.
 
 The installer and the editor pages work against the simulated pedal without a change and without a driver:
 `/site/index.html` and `/site/editor.html` serve `docs/` with the virtual Web MIDI (`/sim/webmidi-shim.js`) injected.
@@ -61,6 +92,7 @@ before it is answered, so a state read right after a press shows the press.
 | `GET info` | `{kind: "pedal" \| "update", port, flash, controls, log}`; `port` is the MIDI port name, `null` when none |
 | `GET state` | the pedal's state (below) |
 | `POST press/NAME` | a control: `fs_up` `fs_dn` `fx` `home` `push` `mod` `amp` `cab` `dly` `rev`; `push_long` (hold PUSH: SAVE), `dpush` (double click PUSH: MOVE), `home_long` (hold HOME: tuner) |
+| `POST down/NAME`, `POST up/NAME` | a button goes down, comes up: `fs_up` `fs_dn` `fx` `home` `push` `mod` `amp` `cab` `dly` `rev`. Timed as the firmware does: HOME and PUSH act at a short release, or after 0.7 s and 0.8 s held; two PUSH clicks within 350 ms on the chain are MOVE, one acts after those 350 ms; the others act when they go down. A button already down, or not down, is left as it is |
 | `POST knob/N[?fast]` | the PARA knob N detents (negative: the other way); `fast` is the quick-turn step of 5 |
 | `POST volume/N` | the MASTER knob, 0..100 |
 | `POST battery/MV[/USB_MV]` | the battery voltage the screen shows; `USB_MV` above 4300 shows "USB" |
@@ -79,7 +111,7 @@ before it is answered, so a state read right after a press shows the press.
 ```json
 {"slot": 0, "name": "TWIN CLEAN", "dirty": 0, "saved": 0, "mode": "chain", "block": 5, "item": 0, "volume": 80,
  "battery_mv": 3920, "usb_mv": 0, "tuner_hz": 0, "writes_ok": 1, "frame": 35324,
- "dsp": {"load": 42, "bypass": 0, "core1": 1}, "last_press": "fs_up", "presses": 1,
+ "dsp": {"load": 42, "bypass": 0, "core1": 1}, "last_press": "fs_up", "presses": 1, "knob": 0, "held": [],
  "preset": {"name": "TWIN CLEAN", "on": [..12], "type": [..12], "order": [..12], "p": [[..5] x 12]}}
 ```
 
@@ -87,7 +119,8 @@ before it is answered, so a state read right after a press shows the press.
 slot holds a saved preset (0: factory); `mode`: the page, one of `chain` `block` `edit` `tuner` `save` `move`; `block`:
 the focused block (0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 7 EQ, 8 MOD, 9 DELAY, 10 REVERB, 11 SYN);
 `writes_ok` is 0 once the firmware tried to write outside the preset area of the flash; `frame` counts the drawing
-calls: it changes when the screen does. `preset` is the current sound, as in `docs/EDITOR-PROTOCOL.md`.
+calls: it changes when the screen does; `knob`: the detents PARA has turned since the start; `held`: the buttons that are
+down (`POST down`). `preset` is the current sound, as in `docs/EDITOR-PROTOCOL.md`.
 
 Examples:
 
@@ -121,4 +154,5 @@ fake packages for a try.
 ## Tests
 
 `tests/test_sim.mjs` (part of `make test`) starts the simulator and checks every row above, then runs the real editor
-(`docs/pxedit.js`) and installer (`docs/pxota.js`) code over the shim.
+(`docs/pxedit.js`) and installer (`docs/pxota.js`) code over the shim. `tests/test_pedal_input.mjs` checks the skin's input
+mapping, and `tests/test_pedal_page.mjs` drives the skin in Chromium when Playwright is installed.
