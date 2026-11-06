@@ -136,6 +136,29 @@ static char *ble__hex(char *o, uint32_t v)
     return o;
 }
 
+/* the link line (out: 128 bytes): "LINK 1 n2 I48 L0 T400 W7 P1 D0 LAST 2 24 127 STUB 3 lmp_hci_reset". LINK 1 while connected; n links so far;
+ * I interval (1.25 ms), L latency, T timeout (10 ms) of the link; W writes to the MIDI characteristic; P Just Works pairings accepted; D the
+ * reason of the last disconnection; LAST the last message (PXM_PC or PXM_CC, data 1, data 2); STUB the calls of the stand-ins and the last one's name */
+static void ble_link_text(char *out, uint32_t up, uint32_t links, uint32_t ivl, uint32_t lat, uint32_t tmo, uint32_t writes, uint32_t pairs,
+                          uint32_t reason, const uint8_t *last, uint32_t stubs, const char *stub)
+{
+    char *o = out;
+    o = ble__put(o, "LINK "); o = ble__dec(o, up);
+    o = ble__put(o, " n"); o = ble__dec(o, links);
+    o = ble__put(o, " I"); o = ble__dec(o, ivl);
+    o = ble__put(o, " L"); o = ble__dec(o, lat);
+    o = ble__put(o, " T"); o = ble__dec(o, tmo);
+    o = ble__put(o, " W"); o = ble__dec(o, writes);
+    o = ble__put(o, " P"); o = ble__dec(o, pairs);
+    o = ble__put(o, " D"); o = ble__hex(o, reason);
+    o = ble__put(o, " LAST "); o = ble__dec(o, last[0]);
+    o = ble__put(o, " "); o = ble__dec(o, last[1]);
+    o = ble__put(o, " "); o = ble__dec(o, last[2]);
+    o = ble__put(o, " STUB "); o = ble__dec(o, stubs);
+    if (stub) { o = ble__put(o, " "); o = ble__put(o, stub); }
+    *o = 0;
+}
+
 /* the advertising line, the numbers first so that they are on the screen before the marquee moves:
  * "ADV i12 e5 r0 t340 s0 V 7 A3 12AB CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)\n *   V  the stored radio records: bit mask of VM 106, 107, 108 found, the active VM area (flash address / 4096, 0 = none), the first two bytes of VM 106
  *   i interrupts 45   e HCI packets returned   r interrupts 29   t library timers   s slot-timer stand-in calls

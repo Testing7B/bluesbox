@@ -95,7 +95,7 @@ int main(void)
       if (strncmp(w, "ADV i0 e2 ", 10)) { printf("FAIL: the numbers are not first on screen: \"%s\"\n", w); bad++; } }
     /* the advertisement against the Core Specification (ble_adv.h) */
     { static const uint8_t uuid_le[16] = { 0x00,0xC7,0xC4,0x4E,0xE3,0x6C,0x51,0xA7,0x33,0x4B,0xE8,0xED,0x5A,0x0E,0xB8,0x03 };
-      static const char name[] = "OpenPocket-BLE-TEST";
+      static const char name[] = "OpenPocket";
       unsigned n, i; int flags = 0, uuid = 0;
       for (n = 0; n < sizeof ble_adv_data; ) {                       /* length-type-value structures, no padding, no overrun */
           unsigned l = ble_adv_data[n];
@@ -110,8 +110,14 @@ int main(void)
           ble_scan_rsp[0] != 1u + strlen(name) || memcmp(ble_scan_rsp + 2, name, strlen(name))) { puts("FAIL: scan response is not the complete local name"); bad++; }
       for (i = 0, n = 0; i < 6; i++) n |= ble_adv_mac[i];
       if (!n || (ble_adv_mac[5] & 1u)) { puts("FAIL: address is zero or a group address"); bad++; }
-      if (BLE_ADV_SCAN_IND != 2 || BLE_ADV_INTERVAL < 0x00A0 || BLE_ADV_INTERVAL > 0x4000 || BLE_ADV_CHMAP != 7 || BLE_ADV_FILTER != 0) {
+      if (BLE_ADV_IND != 0 || BLE_ADV_INTERVAL < 0x00A0 || BLE_ADV_INTERVAL > 0x4000 || BLE_ADV_CHMAP != 7 || BLE_ADV_FILTER != 0) {
           puts("FAIL: advertising parameters out of range"); bad++; } }
+    { char l[128]; static const uint8_t last[3] = {2, 24, 127};
+      ble_link_text(l, 1u, 2u, 48u, 0u, 400u, 7u, 1u, 0x13u, last, 3u, "lmp_hci_reset");
+      if (strcmp(l, "LINK 1 n2 I48 L0 T400 W7 P1 D13 LAST 2 24 127 STUB 3 lmp_hci_reset")) { printf("FAIL: link line: %s\n", l); bad++; }
+      ble_link_text(l, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, last, 0u, 0);
+      if (strcmp(l, "LINK 0 n0 I0 L0 T0 W0 P0 D0 LAST 2 24 127 STUB 0")) { printf("FAIL: idle link line: %s\n", l); bad++; }
+    }
     puts(bad ? "ble status: FAILED" : "ble status: ok");
     { /* the log channel's boot lines (ble_diag.h) */
         char l[224];

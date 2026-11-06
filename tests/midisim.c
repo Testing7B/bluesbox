@@ -10,6 +10,7 @@
 #include <string.h>
 #include "px_dsp.h"
 #include "px_midi.h"
+#include "px_ble_midi.h"
 
 static int failed;
 static void ok(int c, const char *what) { printf("%-76s %s\n", what, c ? "ok" : "FAIL"); if (!c) failed++; }
@@ -61,19 +62,20 @@ int main(void)
         memset(used, 0, sizeof used);
         px_cc_build();
         for (b = 0; b < PX_NBLK; b++) {
-            uint32_t cs[2 + PX_NPAR], i;
+            uint32_t cs[3 + PX_NPAR], i;
             t.blk = (uint8_t)b; t.k = 0;
             t.kind = PXM_ON; cs[0] = px_cc_of(&t);
             t.kind = PXM_TYPE; cs[1] = px_cc_of(&t);
-            for (k = 0; k < PX_NPAR; k++) { t.kind = PXM_PARAM; t.k = (uint8_t)k; cs[2 + k] = px_cc_of(&t); }
-            for (i = 0; i < 2 + PX_NPAR; i++) {
+            t.kind = PXM_TOGGLE; cs[2] = px_cc_of(&t);
+            for (k = 0; k < PX_NPAR; k++) { t.kind = PXM_PARAM; t.k = (uint8_t)k; cs[3 + k] = px_cc_of(&t); }
+            for (i = 0; i < 3 + PX_NPAR; i++) {
                 n++;
                 if (cs[i] > 119u) bad++;
                 if (used[cs[i]]++) dup++;
                 for (k = 0; k < sizeof RESERVED; k++) if (RESERVED[k] == cs[i]) bad++;
             }
         }
-        ok(n == 84 && !dup, "84 settings, each on its own Control Change number");
+        ok(n == 96 && !dup, "96 settings and toggles, each on its own Control Change number");
         ok(!bad, "none above 119 (120..127 are channel-mode messages) or on a reserved number (bank, data entry, pedals, RPN)");
         ok(!used[PXM_CC_MASTER], "7 (volume) is not used by a block");
         bad = 0;
@@ -265,6 +267,68 @@ int main(void)
            "the delay TIME nearest to 500 ms (20 + 12.25 v: v = 39)");
         ok(px_dly_value_for_ms(PX_DLY_DIGITAL, 2000.0f) == 100 && px_dly_value_for_ms(PX_DLY_DIGITAL, 1.0f) == 0, "the ends of the scale");
         ok(px_dly_value_for_ms(PX_DLY_REVERSE, 100.0f) == 0, "REVERSE has its own scale (250 ms and up)");
+    }
+
+    /* ---- the toggle range: CC 8 + b flips the block CC 20 + b switches ---- */
+    {
+        px_preset_t p, q;
+        uint32_t mv = 0, b, same = 1;
+        int ms = 0;
+        px_preset_factory(&p, 3);
+        q = p;
+        for (b = 0; b < PX_NBLK; b++) {
+            uint32_t was = p.on[b];
+            if (!px_midi_cc_apply(&p, 8u + b, 0, &mv, &ms) || p.on[b] == was) same = 0;
+            px_midi_cc_apply(&q, 20u + b, was ? 0u : 127u, &mv, &ms);
+            if (p.on[b] != q.on[b]) same = 0;
+            if (!px_midi_cc_apply(&p, 8u + b, 0, &mv, &ms) || p.on[b] != was) same = 0;
+            px_midi_cc_apply(&q, 20u + b, was ? 127u : 0u, &mv, &ms);
+        }
+        ok(same, "CC 8 to 19, value 0: each flips the same block as CC 20 to 31, there and back");
+        ok(px_midi_cc_apply(&p, 12, 127, &mv, &ms) == 0 && px_midi_cc_apply(&p, 12, 1, &mv, &ms) == 0 && !memcmp(&p, &q, sizeof p),
+           "a toggle fires on value 0 only: a 127 then 0 tap flips once");
+        p.on[PX_B_DELAY] = 0;
+        px_midi_cc_apply(&p, 17, 0, &mv, &ms);
+        ok(p.on[PX_B_DELAY] == 1, "CC 17 is DELAY");
+        p.on[PX_B_REVERB] = 0; p.on[PX_B_MOD] = 0; p.on[PX_B_DRIVE] = 0; p.on[PX_B_PITCH] = 0; p.on[PX_B_SFX] = 0;
+        px_midi_cc_apply(&p, 18, 0, &mv, &ms); px_midi_cc_apply(&p, 16, 0, &mv, &ms); px_midi_cc_apply(&p, 12, 0, &mv, &ms);
+        px_midi_cc_apply(&p, 10, 0, &mv, &ms); px_midi_cc_apply(&p, 11, 0, &mv, &ms);
+        ok(p.on[PX_B_REVERB] && p.on[PX_B_MOD] && p.on[PX_B_DRIVE] && p.on[PX_B_PITCH] && p.on[PX_B_SFX], "CC 18 REVERB, 16 MOD, 12 DRIVE, 10 PITCH, 11 SFX");
+        q = p;
+        ok(px_midi_cc_apply(&p, 0, 0, &mv, &ms) == 0 && px_midi_cc_apply(&p, 7 + 0, 0, &mv, &ms) == 0 && !memcmp(&p, &q, sizeof p), "CC 0 (bank select) still does nothing");
+    }
+
+    /* ---- a BLE MIDI write -> the same event packets as USB ---- */
+    {
+        px_blem_t b = {0};
+        uint32_t o[8];
+        uint8_t choc[] = {0x80, 0x8E, 0xB1, 0x00, 0x7F};               /* the Chocolate Plus, footswitch A, as captured */
+        ok(px_blem_parse(&b, choc, sizeof choc, o, 8) == 1 && o[0] == cc_pkt(1, 0, 127), "BLE: the Chocolate's write is CC 0 = 127 on channel 2");
+        ok(px_midi_decode(&omni, o[0]).type == PXM_CC, "BLE: and it decodes as a USB packet does");
+        uint8_t pc[] = {0x80, 0x81, 0xC2, 0x05};
+        ok(px_blem_parse(&b, pc, sizeof pc, o, 8) == 1 && o[0] == pc_pkt(2, 5), "BLE: Program Change has one data byte");
+        uint8_t two[] = {0x93, 0xA0, 0xB0, 24, 127, 0xA1, 0xC0, 3};
+        ok(px_blem_parse(&b, two, sizeof two, o, 8) == 2 && o[0] == cc_pkt(0, 24, 127) && o[1] == pc_pkt(0, 3), "BLE: two messages in one write");
+        uint8_t run[] = {0x80, 0x80, 0xB0, 24, 127, 25, 0, 0x85, 26, 64};
+        ok(px_blem_parse(&b, run, sizeof run, o, 8) == 3 && o[1] == cc_pkt(0, 25, 0) && o[2] == cc_pkt(0, 26, 64),
+           "BLE: running status, with and without a timestamp");
+        uint8_t rt[] = {0x80, 0x80, 0xB0, 24, 127, 0x81, 0xF8, 0x82, 25, 1};
+        ok(px_blem_parse(&b, rt, sizeof rt, o, 8) == 3 && px_midi_decode(&omni, o[1]).type == PXM_CLOCK && o[2] == cc_pkt(0, 25, 1),
+           "BLE: a clock between messages keeps the running status");
+        uint8_t nohdr[] = {0x00, 0x80, 0xB0, 24, 127};
+        ok(px_blem_parse(&b, nohdr, sizeof nohdr, o, 8) == 0, "BLE: no header bit: not a packet");
+        uint8_t cut[] = {0x80, 0x80, 0xB0, 24};
+        ok(px_blem_parse(&b, cut, sizeof cut, o, 8) == 0, "BLE: a message cut short is dropped");
+        ok(px_blem_parse(&b, cut, 1, o, 8) == 0 && px_blem_parse(&b, cut, 0, o, 8) == 0, "BLE: empty writes give nothing");
+        uint8_t nostat[] = {0x80, 24, 127};
+        ok(px_blem_parse(&b, nostat, sizeof nostat, o, 8) == 0, "BLE: running status does not reach over from the last write");
+        uint8_t sx1[] = {0x80, 0x80, 0xF0, 1, 2, 3}, sx2[] = {0x80, 4, 5, 0x81, 0xF7, 0x82, 0xB0, 24, 127};
+        ok(px_blem_parse(&b, sx1, sizeof sx1, o, 8) == 0 && b.sysex == 1, "BLE: SysEx is skipped");
+        ok(px_blem_parse(&b, sx2, sizeof sx2, o, 8) == 1 && o[0] == cc_pkt(0, 24, 127) && !b.sysex, "BLE: a SysEx that runs over two writes ends, and what follows counts");
+        uint8_t sc[] = {0x80, 0x80, 0xF3, 7, 0x81, 0xB0, 24, 1};
+        ok(px_blem_parse(&b, sc, sizeof sc, o, 8) == 1 && o[0] == cc_pkt(0, 24, 1), "BLE: system common messages are skipped with their data");
+        uint8_t full[] = {0x80, 0x80, 0xB0, 24, 1, 25, 2, 26, 3};
+        ok(px_blem_parse(&b, full, sizeof full, o, 2) == 2, "BLE: never more than the room given");
     }
 
     printf("\n%s\n", failed ? "MIDI tests FAILED" : "all MIDI tests passed");

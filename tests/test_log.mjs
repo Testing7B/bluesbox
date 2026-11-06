@@ -71,7 +71,7 @@ ok(strings(/N\[7\] = \{([^}]*)\}/.exec(fw)[1]).join() === RESET_CAUSES.join(), "
 
 // ---- the verdicts on the real firmware text ----
 const fast = ["--interval", "0.01", "--json"];
-const seen = { ok: true, seconds: 10, hits: 42, others: 9, name: "OpenPocket-BLE-TEST", rssi: -60, connectable: false };
+const seen = { ok: true, seconds: 10, hits: 42, others: 9, name: "OpenPocket", rssi: -60, connectable: true };
 const nothing = { ok: true, seconds: 10, hits: 0, others: 9, name: null };
 
 let s = sim("edsim_diag");
@@ -79,6 +79,7 @@ await s.ready;
 let r = await run(s.access, fast);
 ok(r.code === 1 && /Bluetooth is off/.test(r.last.verdict.reason), "firmware text: OFF in a normal boot fails");
 ok(r.last.level === "full" && r.last.boot.clockMs === 30000 && r.last.lastBoot.failed === false, "DIAG reaches the parser through the real editor code");
+ok(/^LINK 1 n2 I48 /.test(r.last.link), "the link line comes through");
 
 s.ble("failed 5 3");
 r = await run(s.access, fast);

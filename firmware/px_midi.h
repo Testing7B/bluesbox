@@ -39,9 +39,10 @@ static uint8_t mid_last[3];             /* the last message received: type (PXM_
 static uint32_t px_midi_tx_chan(const px_midi_cfg_t *c) { return c->chan ? (uint32_t)c->chan - 1u : 0u; }
 
 /* ---- the Control Change map (docs/MIDI.md) ---- */
-enum { PXM_NONE, PXM_ON, PXM_TYPE, PXM_PARAM, PXM_MASTER };
+enum { PXM_NONE, PXM_ON, PXM_TOGGLE, PXM_TYPE, PXM_PARAM, PXM_MASTER };
 typedef struct { uint8_t kind, blk, k; } px_cc_t;
 #define PXM_CC_MASTER 7u
+#define PXM_CC_TOGGLE0 8u                              /* 8..19: block b flips on value 0, in the block order of 20..31 */
 #define PXM_CC_ON0    20u                              /* 20..31: block b on/off */
 #define PXM_CC_TYPE0  52u                              /* 52..63: block b model */
 static uint32_t px_cc_param(uint32_t b, uint32_t k)    /* 60 settings over three runs of free numbers (38, Data Entry LSB, skipped) */
@@ -53,6 +54,7 @@ static uint32_t px_cc_of(const px_cc_t *t)
 {
     switch (t->kind) {
     case PXM_ON:     return PXM_CC_ON0 + t->blk;
+    case PXM_TOGGLE: return PXM_CC_TOGGLE0 + t->blk;
     case PXM_TYPE:   return PXM_CC_TYPE0 + t->blk;
     case PXM_PARAM:  return px_cc_param(t->blk, t->k);
     case PXM_MASTER: return PXM_CC_MASTER;
@@ -69,6 +71,7 @@ static void px_cc_build(void)
     for (b = 0; b < PX_NBLK; b++) {
         t.blk = (uint8_t)b; t.k = 0;
         t.kind = PXM_ON;   px_cc_tab[px_cc_of(&t)] = t;
+        t.kind = PXM_TOGGLE; px_cc_tab[px_cc_of(&t)] = t;
         t.kind = PXM_TYPE; px_cc_tab[px_cc_of(&t)] = t;
         for (k = 0; k < PX_NPAR; k++) { t.kind = PXM_PARAM; t.k = (uint8_t)k; px_cc_tab[px_cc_of(&t)] = t; }
     }
@@ -125,6 +128,10 @@ static int px_midi_cc_apply(px_preset_t *p, uint32_t cc, uint32_t val, uint32_t 
         v = val >= 64u;
         if (p->on[t.blk] == v) return 0;
         p->on[t.blk] = (uint8_t)v;
+        return 1;
+    case PXM_TOGGLE:                                   /* the pedal holds the state, so a preset change cannot put a footswitch out of step */
+        if (val) return 0;
+        p->on[t.blk] = !p->on[t.blk];
         return 1;
     case PXM_TYPE:
         v = pxm_type_from_cc(val, (uint32_t)px_ntypes(t.blk));

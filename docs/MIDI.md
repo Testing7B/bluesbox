@@ -15,7 +15,7 @@ as a separate test package (OpenPocket v37 MIDI TEST), not in the normal install
 | Message | What happens |
 | --- | --- |
 | Program Change 0 to 51 | Loads preset slot 1 to 52, as the footswitches do (unsaved changes are dropped). 52 and above are ignored |
-| Control Change, the map below | Switches a block on or off, picks a block's model, sets one of its 5 settings, or sets the MASTER volume |
+| Control Change, the map below | Switches or flips a block on or off, picks a block's model, sets one of its 5 settings, or sets the MASTER volume |
 | MIDI clock (24 per quarter note), when CLOCK > DELAY is on | Sets the delay TIME to one quarter note |
 | Start, Continue, Stop | Restart the tempo measurement |
 | Everything else | Ignored: notes, pitch bend, bank select (0 and 32), modulation, sustain, "all notes off", system messages |
@@ -55,6 +55,17 @@ last model.
 | DELAY | 29 | 61 | 97 | 102 | 103 | 104 | 105 |
 | REVERB | 30 | 62 | 106 | 107 | 108 | 109 | 110 |
 | SYN | 31 | 63 | 111 | 112 | 113 | 114 | 115 |
+
+**Toggles (footswitches).** CC 8 to 19 flip a block with **value 0** and ignore every other value, so a footswitch that sends
+127 then 0 for a tap flips it once. The pedal holds the state, so a preset change cannot put the footswitch out of step, as
+it can with the on/off numbers above.
+
+| CC | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Block | GATE | COMP | PITCH | SFX | DRIVE | AMP | CAB | EQ | MOD | DELAY | REVERB | SYN |
+
+The order is the order of the blocks above: CC 8 + n flips what CC 20 + n switches. The pedal never sends these numbers: it reports a
+block with its on/off number.
 
 CC **7** (volume) sets the MASTER volume, 0 to 127 to 0 to 100, like the MASTER knob (turning the knob takes over again).
 

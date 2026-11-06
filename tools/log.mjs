@@ -149,8 +149,8 @@ async function read(access, timing) {
     return dev ? { time, level: "identity", id: dev.id, port: dev.name } : { time, level: "silent", port: ports[0].name };
   }
   try {
-    const [boot, last, ble] = await ed.diag();
-    return { time, level: "full", info, boot: parseBoot(boot), lastBoot: parseLast(last), ble: parseBle(ble) };
+    const [boot, last, ble, link] = await ed.diag();
+    return { time, level: "full", info, boot: parseBoot(boot), lastBoot: parseLast(last), ble: parseBle(ble), link };
   } catch (e) {
     if (e.code !== "timeout") throw e;
     const r = await ed.request(C.PING).catch(() => null);
@@ -172,6 +172,7 @@ function show(r, prev, say) {
   say(`this boot  pedal clock ${(boot.clockMs / 1000).toFixed(1)} s (wraps every 179 s), stage ${boot.stageName}, ${boot.safe ? "SAFE MODE" : "normal"}, reset by ${boot.resetBy.join(" + ") || "?"}, failed boots counted ${boot.failedBoots}`);
   say(`last boot  ${l.failed ? `FAILED: ${lastBootWords(r)}; blocks ${l.blocks}, load ${l.load}%, peak ${l.peak}%, NaN ${l.nans}, CPU1 ${l.cpu1}, loops ${l.loops}` : "finished normally"}`);
   say(`bluetooth  ${ble.raw}`);
+  if (r.link) say(`link       ${r.link}`);
   if (ble.state !== "advertising") return;
   const before = prev?.level === "full" && prev.ble.state === "advertising" ? prev.ble : null;
   for (const k of ["i", "e", "r", "t", "s"]) say(`  ${k.padEnd(5)}${String(ble[k]).padEnd(10)}${(before ? `+${ble[k] - before[k]}` : "").padEnd(9)}${MEANING[k]}`);

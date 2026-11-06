@@ -551,7 +551,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
 #if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
-#define ED_DIAG_LINES 3u
+#define ED_DIAG_LINES 4u
 #define ED_DIAG_LEN 224u
 static void ed_diag_line(uint32_t i, char *out);
 #endif
@@ -566,12 +566,14 @@ static void ed_diag_line(uint32_t i, char *out);
 #include "ble/ble_rf.c"
 #include "ble/ble_stubs.c"
 #include "ble/ble_test.c"
+#include "ble/ble_midi.c"
 #include "ble/ble_diag.h"
 static void ed_diag_line(uint32_t i, char *out)
 {
     if (i == 0u) ble_boot_text(out, ms_now(), op_diag.safe, op_diag.stage, op_pwr.rst, guard.failed);
     else if (i == 1u) ble_last_text(out, &ble_last);
-    else ble_test_line(out);
+    else if (i == 2u) ble_test_line(out);
+    else ble_midi_line(out);
 }
 #endif
 
@@ -722,11 +724,11 @@ static void app_main(void)
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
 #if OP_BLE_TEST
                 {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
-                    char b[48], full[96]; int k, j;
+                    char b[48], full[128]; int k, j;
                     static uint32_t scroll;
                     ble_test_state(b);
                     if (ble_state == BLE_FAILED || ble_state == BLE_ADV) {   /* longer than the status area: scroll it (ble_status.h) */
-                        ble_test_line(full);
+                        if (ble_conn) ble_midi_line(full); else ble_test_line(full);
                         ble_marquee(full, scroll++, 11, b);
                     } else {
                         for (k = 0; b[k]; k++) ;

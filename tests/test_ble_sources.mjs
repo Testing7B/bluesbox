@@ -10,7 +10,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dir = join(repo, "third_party/jieli-ble");
 const listed = readFileSync(join(dir, "MEMBERS"), "utf8").split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split("\t")[2]);
 assert.ok(listed.length > 0 && listed.every(Boolean), "MEMBERS has archive, member and file on each line");
-const onDisk = ["btctrler", "cpu"].flatMap((d) => readdirSync(join(dir, d)).map((f) => `${d}/${f}`));
+const onDisk = ["btctrler", "btstack", "ccm", "cpu"].flatMap((d) => readdirSync(join(dir, d)).map((f) => `${d}/${f}`));
 assert.deepEqual([...listed].sort(), onDisk.sort(), "MEMBERS lists exactly the objects in the directory");
 for (const f of listed) {
   const head = readFileSync(join(dir, f)).subarray(0, 4);

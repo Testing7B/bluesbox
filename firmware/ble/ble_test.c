@@ -1,10 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only OR MPL-2.0 */
-/* Advertise-only Bluetooth test (build target "ble", docs/BLE-TEST.md): the controller from the JieLi SDK library
- * (third_party/jieli-ble) is started, and one scannable, non-connectable advertisement is sent on the three
- * advertising channels:
- *   advertising data   flags, the BLE-MIDI service UUID 03B80E5A-EDE8-4B33-A751-6CE34EC4C700 (128 bit)
- *   scan response      the complete local name "OpenPocket-BLE-TEST"
- * No connection is ever accepted (the type is ADV_SCAN_IND), no pairing, nothing is sent over Bluetooth but this. */
+/* The Bluetooth test image (build target "ble", docs/BLE-TEST.md): JieLi's controller and host (third_party/jieli-ble) are
+ * started and the pedal advertises as a connectable Bluetooth MIDI peripheral (ble_midi.c). */
 #include <stdint.h>
 #include <stdbool.h>
 #include "fm1_irq.h"
@@ -12,47 +8,29 @@
 #include "ble_status.h"
 #include "ble_adv.h"
 
-/* the controller library's entry points (include_lib/btctrler/btctrler_task.h, ble/hci_ll.h; hci_transport.h) */
-extern int btctrler_task_init(const void *transport, const void *config);
-extern int btctrler_task_ready(void);        /* blocks until the controller task answers, 1 when it did */
-extern const void *hci_transport_h4_controller_instance(void);
-extern void ll_hci_adv_set_params(uint16_t adv_int_min, uint16_t adv_int_max, uint8_t adv_type, uint8_t direct_address_type,
-                                  uint8_t *direct_address, uint8_t channel_map, uint8_t filter_policy);
-extern void ll_hci_adv_set_data(uint8_t len, uint8_t *data);
-extern void ll_hci_adv_scan_response_set_data(uint8_t len, uint8_t *data);
-extern int ll_hci_adv_enable(bool enable);
+extern int btstack_init(void);               /* btstack_task.c: starts the controller, waits for it, starts the host task */
 extern int task_create(void (*fn)(void *), void *arg, const char *name);   /* ble_os.c */
 extern uint32_t ble_task_waiting(const char *name);                        /* ble_os.c */
 extern int le_controller_set_mac(const uint8_t *mac);                       /* cpu.a/btctrler: the public address slot */
 extern int __crc16_mutex_init(void);        /* cpu.a crc16.c: creates the lock its CRC helpers take; the SDK's start-up calls it */
 
 static uint32_t t_start;
-static uint8_t cfg[64];                                         /* the controller reads its host-side settings here: none */
 
 /* the library's TX power ceilings (ble_txpwr_normal_set clamps to bits 15:12 of rf[0]); its .data default is 0 and the stock app sets them
  * at start-up (SDK: bt_max_pwr_set(10, 5, 8, 9)): without this the advertisement is sent at the lowest level, if at all */
 extern void bt_max_pwr_set(uint8_t pwr, uint8_t pg_pwr, uint8_t iq_pwr, uint8_t ble_pwr);
 
-/* btctrler_task_ready waits (on a semaphore) until the controller's own task has started, so this runs as a task of
- * its own: the main loop must never block there. */
+/* btstack_init waits (on a semaphore) until the controller's own task has started, so this runs as a task of its own: the
+ * main loop must never block there. The host then takes over in update_bt_current_status (ble_midi.c). */
 static void test_task(void *arg)
 {
     int rc;
     (void)arg;
     ble_stage_set(BLE_STAGE_INIT);                              /* (BLE_STAGE_RF: ble_rf.c, inside the init) */
-    rc = btctrler_task_init(hci_transport_h4_controller_instance(), cfg);
-    if (rc) { ble_judge_start(rc, 0); return; }
+    rc = btstack_init();
+    if (rc) { ble_judge_start(rc, 1); return; }
     ble_stage_set(BLE_STAGE_READY);
-    if (ble_judge_start(0, btctrler_task_ready())) return;
     bt_max_pwr_set(10, 5, 8, 9);                                /* after the controller's own init, which resets its power settings */
-    ble_stage_set(BLE_STAGE_ADV);
-    le_controller_set_mac(ble_adv_mac);                         /* the public address slot is zero otherwise (ble_adv.h) */
-    ll_hci_adv_set_params(BLE_ADV_INTERVAL, BLE_ADV_INTERVAL, BLE_ADV_SCAN_IND, 0, ble_no_addr, BLE_ADV_CHMAP, BLE_ADV_FILTER);
-    ll_hci_adv_set_data(sizeof(ble_adv_data), ble_adv_data);
-    ll_hci_adv_scan_response_set_data(sizeof(ble_scan_rsp), ble_scan_rsp);
-    ble_stage_set(BLE_STAGE_ENABLE);
-    rc = ll_hci_adv_enable(true);
-    if (rc) ble_fail(BLE_FAIL_ADV_ENABLE, rc); else ble_state = BLE_ADV;
 }
 
 void ble_test_start(void)
@@ -77,9 +55,6 @@ void ble_test_poll(void)
         ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);
     }
 }
-
-/* every packet the controller returns to its host: we have none, so this only counts them (h4_controller_interface.c) */
-int hci_packet_handler(uint8_t type, uint8_t *pkt, uint16_t size) { (void)size; return ble_count_hci(type, pkt); }
 
 void ble_test_state(char *out) { ble_status_text(out); }
 

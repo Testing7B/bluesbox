@@ -105,14 +105,15 @@ static int ota_wire_send(const uint8_t *p, uint32_t n)
 #include "../firmware/px_store.h"
 #if OP_BLE_TEST
 #include "../firmware/ble/ble_diag.h"
-#define ED_DIAG_LINES 3u
+#define ED_DIAG_LINES 4u
 #define ED_DIAG_LEN 224u
 static uint32_t sim_safe, sim_rst = 0x40u;
 static void ed_diag_line(uint32_t i, char *out)
 {
     if (i == 0u) ble_boot_text(out, 30000u, sim_safe, 8u, sim_rst, 0u);
     else if (i == 1u) ble_last_text(out, &ble_last);
-    else if (ble_state == BLE_ADV) ble_adv_text(out, 0x2001u, 0x101u, 0u, 0x80u, 3u, 3u, 1u);
+    else if (i == 3u) { static const uint8_t last[3] = {2, 24, 127}; ble_link_text(out, 1u, 2u, 48u, 0u, 400u, 7u, 1u, 0x13u, last, 3u, "lmp_hci_reset"); }
+    else if (ble_state == BLE_ADV) ble_adv_text(out, 7u, 0xA3u, 0x12ABu, 0x2001u, 0x101u, 0u, 0x80u, 3u, 3u, 1u);
     else ble_status_full(out);
 }
 static void sim_ble(const char *l)
