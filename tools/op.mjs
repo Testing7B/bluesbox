@@ -4,7 +4,7 @@
 // .bat files only call this. Every Docker command line lives here.
 //   node tools/op.mjs doctor | build | ble | test | package | clean | shell | image | serve [editor|build|ble]
 //   node tools/op.mjs flash --dry-run | --confirm-flash [--rescue] [--package FILE]   (writes to a connected pedal: docs/BUILDING.md)
-//   node tools/op.mjs log [--follow] [--json] [--wait SEC]   (reads a connected pedal's state: docs/BLE-TEST.md)
+//   node tools/op.mjs log [--follow] [--json] [--wait SEC] [--scan SEC]   (reads a connected pedal's state: docs/BLE-TEST.md)
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 //   node tools/op.mjs sim [--port 8766] [--flash FILE] [--reset] | --update FLASH.bin   the hosted simulated pedal
 //   node tools/op.mjs wasm   the engine as WebAssembly for the simulated pedal's sound (tools/sim/px_engine.wasm)

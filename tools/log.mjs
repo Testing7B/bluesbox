@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // node tools/op.mjs log: read the pedal's state over USB MIDI instead of from its screen, with what each field means and a
 // verdict. The request is DIAG (docs/EDITOR-PROTOCOL.md), read only; docs/pxedit.js and docs/pxota.js do the talking.
-//   log [--follow] [--json] [--wait SEC] [--interval SEC] [--count N]
+//   log [--follow] [--json] [--wait SEC] [--interval SEC] [--count N] [--scan SEC]
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { C, Editor } from "../docs/pxedit.js";
 import { IS_OTA, PORT_RE, Updater } from "../docs/pxota.js";
 
-const USAGE = `usage: node tools/op.mjs log [--follow] [--json] [--wait SEC] [--interval SEC] [--count N]
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const USAGE = `usage: node tools/op.mjs log [--follow] [--json] [--wait SEC] [--interval SEC] [--count N] [--scan SEC]
   --wait SEC      keep trying for this long until the pedal has finished starting (use it right after a flash)
   --interval SEC  time between two readings (default 2): the counters must rise between them
   --count N       how many readings (default 2; with --follow, no limit)
   --follow        keep reading until stopped
   --json          one JSON object per reading
-Exit: 0 running, 1 fail, 2 bad arguments, 3 undecided (still starting, no log channel).`;
+  --scan SEC      then listen for the advertisement on this Mac: SEC seconds on its service UUID, SEC seconds on everything
+Exit: 0 pass or running, 1 fail, 2 bad arguments, 3 undecided (still starting, the scanner could not run, no log channel).`;
+const BLE_MIDI = "03B80E5A-EDE8-4B33-A751-6CE34EC4C700";
 
 // firmware/openpocket.c: ST_NAME, rst_names (tests/test_log.mjs compares them)
 export const BOOT_STAGES = ["?", "INPUTS", "PRESET", "ENGINE INIT", "ENGINE SET", "I2S START", "UI DRAW", "FIRST 6 S", "OK"];
@@ -88,8 +95,8 @@ const NOT_READ = {
   silent: `A pedal-like MIDI port is there but nothing answers: the main loop is stuck or the firmware failed before USB service. ${SCREEN} what it is doing. If the pedal then resets by itself, read again; a pedal stuck like this needs a power cycle or the UBOOT rescue.`,
 };
 
-// { result: running | fail | pending | unknown, reason } for the readings so far
-export function judge(readings) {
+// { result: pass | running | fail | pending | unknown, reason } for the readings so far and a scan, if one ran
+export function judge(readings, scan) {
   const now = readings[readings.length - 1];
   if (now.level === "none" || now.level === "silent") return { result: "unknown", reason: NOT_READ[now.level] };
   if (now.level === "identity") {
@@ -124,7 +131,10 @@ export function judge(readings) {
   if (ble.s > 0) notes.push(`The link scheduler asked for a slot timer this image lacks (s ${ble.s}).`);
   if (ble.vm && ble.vm.found !== 7) notes.push(`Not all stored radio records were found (V ${ble.vm.found.toString(16)}, 7 expected): the radio has zeros for the missing trims.`);
   const judged = (result, reason) => ({ result, reason: [reason, ...notes].join(" "), notes });
-  return judged("running", `${rate}. That is not proof of packets on the air: only a scanner can show that.`);
+  if (!scan) return judged("running", `${rate}. That is not proof of packets on the air: add --scan.`);
+  if (!scan.ok) return judged("unknown", `${rate}, but the scanner could not run: ${scan.why}.`);
+  if (scan.hits) return judged("pass", `This Mac saw the advertisement ${scan.hits} times: name "${scan.name}", RSSI ${scan.rssi} dBm, connectable ${scan.connectable}.`);
+  return judged("fail", `${rate} and the controller reports advertising, but this Mac saw no advertisement in ${scan.seconds} s (${scan.others} other devices seen, so the scanner works).`);
 }
 
 // one reading, at the deepest level the pedal answers
@@ -169,25 +179,65 @@ function show(r, prev, say) {
   for (const k of ["CON", "IEN", "IPND", "STAT", "IC45", "IC29", "BEN"]) say(`  ${k.padEnd(5)}${(ble[k] ?? 0).toString(16).toUpperCase().padEnd(19)}${MEANING[k]}`);
 }
 
+function compileScanner() {
+  const bin = resolve(ROOT, "build/ble-scan"), src = resolve(ROOT, "tools/ble-scan.swift"), plist = `${bin}.plist`;
+  if (existsSync(bin) && statSync(bin).mtimeMs > statSync(src).mtimeMs) return bin;
+  mkdirSync(dirname(bin), { recursive: true });
+  writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.openpocket.ble-scan</string><key>NSBluetoothAlwaysUsageDescription</key><string>Listens for the OpenPocket test advertisement.</string></dict></plist>`);
+  const r = spawnSync("swiftc", ["-O", src, "-o", bin, "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", plist], { encoding: "utf8" });
+  if (r.error || r.status !== 0) throw new Error(`swiftc failed: ${r.error?.message || r.stderr}`);
+  return bin;
+}
+
+function scanPass(bin, seconds, uuid) {
+  return new Promise((done) => {
+    const child = spawn(bin, [String(seconds), ...(uuid ? [uuid] : [])], { stdio: ["ignore", "pipe", "ignore"] });
+    const killer = setTimeout(() => child.kill(), (seconds + 15) * 1000);
+    let out = "";
+    child.stdout.on("data", (d) => { out += d; });
+    child.on("close", () => {
+      clearTimeout(killer);
+      const lines = out.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      done({ hits: lines.filter((l) => !l.done), end: lines.find((l) => l.done) });
+    });
+  });
+}
+
+// the service-UUID pass, then the open pass, or why they could not run
+export async function macScan(seconds) {
+  if (process.platform !== "darwin") return { ok: false, why: "the scanner is for macOS only" };
+  let bin;
+  try { bin = compileScanner(); } catch (e) { return { ok: false, why: e.message }; }
+  const passes = [await scanPass(bin, seconds, BLE_MIDI), await scanPass(bin, seconds, null)];
+  const end = passes.map((p) => p.end).find((e) => e && e.state !== 5) || passes[1].end;
+  if (!end) return { ok: false, why: "the helper stopped without a result" };
+  if (end.state !== 5) return { ok: false, why: `the Bluetooth adapter is not usable (state ${end.state}, authorization ${end.auth}; 5 and 3 are needed)` };
+  const hits = passes.flatMap((p) => p.hits);
+  const named = hits.find((h) => h.name) || hits[0];
+  return { ok: true, seconds: seconds * 2, hits: hits.length, others: passes[1].end.others, name: named?.name ?? null, id: named?.id ?? null,
+    rssi: hits.length ? Math.max(...hits.map((h) => h.rssi)) : null, connectable: named?.connectable ?? null, services: named?.services ?? [] };
+}
+
 function parse(argv) {
-  const a = { follow: false, json: false, wait: 0, interval: 2, count: 2 };
+  const a = { follow: false, json: false, wait: 0, interval: 2, count: 2, scan: 0 };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === "--follow") a.follow = true;
     else if (v === "--json") a.json = true;
-    else if (["--wait", "--interval", "--count"].includes(v)) {
+    else if (["--wait", "--interval", "--count", "--scan"].includes(v)) {
       const n = Number(argv[++i]);
       if (!(n >= 0)) throw new Error(`${v} needs a number`);
       a[v.slice(2)] = n;
     } else throw new Error(`unknown argument ${v}`);
   }
+  if (a.follow && a.scan) throw new Error("--scan needs an end: leave out --follow");
   return a;
 }
 
-const EXIT = { running: 0, fail: 1, pending: 3, unknown: 3 };
+const EXIT = { pass: 0, running: 0, fail: 1, pending: 3, unknown: 3 };
 
-// main(argv, { access, say, timing }): the exit code. access defaults to the real USB MIDI ports.
-export async function main(argv, { access, say = console.log, timing } = {}) {
+// main(argv, { access, say, scan, timing }): the exit code. access defaults to the real USB MIDI ports.
+export async function main(argv, { access, say = console.log, scan = macScan, timing } = {}) {
   let args, node = null;
   try { args = parse(argv); } catch (e) { say(`${e.message}\n${USAGE}`); return 2; }
   const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -206,11 +256,18 @@ export async function main(argv, { access, say = console.log, timing } = {}) {
     for (let n = 0; ; n++) {
       readings.push(r);
       verdict = judge(readings);
-      if (args.json) say(JSON.stringify({ ...r, verdict }));
-      else { show(r, readings[readings.length - 2], say); say(`verdict    ${verdict.result.toUpperCase()}: ${verdict.reason}`); }
+      if (args.json) { if (!args.scan) say(JSON.stringify({ ...r, verdict })); } else { show(r, readings[readings.length - 2], say); say(`verdict    ${verdict.result.toUpperCase()}: ${verdict.reason}`); }
       if (!args.follow && n + 1 >= args.count) break;
       await sleep(args.interval);
       r = await read(access, timing);
+    }
+    if (args.scan) {
+      if (!args.json) say(`scanning   ${args.scan} s on the BLE-MIDI service UUID, then ${args.scan} s on everything (never connects)`);
+      const result = await scan(args.scan);
+      readings.push(await read(access, timing));
+      verdict = judge(readings, result);
+      if (args.json) say(JSON.stringify({ ...readings[readings.length - 1], scan: result, verdict }));
+      else { show(readings[readings.length - 1], readings[readings.length - 2], say); say(`verdict    ${verdict.result.toUpperCase()}: ${verdict.reason}`); }
     }
     return EXIT[verdict.result];
   } finally {

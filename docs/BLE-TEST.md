@@ -100,8 +100,8 @@ Reading the next flash: `i` and `t` rising means the radio runs and the cause is
 `node tools/op.mjs log` reads all of this over USB MIDI, so nobody has to read the scrolling text: it prints each field with its meaning and a verdict. It needs `npm ci --prefix tools` once.
 
 ```
-node tools/op.mjs log --wait 40         # after a flash: wait for the boot, read twice, judge
-node tools/op.mjs log --follow --json   # keep reading, one JSON object per reading
+node tools/op.mjs log --wait 40 --scan 30    # after a flash: wait for the boot, read, scan from this Mac, read, judge
+node tools/op.mjs log --follow --json        # keep reading, one JSON object per reading
 ```
 
 The request is `DIAG` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)), which only this image answers, so the normal firmware is byte for byte what it was. It reads memory and the same registers as the status text, and writes nothing. Its three lines are:
@@ -112,7 +112,7 @@ The request is `DIAG` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)), which only thi
 | last boot | `LAST OK`, or `LAST FAILED STAGE 7 BLOCKS 9 LOAD 42 PEAK 61 NAN 0 CPU1 1 LOOPS 0 CRASH VEC 3F PC 2000DC8 RETS 2001234 DBG 0 EMU 0 UP 4100` | the fields of the `LAST BOOT FAILED` screen; `CRASH ...` only after a crash |
 | status | `ADV i12 e5 ...`, `FAILED 5 3  step timeout ...`, `STARTING 4`, `OFF` | the text the status area scrolls, from the same function |
 
-It cannot read a pedal that is not running its main loop. While the red crash screen or the 12 s `LAST BOOT FAILED` report is up, USB is down; the next boot gives the same report through this channel. A pedal stuck before USB service stays silent: only the screen shows what it is doing. With firmware that has no `DIAG`, the command gives the version and the DSP load and says what is missing. Exit codes: 0 running, 1 fail, 3 undecided. `RUNNING` means the radio events rise; it is not proof of packets on the air, which only a scanner can show.
+It cannot read a pedal that is not running its main loop. While the red crash screen or the 12 s `LAST BOOT FAILED` report is up, USB is down; the next boot gives the same report through this channel. A pedal stuck before USB service stays silent: only the screen shows what it is doing. With firmware that has no `DIAG`, the command gives the version and the DSP load and says what is missing. Exit codes: 0 pass or running, 1 fail, 3 undecided. `RUNNING` means the radio events rise; only a sighting by the scan is `PASS`.
 
 ## Found on hardware
 

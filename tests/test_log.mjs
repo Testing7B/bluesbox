@@ -71,6 +71,8 @@ ok(strings(/N\[7\] = \{([^}]*)\}/.exec(fw)[1]).join() === RESET_CAUSES.join(), "
 
 // ---- the verdicts on the real firmware text ----
 const fast = ["--interval", "0.01", "--json"];
+const seen = { ok: true, seconds: 10, hits: 42, others: 9, name: "OpenPocket-BLE-TEST", rssi: -60, connectable: false };
+const nothing = { ok: true, seconds: 10, hits: 0, others: 9, name: null };
 
 let s = sim("edsim_diag");
 await s.ready;
@@ -89,13 +91,23 @@ r = await run(s.access, fast);
 ok(r.code === 1 && /no baseband events/i.test(r.last.verdict.reason), "counters that stand still fail");
 
 let n = 100;
-const t = setInterval(() => s.ble(`adv ${n += 10} ${n * 5}`), 5);
-r = await run(s.access, ["--interval", "0.1", "--json"]);
-clearInterval(t);
+const rising = async (scan) => {
+  const t = setInterval(() => s.ble(`adv ${n += 10} ${n * 5}`), 5);
+  const out = await run(s.access, ["--interval", "0.1", "--json", ...(scan ? ["--scan", "5"] : [])], scan ? { scan: async () => scan } : {});
+  clearInterval(t);
+  return out;
+};
+r = await rising();
 ok(r.code === 0 && r.last.verdict.result === "running" && /not proof/.test(r.last.verdict.reason), "rising counters: running, and not called proof");
 let v = judge([{ level: "full", time: "2026-11-06T13:00:00Z", boot: { stage: 8, clockMs: 178000 }, ble: parseBle("ADV i10 e0 r0 t0 s2 V 0 0 0 CON 6001 IEN 101 IPND 0 STAT 0 IC45 5 IC29 5 BEN 1") },
   { level: "full", time: "2026-11-06T13:00:02Z", boot: { stage: 8, clockMs: 1000 }, ble: parseBle("ADV i30 e0 r0 t0 s2 V 0 0 0 CON 6001 IEN 101 IPND 0 STAT 0 IC45 5 IC29 5 BEN 1") }]);
 ok(v.result === "running" && /10\.0 a second/.test(v.reason) && v.notes.length === 3, `events without timers still run, across a clock wrap, with notes: ${v.notes.length}`);
+r = await rising(seen);
+ok(r.code === 0 && r.last.verdict.result === "pass" && r.last.scan.hits === 42, "rising counters and a sighting: pass");
+r = await rising(nothing);
+ok(r.code === 1 && /saw no advertisement/.test(r.last.verdict.reason), "rising counters and no sighting: fail");
+r = await rising({ ok: false, why: "the Bluetooth adapter is not usable" });
+ok(r.code === 3 && r.last.verdict.result === "unknown", "a scanner that could not run decides nothing");
 
 s.ble("safe");
 r = await run(s.access, fast);
