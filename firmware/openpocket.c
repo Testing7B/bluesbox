@@ -697,7 +697,7 @@ static void app_main(void)
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
 #if OP_BLE_TEST
-                {   /* "ADVERTISING C1 42%": the Bluetooth state first; FAILED scrolls "FAILED 2 -7  step ... stage ..." instead (ble_status.h) */
+                {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
                     char b[48], full[96]; int k, j;
                     static uint32_t scroll;
                     ble_test_state(b);

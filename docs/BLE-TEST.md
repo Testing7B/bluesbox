@@ -9,7 +9,7 @@ The normal firmware and the installer's packages in `docs/firmware/` are built e
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
 > **Status: built and linked. The first flash on a pedal crash-looped, the second stalled at `FAILED 5 3` and the third
-> froze in the first `ble_poll`; all three faults are addressed here but this build has not been run on a pedal since, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
+> froze in the first `ble_poll`; those faults are fixed. The fourth flash reached `ADVERTISING`, but neither a Mac nor a phone scanner saw the pedal. This build adds proof counters and a valid controller address; it has not been run on a pedal yet, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
 > observation. Read [What is not verified](#what-is-not-verified) before you flash it.
 
 **First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
@@ -40,9 +40,9 @@ OpenPocket (the stock-firmware scan was skipped on purpose).
 3. To go back to the normal firmware: run `make serve` (the release packages) and **Install** again, or use the
    **Back to the official firmware** step. The SD-card recovery (`make appimage`) works as before.
 
-The status text at the bottom right of the screen starts with the Bluetooth state: `STARTING`, then `ADVERTISING`
-(or `FAILED`), followed by the pedal's usual `C1 42%`. While starting it adds the stage; when it failed it shows only
-the failure, on one short line, so that the code is always on screen. See [Reading the status text](#reading-the-status-text).
+The status text at the bottom right of the screen shows the Bluetooth state: `STARTING` with the stage and the pedal's
+usual `C1 42%`, then `ADVERTISING` (the proof counters, scrolling) or `FAILED` (the failure, scrolling, with its short
+code first so that it is always on screen). See [Reading the status text](#reading-the-status-text).
 
 ## What you should see
 
@@ -54,7 +54,7 @@ scanning, which phones do by default):
 | Name | `OpenPocket-BLE-TEST` (in the scan response) |
 | Service UUID | BLE-MIDI `03B80E5A-EDE8-4B33-A751-6CE34EC4C700` (in the advertising data) |
 | Type | scannable, not connectable (`ADV_SCAN_IND`), 100 ms interval, channels 37, 38, 39 |
-| Address | the controller's default address: this image does not set one, so it can differ from the stock firmware's |
+| Address | `02:4F:50:42:4C:54`, a fixed locally administered address set by this image (not the stock firmware's) |
 
 The name appearing in a scanner is the whole success test. Connecting to it will fail by design.
 

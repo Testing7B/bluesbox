@@ -5,7 +5,7 @@
  *
  *   STARTING <stage>      the last stage reached (BLE_STAGE_*): a timeout names the stage it stalled in
  *   FAILED <step> <code>  the step that failed (BLE_FAIL_*) and its return value; for BLE_FAIL_TIMEOUT the code is the stage
- *   ADVERTISING           the advertisement is on air
+ *   ADVERTISING           the controller accepted the command to advertise (not proof of a packet: see the proof counters below)
  * and the marquee that scrolls the full failure line across the small status area. */
 #pragma once
 #include <stdint.h>
