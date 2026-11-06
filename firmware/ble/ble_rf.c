@@ -18,7 +18,9 @@ void wf_rf_common_init(void)
     ble_stage_set(BLE_STAGE_RF);
     fm1_wdt_feed();                                              /* the replay takes a while: keep the watchdog fed around it */
     fm1_rf_cal_on = 1;
+    ble_busy(0);                                                 /* the replay is long, and its waits are bounded */
     fm1_ble_rf_run(no_record, no_record, no_record, no_record);
+    ble_busy(1);
     fm1_wdt_feed();
     ble_stage_set(BLE_STAGE_RF_DONE);                            /* the replay returned: what follows is the library's own start-up */
 }

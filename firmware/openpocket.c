@@ -670,7 +670,8 @@ static void app_main(void)
     op_stage(ST_RUN, 0);
 #endif
 #if OP_BLE_TEST
-    ble_test_start();                    /* radio on, controller up, one advertisement (the pedal keeps working) */
+    if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
+        ble_test_start();                /* radio on, controller up, one advertisement (the pedal keeps working) */
 #endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {

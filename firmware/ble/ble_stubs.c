@@ -114,7 +114,6 @@ BLE_STUB(lmp_init)
 BLE_STUB(lmp_reset)
 BLE_STUB(lmp_tx_suspend)
 BLE_STUB(low_power_exit_request)
-BLE_STUB(low_power_get)
 BLE_STUB(low_power_get_osc_type)
 BLE_STUB(low_power_on)
 BLE_STUB(low_power_put)
@@ -157,6 +156,10 @@ BLE_STUB(tws_link_get_ble_role_slave)
 BLE_STUB(tws_phone_ble_link_connection)
 BLE_STUB(tws_phone_ble_link_disconnection)
 BLE_STUB(wf_get_phcom_cnt)
+
+/* The low-power manager's registration. Not an empty stand-in: the library asserts the handle it gets back (ble_power_get,
+ * called when advertising starts), and a failed assertion never returns. It only tests the handle afterwards. */
+void *low_power_get(void *priv, void *ops) { static uint8_t handle; (void)priv; (void)ops; return &handle; }
 
 /* values the library keeps for the radio's offset trims (analog.c): written by it, read by it */
 int keep_BT_CMPUK1;

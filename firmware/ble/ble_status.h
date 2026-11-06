@@ -24,6 +24,15 @@ static volatile uint32_t ble_wait;                 /* at a timeout: what the con
 
 static void ble_stage_set(uint32_t stage) { ble_stage = stage; }
 
+/* The stall watch. The scheduler is cooperative, so library code that never returns (a failed assertion parks in
+ * P33_SYSTEM_RESET, a wait on a register bit) holds the main loop until the watchdog resets, and that leaves no trace.
+ * The 10 kHz tick (px_usb.h) therefore counts while a ble_poll runs; one that has not returned after BLE_STALL_TICKS
+ * makes the next tick the crash screen, whose PC and RETS name the code (VEC 63). 0: no poll running, or held off. */
+enum { BLE_STALL_TICKS = 40000 };                  /* 4 s: before the watchdog (8 s) */
+static volatile uint32_t ble_busy_ticks;
+static void ble_busy(int on) { ble_busy_ticks = on ? 1u : 0u; }
+static int ble_stall_tick(void) { return ble_busy_ticks && ++ble_busy_ticks > BLE_STALL_TICKS; }
+
 static void ble_fail(uint32_t step, int32_t code)
 {
     ble_fail_step = step;

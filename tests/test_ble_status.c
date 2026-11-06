@@ -64,6 +64,17 @@ int main(void)
     reset(); ble_state = BLE_STARTING; ble_stage_set(BLE_STAGE_BB); ble_wait = 0x01C1A5E0u; ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);
     { char f[96]; ble_status_full(f); ble_wait = 0;
       if (strcmp(f, "FAILED 5 8  step timeout stage baseband-irq wait 01C1A5E0")) { printf("FAIL wait line: \"%s\"\n", f); bad++; } }
+    /* the stall watch: silent while no poll runs, fires once a poll has run for more than BLE_STALL_TICKS ticks */
+    { uint32_t i; int fired = 0;
+      ble_busy(0); for (i = 0; i < 2u * BLE_STALL_TICKS; i++) fired |= ble_stall_tick();
+      if (fired) { puts("FAIL: the stall watch fired with no poll running"); bad++; }
+      ble_busy(1); for (i = 0; i < BLE_STALL_TICKS - 1u; i++) fired |= ble_stall_tick();
+      if (fired) { puts("FAIL: the stall watch fired before its limit"); bad++; }
+      ble_busy(0); ble_busy(1);                /* each poll starts the count again */
+      for (i = 0; i < BLE_STALL_TICKS - 1u; i++) fired |= ble_stall_tick();
+      if (fired) { puts("FAIL: the stall watch did not restart with the poll"); bad++; }
+      if (!ble_stall_tick()) { puts("FAIL: the stall watch did not fire at its limit"); bad++; }
+      ble_busy(0); }
     puts(bad ? "ble status: FAILED" : "ble status: ok");
     return bad != 0;
 }
