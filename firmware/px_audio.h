@@ -18,7 +18,7 @@
 #pragma once
 #include <stdint.h>
 #ifndef BENCH_AT_BOOT
-#define BENCH_AT_BOOT 0                                 /* 1 = DSP benchmark screen at boot */
+#define BENCH_AT_BOOT 1                                 /* 1 = DSP benchmark screen at boot (v37 diagnostic build: on) */
 #endif
 #include <math.h>
 #include "px_dsp.h"
@@ -299,9 +299,24 @@ static uint32_t b_engine(const px_preset_t *pp)        /* % of the real-time bud
     fm1_wdt_feed();
     return dt * 100u / A_BUDGET;
 }
+static void b_fix2(char *d, uint32_t v100)           /* 123 -> "1.23" */
+{
+    b_num(d, v100 / 100u);
+    b_str(d, ".");
+    if (v100 % 100u < 10u) b_str(d, "0");
+    b_num(d, v100 % 100u);
+}
+static uint32_t b_ticks(void) { return fm1_ticks(); }
+#if BENCH_AT_BOOT
+static int32_t b_ram[PXN_TEST_WORDS > 1024 ? PXN_TEST_WORDS : 1024];   /* test data in the ordinary RAM */
+#endif
+/* v37: what the NAM network costs on the pedal, piece by piece (cycles at 360 MHz: ticks x 15). Off by default:
+ * BENCH_AT_BOOT=1 (build.sh: OP_BENCH=1) shows it for 12 s at boot. */
 static void audio_bench(void)
 {
+#if BENCH_AT_BOOT
     char l[48];
+    uint32_t y = 26;
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_text(4, 4, "DSP BENCH " OP_VERSION, UI_ACC, UI_BG, 2);
     /* integer loop and float loop: time per iteration (ns) */
@@ -313,28 +328,49 @@ static void audio_bench(void)
     for (uint32_t i = 0; i < 100000u; i++) fa = fa * fb + fc;
     uint32_t tf = fm1_ticks() - t0;
     fm1_wdt_feed();
-    l[0] = 0; b_str(l, "INT   100K LOOPS: "); b_num(l, ti / 24u); b_str(l, " US");
-    lcd_text(4, 30, l, UI_TXT, UI_BG, 1);
-    l[0] = 0; b_str(l, "FLOAT 100K LOOPS: "); b_num(l, tf / 24u); b_str(l, " US");
-    lcd_text(4, 42, l, UI_TXT, UI_BG, 1);
-    /* engine cost, block by block */
-    px_preset_t pp;
-    static const char *NAMES[4] = {"AMP ONLY     ", "+ CAB        ", "+ DRIVE/GATE ", "ALL ON       "};
-    for (int c = 0; c < 4; c++) {
-        px_preset_factory(&pp, 17);                    /* 5150 RHYTHM: 4-stage 5150 */
-        for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0;
-        pp.on[PX_B_AMP] = 1;
-        if (c >= 1) pp.on[PX_B_CAB] = 1;
-        if (c >= 2) { pp.on[PX_B_DRIVE] = 1; pp.on[PX_B_GATE] = 1; }
-        if (c >= 3) { for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 1; pp.type[PX_B_MOD] = PX_MOD_ROTARY; pp.type[PX_B_PITCH] = PX_PIT_POLYOCT;
-                        pp.type[PX_B_REVERB] = PX_REV_SHIMMER; pp.type[PX_B_DELAY] = PX_DLY_SPACE; }
-        uint32_t pct = b_engine(&pp);
-        l[0] = 0; b_str(l, NAMES[c]); b_num(l, pct); b_str(l, " %");
-        lcd_text(4, 64u + (uint32_t)c * 16u, l, pct <= 85u ? GRN : RED, UI_BG, 2);
+    l[0] = 0; b_str(l, "INT 100K "); b_num(l, ti / 24u); b_str(l, " US  FLT "); b_num(l, tf / 24u); b_str(l, " US");
+    lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+    l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
+    lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
+    /* one instruction kind, 32 x 1024 times: cycles each (x 100) */
+    int32_t *pool = px_nam_scratch();
+    for (int i = 0; i < 1024; i++) { b_ram[i] = i * 3 - 1500; pool[i] = i * 5 - 2000; }
+    static const char *K[4] = {"FMAC", "LD", "RMAC", "FMAC2"};
+    for (int xip = 0; xip < 2; xip++) {
+        for (int dat = 0; dat < (xip ? 1 : 2); dat++) {
+            l[0] = 0; b_str(l, xip ? "FLASH " : dat ? "RAM/P " : "RAM/R ");
+            for (int k = 0; k < 4; k++) {
+                uint32_t tk = pxn_bench_ops(k, xip, dat ? pool : b_ram, 32, b_ticks);
+                b_str(l, K[k]); b_str(l, " "); b_fix2(l, tk * 15u * 100u / (32u * 1024u)); b_str(l, k < 3 ? " " : "");
+            }
+            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+            fm1_wdt_feed();
+        }
     }
-    lcd_text(4, 140, "100% = REAL TIME (2.9 MS / BLOCK)", UI_TXT, UI_BG, 1);
-    lcd_text(4, 160, "PLEASE TAKE A PHOTO OF THIS SCREEN", UI_ACC, UI_BG, 1);
-    for (int i = 0; i < 60; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
+    /* one kernel-6 layer, 16 frames (960 multiply-adds): cycles per multiply-add (x 100); data in RAM / in POOL */
+    l[0] = 0; b_str(l, "LAYER CYC/MAC HAND ");
+    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 1, 64) * 15u * 100u / (64u * 960u)); b_str(l, "/");
+    b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 960u));
+    lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+    l[0] = 0; b_str(l, "              C    ");
+    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 0, 64) * 15u * 100u / (64u * 960u)); b_str(l, "/");
+    b_fix2(l, pxn_bench_layer(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 960u));
+    lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 14;
+    fm1_wdt_feed();
+    /* whole presets: % of the real-time budget */
+    px_preset_t pp;
+    for (int c = 0; c < 4; c++) {
+        static const char *N[4] = {"NAM AMP ONLY    ", "01 TWIN CLEAN   ", "18 5150 RHYTHM  ", "18 FITTED 5150  "};
+        px_preset_factory(&pp, c == 1 ? 0 : 17);
+        if (c == 0) { for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0; pp.on[PX_B_AMP] = 1; }
+        if (c == 3) { pp.type[PX_B_AMP] = PX_AMP_5150; for (int k = 0; k < PX_NPAR; k++) pp.p[PX_B_AMP][k] = 50; }
+        uint32_t pct = b_engine(&pp);
+        l[0] = 0; b_str(l, N[c]); b_num(l, pct); b_str(l, " %");
+        lcd_text(4, y, l, pct <= 85u ? GRN : RED, UI_BG, 1); y += 12;
+    }
+    lcd_text(4, y + 4, "100% = REAL TIME. PLEASE TAKE A PHOTO", UI_ACC, UI_BG, 1);
+    for (int i = 0; i < 120; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
+#endif
 }
 
 static struct iis_platform_data a_pd;
@@ -343,6 +379,7 @@ static void audio_start(void)
 #if BENCH_AT_BOOT
     px_engine_init(&g_eng, 44100.0f);
     audio_bench();                                     /* benchmark screen (diagnostic): off by default */
+    px_nam_check();                                    /* (the bench used the NAM memory) */
 #endif
     op_stage(ST_ENG_INIT, "ENGINE INIT...");
     px_engine_init(&g_eng, 44100.0f);

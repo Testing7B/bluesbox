@@ -56,6 +56,10 @@ int pxn_load(pxn_model *m, const float *w, int32_t *r0, unsigned n0, int32_t *r1
  * scratch: PXN_TEST_WORDS words (the ring memory will do: reset the model after) */
 int pxn_selftest(int32_t *scratch);
 #define PXN_TEST_WORDS (47 * 24 + 47 * 3 + 12 + 3 * 40 + 4 * 3 * PXN_N)
+int pxn_asm_in_use(void);
+/* measurements for the firmware's bench screen (px_audio.h, BENCH_AT_BOOT): ticks, see px_nam.c */
+uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps);
+uint32_t pxn_bench_ops(int kind, int xip, const int32_t *buf, int reps, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */
 void pxn_reset(pxn_model *m);
 /* n frames (any n): in -> out, float, in place allowed */

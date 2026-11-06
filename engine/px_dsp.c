@@ -955,6 +955,12 @@ int px_nam_name(int m, char *buf)
     buf[i] = 0;
     return 0;
 }
+/* the NAM ring memory as scratch (the firmware's bench screen; the model's history is lost) */
+int32_t *px_nam_scratch(void)
+{
+    px_nam_m.ready = 0;
+    return px_nam_r0;
+}
 /* start-up: the hand-written NAM routine checked, in the ring memory (the model's history cleared after) */
 int px_nam_check(void)
 {

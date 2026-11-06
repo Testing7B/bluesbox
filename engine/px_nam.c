@@ -135,20 +135,31 @@ static inline __attribute__((always_inline)) void pxn_layer_go(const pxn_job *j)
     pxn_layer_fn(j);
 }
 
-/* runs both on a fixed random pattern (both signs, the largest values a model meets, 47 taps, 16 frames, with and
- * without the next layer): the hand routine is used only if every result is the same. scratch: PXN_TEST_WORDS. */
-int pxn_selftest(int32_t *scratch)
+/* the test pattern (scratch: PXN_TEST_WORDS): 47 tap inputs of 24 frames, weights, residual rows, a layer input and
+ * two copies of the outputs; both signs, values as large as a model meets (+-32) */
+static void pxn_test_data(int32_t *s, const int32_t **pt)
 {
-#if PXN_ASM
-    int32_t *data = scratch, *wt = data + 47 * 24, *rr = wt + 47 * 3, *x = rr + 12, *hs0 = x + 3 * 40,
-            *hs1 = hs0 + 3 * PXN_N, *xn0 = hs1 + 3 * PXN_N, *xn1 = xn0 + 3 * PXN_N;
-    const int32_t *pt[47];
     uint32_t r = 12345u;
     for (int i = 0; i < 47 * 24 + 47 * 3 + 12 + 3 * 40; i++) {
         r = r * 1103515245u + 12345u;
-        data[i] = (int32_t)r >> (i < 47 * 24 + 47 * 3 + 12 ? 6 : 8);          /* +-32 (Q20 data, Q24 weights) */
+        s[i] = (int32_t)r >> (i < 47 * 24 + 47 * 3 + 12 ? 6 : 8);
     }
-    for (int i = 0; i < 47; i++) pt[i] = data + i * 24 + (i & 7);
+    for (int i = 0; i < 47; i++) pt[i] = s + i * 24 + (i & 7);
+}
+#define PXN_T_WT(s) ((s) + 47 * 24)
+#define PXN_T_RR(s) (PXN_T_WT(s) + 47 * 3)
+#define PXN_T_X(s)  (PXN_T_RR(s) + 12)
+#define PXN_T_OUT(s, k) (PXN_T_X(s) + 3 * 40 + (k) * 3 * PXN_N)   /* k: hs0, hs1, xn0, xn1 */
+
+/* runs both on the test pattern (47 taps, 16 frames, with and without the next layer): the hand routine is used only
+ * if every result is the same. scratch: PXN_TEST_WORDS. */
+int pxn_selftest(int32_t *scratch)
+{
+#if PXN_ASM
+    int32_t *wt = PXN_T_WT(scratch), *rr = PXN_T_RR(scratch), *x = PXN_T_X(scratch), *hs0 = PXN_T_OUT(scratch, 0),
+            *hs1 = PXN_T_OUT(scratch, 1), *xn0 = PXN_T_OUT(scratch, 2), *xn1 = PXN_T_OUT(scratch, 3);
+    const int32_t *pt[47];
+    pxn_test_data(scratch, pt);
     void (*volatile hand)(const pxn_job *) = pxn_layer_asm;   /* through a pointer: in RAM, out of call range */
     int ok = 1;
     pxn_layer_fn = pxn_layer_c;
@@ -164,6 +175,72 @@ int pxn_selftest(int32_t *scratch)
     return ok;
 #else
     (void)scratch;
+    return 0;
+#endif
+}
+int pxn_asm_in_use(void)
+{
+#if PXN_ASM
+    return pxn_layer_fn == pxn_layer_asm;
+#else
+    return 0;
+#endif
+}
+
+/* ---- measurements for the firmware's bench screen (BENCH_AT_BOOT) ---- */
+/* ticks for `reps` runs of one kernel-6 layer (20 taps: 18 conv, mixin, bias) over 16 frames, with the next layer's
+ * input: 960 multiply-adds a run. hand: 1 the hand-written routine, 0 the C one. scratch: PXN_TEST_WORDS. */
+uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps)
+{
+    const int32_t *pt[47];
+    pxn_test_data(scratch, pt);
+    pxn_job j = {pt, PXN_T_WT(scratch), PXN_T_X(scratch) + 3, 40 * 4, PXN_T_RR(scratch), PXN_T_OUT(scratch, 0),
+                 PXN_T_OUT(scratch, 2), 20, PXN_N};
+    void (*volatile f)(const pxn_job *) = pxn_layer_c;
+#if PXN_ASM
+    if (hand) f = pxn_layer_asm;
+#else
+    (void)hand;
+#endif
+    uint32_t t0 = ticks();
+    for (int r = 0; r < reps; r++) f(&j);
+    return ticks() - t0;
+}
+
+#if PXN_ASM
+/* one instruction n times in the hardware loop (n words read from p): the cost of each kind of instruction, from RAM
+ * (_r) and from the flash (_x). fmac: acc += [p++] * r; ld: r = [p++]; rmac: acc += r * r; fmac2: two accumulators
+ * from two pointers (p and p + 2 KB) in turn. */
+#define PXN_UB(name, body, pre)                                                                                   \
+    "\t.global " name "\n" name ":\n\t[--sp] = {rets, r15-r4}\n"                                              \
+    "\tr4 = 0\n\tr5 = 0\n\tr6 = 0\n\tr7 = 0\n\tr3 = 5\n\tr10 = 3\n\tr12 = 4\n\tr2 = r0\n\tr11 = r1\n" pre      \
+    ".L" name ":\n\trep r11 {\n" body "\t}\n\tif (r11 != 0) goto .L" name "\n"                                  \
+    "\t{pc, r15-r4} = [sp++]\n"
+#define PXN_UB_SET(sfx)                                                                                           \
+    PXN_UB("pxn_ub_fmac" sfx, "\tr5_r4 += [r2 ++= r12]*r10 (s)\n", "")                                         \
+    PXN_UB("pxn_ub_ld" sfx, "\tr3 = [r2++=4]\n", "")                                                            \
+    PXN_UB("pxn_ub_rmac" sfx, "\tr5_r4 += r3 * r10 (s)\n", "")                                                  \
+    PXN_UB("pxn_ub_fmac2" sfx, "\tr5_r4 += [r2 ++= r12]*r10 (s)\n\tr7_r6 += [r8 ++= r12]*r10 (s)\n",          \
+           "\tr8 = r0 + 2048\n\tr11 = r1 >> 1\n")
+__asm__("\t.section .ram_text,\"ax\"\n" PXN_UB_SET("_r") "\t.previous\n"
+        "\t.text\n" PXN_UB_SET("_x"));
+void pxn_ub_fmac_r(const int32_t *, int), pxn_ub_ld_r(const int32_t *, int), pxn_ub_rmac_r(const int32_t *, int),
+    pxn_ub_fmac2_r(const int32_t *, int), pxn_ub_fmac_x(const int32_t *, int), pxn_ub_ld_x(const int32_t *, int),
+    pxn_ub_rmac_x(const int32_t *, int), pxn_ub_fmac2_x(const int32_t *, int);
+#endif
+/* ticks for reps x 1024 instructions of `kind` (0 fmac, 1 ld, 2 rmac, 3 fmac2), from RAM (xip 0) or the flash (1);
+ * buf: 1024 words (4 KB) of data. 0 where there is no hand-written code. */
+uint32_t pxn_bench_ops(int kind, int xip, const int32_t *buf, int reps, uint32_t (*ticks)(void))
+{
+#if PXN_ASM
+    static void (*const F[2][4])(const int32_t *, int) = {
+        {pxn_ub_fmac_r, pxn_ub_ld_r, pxn_ub_rmac_r, pxn_ub_fmac2_r}, {pxn_ub_fmac_x, pxn_ub_ld_x, pxn_ub_rmac_x, pxn_ub_fmac2_x}};
+    void (*volatile f)(const int32_t *, int) = F[xip ? 1 : 0][kind & 3];
+    uint32_t t0 = ticks();
+    for (int r = 0; r < reps; r++) f(buf, 1024);
+    return ticks() - t0;
+#else
+    (void)kind; (void)xip; (void)buf; (void)reps; (void)ticks;
     return 0;
 #endif
 }

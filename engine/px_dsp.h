@@ -90,6 +90,7 @@ int         px_preset_count(void);
 /* NAM models: the MODEL knob (0..100) <-> model 0..PX_NAM_N-1 (factory first, then the user slots) */
 int         px_nam_model(int v);
 int         px_nam_knob(int model);
+int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memory as scratch (PXN_TEST_WORDS+) */
 int         px_nam_check(void);                       /* start-up: the hand-written NAM routine checked (1 = in use) */
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
 /* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
