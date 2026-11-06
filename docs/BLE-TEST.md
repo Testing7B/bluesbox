@@ -8,8 +8,8 @@ changed.
 The normal firmware and the installer's packages in `docs/firmware/` are built exactly as before: `make build` gives the
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
-> **Status: built and linked. The first flash on a pedal crash-looped; that fault is fixed here but this build has not been
-> run on a pedal yet.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
+> **Status: built and linked. The first flash on a pedal crash-looped and the second stalled at `FAILED 5 3`; both faults
+> are fixed here but this build has not been run on a pedal since, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
 > observation. Read [What is not verified](#what-is-not-verified) before you flash it.
 
 **First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
@@ -71,12 +71,12 @@ what the scanner shows and whether the pedal still works as a normal OpenPocket 
 
 Failing steps: `1` `task_create` failed (`c` is -1); `2` `btctrler_task_init` returned `c` (not 0); `3`
 `btctrler_task_ready` returned `c` (0: the controller task did not answer); `4` `ll_hci_adv_enable` returned `c` (not
-0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). At a timeout the line ends with `wait XXXXXXXX`: the address of the semaphore or mutex the controller task is blocked on (look it up in `firmware/build-ble/symbols.txt`; a value below 0x10 is a task state instead). Example: `FAILED 5 3` only means the last marker passed was the entry of the radio replay; it does not say the replay hung. (In the first hardware run it was a deadlock after the radio start-up: see "Found on hardware" below.) The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
+0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). At a timeout the line ends with `wait XXXXXXXX`: the address of the semaphore or mutex the controller task is blocked on (look it up in `firmware/build-ble/symbols.txt`; a value below 0x10 is a task state instead). Example: `FAILED 5 3` only means the last marker passed was the entry of the radio replay; it does not say the replay hung. (In the second hardware run it was a deadlock after the radio start-up: see "Found on hardware" below.) The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
 `tests/test_ble_status.c`. Please report the whole `FAILED s c` text.
 
 ## Found on hardware
 
-The second flash showed `FAILED 5 3`. The cause (data/openpocket-ble-c1-diagnosis/report.md, read against the vendor code and the linked image): the controller's link-layer start-up calls `thread_create`, which calls `crc_get_32bit`, which waits for ever on a lock that the vendor function `__crc16_mutex_init()` creates and the SDK's own start-up calls. This image never called it, so the lock stayed "taken" and the controller task slept for ever. `ble_test_start` now calls it. Two more defects were fixed in the same change, because the first one would have exposed them: `ll_hci_adv_set_params` reads six bytes from its direct-address argument (it was NULL, which the bus guard is documented to fault on; now a zero array), and the context switch saved `r4`-`r9` while the compiler preserves `r4`-`r15` (now all of them, the list the compiler's own prologues use). None of the three has run on a pedal yet.
+The second flash showed `FAILED 5 3`. The cause, found by reading the vendor code against the linked image: the controller's link-layer start-up calls `thread_create`, which calls `crc_get_32bit`, which waits for ever on a lock that the vendor function `__crc16_mutex_init()` creates and the SDK's own start-up calls. This image never called it, so the lock stayed "taken" and the controller task slept for ever. `ble_test_start` now calls it. Two more defects were fixed in the same change, because the first one would have exposed them: `ll_hci_adv_set_params` reads six bytes from its direct-address argument (it was NULL, which the bus guard is documented to fault on; now a zero array), and the context switch saved `r4`-`r9` while the compiler preserves `r4`-`r15` (now all of them, the list the compiler's own prologues use). None of the three has run on a pedal yet.
 
 ## How it works
 
