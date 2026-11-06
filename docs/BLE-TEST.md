@@ -8,7 +8,7 @@ The normal firmware and the installer's packages in `docs/firmware/` are built e
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
 > **Status: runs on a real BlackBox.** A Mac connected, found the service, and a Control Change switched a block and a Program Change
-> loaded a preset, with the state read back over USB. A Chocolate Plus on H paired by itself and its footswitches A to D toggled
+> loaded a preset, with the state read back over USB. A Chocolate Plus on H paired by itself and its footswitches A to D changed
 > DRIVE, MOD, DELAY and REVERB. The audio under a link is not measured: read
 > [What is not verified](#what-is-not-verified) before you flash it.
 
