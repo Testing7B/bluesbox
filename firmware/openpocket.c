@@ -559,7 +559,7 @@ static void ed_diag_line(uint32_t i, char *out);
 #include "px_midi_io.h"     /* musical MIDI over USB (docs/MIDI.md) */
 #endif
 #endif
-#if OP_BLE_TEST             /* the advertise-only Bluetooth test image (docs/BLE-TEST.md): make ble */
+#if OP_BLE_TEST             /* the Bluetooth MIDI test image (docs/BLE-TEST.md): make ble */
 #include "ble/ble_os.c"
 #include "ble/ble_libc.c"
 #include "ble/ble_cfg.c"
@@ -697,7 +697,7 @@ static void app_main(void)
 #endif
 #if OP_BLE_TEST
     if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
-        ble_test_start();                /* radio on, controller up, one advertisement (the pedal keeps working) */
+        ble_test_start();                /* radio on, controller and host up, advertising (the pedal keeps working) */
 #endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {

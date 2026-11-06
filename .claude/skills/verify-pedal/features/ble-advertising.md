@@ -1,6 +1,6 @@
 # Bluetooth advertising
 
-The test image sends `OpenPocket-BLE-TEST` with the BLE-MIDI service UUID, at 100 ms, not connectable.
+The test image sends `OpenPocket` with the BLE-MIDI service UUID, at 100 ms, connectable.
 
 ## Sub-features
 
@@ -23,3 +23,4 @@ matching the name or the UUID. Proof: `verdict    PASS`, with the name and RSSI.
 - The first run may ask macOS for Bluetooth permission for the terminal.
 - The name is in the scan response, the UUID in the advertising data: a sighting may carry only one.
 - `ADV` only means the controller accepted the command.
+- The pedal stops advertising while it has a link, so a scan then sees nothing. Read the `link` line first: `LINK 1` means a central holds it, and `i` then counts connection events (16.7 a second at the Chocolate's 60 ms), not advertising.

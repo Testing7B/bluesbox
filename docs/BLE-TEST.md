@@ -1,16 +1,15 @@
-# Bluetooth test image (advertise only)
+# Bluetooth test image (BLE MIDI peripheral)
 
-An optional build of OpenPocket that turns the pedal's Bluetooth radio on and sends **one advertisement**, so the name
-**`OpenPocket-BLE-TEST`** shows up in a phone or Mac Bluetooth scanner. It is stage 2 of the Bluetooth plan: the radio comes up, nothing
-more. No connection is ever accepted, there is no pairing, no GATT table and no MIDI over Bluetooth. USB MIDI is not
-changed.
+An optional build of OpenPocket that turns the pedal's Bluetooth radio on and makes it a connectable BLE MIDI peripheral named
+**`OpenPocket`**. A Mac, a phone or a Chocolate Plus connects to it, and Program Change and Control Change then do what they do over
+USB ([MIDI.md](MIDI.md)). USB MIDI is not changed.
 
 The normal firmware and the installer's packages in `docs/firmware/` are built exactly as before: `make build` gives the
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
-> **Status: built and linked. The first flash on a pedal crash-looped, the second stalled at `FAILED 5 3` and the third
-> froze in the first `ble_poll`; those faults are fixed. The fourth flash reached `ADVERTISING`, but neither a Mac nor a phone scanner saw the pedal. This build adds proof counters and a valid controller address; it has not been run on a pedal yet, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
-> observation. Read [What is not verified](#what-is-not-verified) before you flash it.
+> **Status: runs on a real BlackBox.** A Mac connected, found the service, and a Control Change switched a block and a Program Change
+> loaded a preset, with the state read back over USB. The radio settings and the audio under a link are not measured: read
+> [What is not verified](#what-is-not-verified) before you flash it.
 
 **First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
 guard (`fm1_guard.h`, EMU bit 3) faults any stack pointer outside `[_ustack_lo, _sstack_top]`, and the controller's task
@@ -46,20 +45,48 @@ code first so that it is always on screen). See [Reading the status text](#readi
 
 ## What you should see
 
-Open a scanner (nRF Connect, LightBlue, or macOS *Bluetooth Explorer* / *Audio MIDI Setup* are all fine; use active
-scanning, which phones do by default):
+Open a scanner (nRF Connect, LightBlue, or macOS *Audio MIDI Setup*; use active scanning, which phones do by default):
 
 | In the scanner | Value |
 | --- | --- |
-| Name | `OpenPocket-BLE-TEST` (in the scan response) |
+| Name | `OpenPocket` (in the scan response) |
 | Service UUID | BLE-MIDI `03B80E5A-EDE8-4B33-A751-6CE34EC4C700` (in the advertising data) |
-| Type | scannable, not connectable (`ADV_SCAN_IND`), 100 ms interval, channels 37, 38, 39 |
+| Type | connectable undirected (`ADV_IND`), 100 ms interval, channels 37, 38, 39 |
 | Address | `02:4F:50:42:4C:54`, a fixed locally administered address set by this image (not the stock firmware's) |
 
-The name appearing in a scanner is the whole success test. Connecting to it will fail by design.
+The pedal has one link and stops advertising while it is in use, so a scanner sees nothing then. A Chocolate Plus with its switch on
+H connects by itself within seconds of the pedal starting. To reach the pedal from a Mac, put the Chocolate on O.
 
 If the screen reads `FAILED`, or nothing appears within a few seconds, please report the screen text, the pedal model,
 what the scanner shows and whether the pedal still works as a normal OpenPocket (audio, screen, USB MIDI).
+
+## The link
+
+| Part | What it is |
+| --- | --- |
+| GATT | GAP (`0x1800`, device name), GATT (`0x1801`), and the MIDI service with its characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3`: read (empty), write without response, notify |
+| MIDI in | `firmware/px_ble_midi.h` reads the header, timestamps, running status and several messages in one write, and ignores the timestamps. SysEx and system common messages are skipped |
+| MIDI out | Nothing yet: notify can be enabled, but the pedal sends nothing |
+| Pairing | Just Works with bonding, accepted when the central asks. The pedal never asks, and the characteristic does not need it. Keys stay in RAM, so a bond ends at a power cycle |
+| Connection | The central's parameters are kept. The pedal does not ask for others: the Chocolate's 60 ms, latency 0, 4 s timeout held |
+
+The log channel (`node tools/op.mjs log`) adds two lines, and the status area scrolls the first one while connected:
+
+`link       LINK 1 n2 A A1B2C3D4E5F6 I48 L0 T400 W7 P1 D0 LAST 2 24 127 STUB 3 low_power_request`
+
+| Field | Meaning |
+| --- | --- |
+| `LINK` | 1 while connected |
+| `n` | links so far, counting ones that failed to establish |
+| `A` | the central's address |
+| `I` `L` `T` | interval (1.25 ms units), latency, timeout (10 ms units) |
+| `W` | writes to the MIDI characteristic |
+| `P` | Just Works pairings accepted |
+| `D` | the last disconnection reason in hex: `13` the central closed it, `8` timeout, `3E` the link never established |
+| `LAST` | the last message: type (1 Program Change, 2 Control Change), data 1, data 2 |
+| `STUB` | calls of the stand-ins (`ble_stubs.c`), and the last one's name |
+
+`trace      EV 43E0100 4050013 ST name name` lists the last host events (packet type, event code, subevent or status, status; without Number Of Completed Packets) and the stand-ins called. While a link is up, `i` in the `ADV` line counts connection events, so about 16.7 a second means a 60 ms link.
 
 ## Reading the status text
 
@@ -128,17 +155,19 @@ The third flash froze: the screen was drawn but the controls were dead, and the 
 
 ```
 openpocket.c (OP_BLE_TEST)  ble_test_start() after the screen is up, ble_test_poll() in the main loop
-firmware/ble/ble_test.c     a task that starts the controller, sets the advertising data and enables advertising
+firmware/ble/ble_test.c     a task that starts the controller and the host
+firmware/ble/ble_midi.c     the GATT table, the host's callbacks, pairing, advertising
+firmware/px_ble_midi.h      a BLE MIDI write -> USB-MIDI event packets (tests/midisim.c)
 firmware/ble/ble_os.c       the operating-system services the library calls (below)
 firmware/ble/ble_rf.c       the Wi-Fi front-end half of the radio start-up (below)
-firmware/ble/ble_cfg.c      controller configuration: LE only, advertising + one slave link
+firmware/ble/ble_cfg.c      configuration: LE only, advertising, one slave link, a GATT server
 firmware/ble/ble_stubs.c    empty stand-ins for the parts that are not built
 third_party/jieli-ble/      JieLi's controller, as published (Apache-2.0): see its README.md
 ```
 
 * **The controller is JieLi's**, from the Apache-2.0 SDK libraries (`btctrler.a`, 33 of its objects plus 3 helpers from
   `cpu.a`): HCI front end, link layer, advertising, the LE radio driver. Only the objects the image reaches are linked.
-  The host stack (`btstack.a`) is not used; `ble_test.c` calls the controller's own `ll_hci_adv_*` functions.
+  The LE part of the host stack (`btstack.a`) runs as its own task; the classic profiles are stand-ins.
   The OpenPocket code around it is small and separate from the vendor objects (`firmware/ble/`), which are kept
   unmodified under `third_party/jieli-ble/` with the licence text and the source URL.
 * **No RTOS.** The library expects tasks, queues, semaphores and timers. `ble_os.c` provides a cooperative scheduler:
@@ -157,35 +186,14 @@ third_party/jieli-ble/      JieLi's controller, as published (Apache-2.0): see i
 
 ## What is not verified
 
-All of it was built, linked and size-checked; none of it ran on hardware. The things most likely to go wrong, in the
-order I would suspect them:
+On a real pedal the radio, the link, the GATT table, pairing with the Chocolate and the MIDI path have run. These have not:
 
-1. **The radio start-up.** It replays a capture taken from another firmware, with the stored crystal trim and the other
-   saved radio records **not applied** (the VM is not read, so those fields stay at the capture's defaults). The carrier
-   may therefore be off by some kHz. A scanner usually still sees it; a wrong value that stops the PLL would hang the
-   start-up and the screen would stay on `STARTING`.
-   The brief asked for the stock TX trims to be left as found. This image does **not** meet that exactly: it neither
-   reads nor writes them, and the transmit level is whatever the library's power table gives with no saved trim.
-   Reading them needs the VM item format, which is not documented in this repository; that would be the next task.
-2. **Interrupt return.** The library's two interrupt functions end in `rti` without the `csync` the stock ones have
-   (our compiler does not add it to bitcode; `fm1_isr.S` explains it for our own interrupts). The risk is an interrupt
-   taken twice. Suspect this if the pedal resets or hangs a moment after `ADVERTISING` appears.
-3. **The scheduler.** The context switch (`ble_ctx.S`) is eight instructions assembled from the compiler's own prologue
-   and epilogue forms, and was not run. The queue, semaphore and timer code is plain C but also unrun.
-4. **Flash writes while Bluetooth runs.** The library's interrupt code runs from flash (execute in place). Saving a
-   preset or an update while advertising could, in principle, fetch code while the flash is busy. Do not save presets
-   while testing.
-5. **Real-time load.** Starting the radio blocks the main loop for the length of the start-up (screen and knobs freeze,
-   audio keeps running from its interrupt). Afterwards the cost is the two radio interrupts every 100 ms.
-6. **Other guards, checked on paper only.** After the stack-limit fault, the library's start-up path was read for the other
-   guards (`fm1_guard.h`). *Write limits* cover only the two 256-byte stack bands and `0x01C7FD50` upward (boot info,
-   mailbox, vectors); the controller's data, heap and task stacks are in `.bss`/`.data` between `0x01C08000` and about
-   `0x01C1C000`, so none of its writes should land there. *Code range*: all of its code is linked into `.text` (`_etext`
-   bounds it) and none runs from RAM. *Bus-invalid*: only the radio's own registers are touched. *Interrupt stacks*: the two
-   BLE interrupts run on the system stack as every interrupt does, which is inside the window. None of this has run on
-   hardware; a fault on the next flash is still possible, and the crash screen's `EMU` and `DBG` values say which guard it was.
-7. **Regulation.** The pedal was certified with the stock firmware. This image uses the standard advertising channels,
-   the 1M PHY and the library's own power table; it is a hobby experiment, not a product.
+1. **Sound under a link.** No one has listened for crackle or measured the DSP load with a link up, at the Chocolate's 60 ms or a Mac's 30 ms.
+2. **Long runs.** The longest link so far is minutes. The stock firmware's 3 s radio maintenance timer is not here, so a link may degrade as the pedal warms.
+3. **Reconnection after a power cycle.** Keys are in RAM, so a central that keeps its bond finds a pedal that has forgotten it.
+4. **Failed first connections.** A Mac's first attempts can end with reason `3E` before one holds; it retries by itself. The cause is not known.
+5. **Flash writes while Bluetooth runs.** The library's interrupt code runs from flash (execute in place). Saving a preset during a link could fetch code while the flash is busy. Do not save presets while testing.
+6. **Regulation.** The pedal was certified with the stock firmware. This image uses the standard channels, the 1M PHY and the library's own power table; it is a hobby experiment, not a product.
 
 ## Recovery
 
@@ -201,3 +209,10 @@ The fifth flash showed `ADVERTISING` and event interrupts at the advertising rat
 2. `wf_rf_common_init` was `void`, so the library read a stray register value as its result and switched on the Wi-Fi/Bluetooth coexistence arbiter (`0x14000` bit 1). It now returns 0, as stock does on a first start.
 
 After the fix a Mac scan saw `OpenPocket-BLE-TEST` with the BLE-MIDI service UUID (206 sightings in 60 s, RSSI -51 to -36 dBm, not connectable) and the scan-request counter `r` rose. The stored radio records are also read now: the VM is plain flash (the XIP window decrypts it, so it must be read raw, `ble_vm.h`), VM 106 to 108 go to the replay, and VM 187 (the unit's calibration) replaces the measured one. The status line shows them as `V <mask> <area/4096> <first two bytes of VM 106>` (`V F BD B0B` on the test pedal). `bt_max_pwr_set(10, 5, 8, 9)` is called after the controller's own init. Which of these beyond the two fixes matters was not isolated. `t` and `e` stay 0 by design here (no software timer on the advertising path, no host packet handler), so they are not health signs.
+
+## Found on hardware: the link
+
+Connectable advertising needed the real link-layer members (`RF_ble5`, `multilink_schedule`, `ll_data_extension`, `ll_multiple_phys`) in place of their stand-ins. Two more faults showed up on the pedal:
+
+1. `dev_hci_set_event_mask` was a stand-in, so the host never received LE meta events: a central connected and the pedal looked idle, with `i` at 16.7 a second and no advertisement on the air. The real one is linked now.
+2. After a disconnection the advertisement must be set up again, as the SDK does. Enabling it alone left the pedal nearly silent.

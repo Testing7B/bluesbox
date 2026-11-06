@@ -27,7 +27,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
   24 factory presets round the fitted amps, 28 USER slots; a PRESET LVL per preset; soft output limiter
 - **MIDI over USB-C (test build v37)**: Program Change selects a preset, Control Change switches blocks and sets their models and
   settings, the pedal tells the computer when you change the sound, MIDI clock sets the delay time. Class-compliant, no driver;
-  Bluetooth MIDI is not in yet. Reference: [docs/MIDI.md](docs/MIDI.md), hardware test: [docs/MIDI-TEST.md](docs/MIDI-TEST.md)
+  Bluetooth MIDI is only in the test image ([docs/BLE-TEST.md](docs/BLE-TEST.md)). Reference: [docs/MIDI.md](docs/MIDI.md), hardware test: [docs/MIDI-TEST.md](docs/MIDI-TEST.md)
 - What changed since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 - **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
   page with big values and bars
@@ -125,7 +125,7 @@ replaces the files with this folder's.
 | `tools/` | package builder, loader wrapper, font converter, flash image tools |
 | `tests/` | host tests and the simulated pedal |
 | `flash/` | SD-card recovery with fm1buddy (ESP32-S3) |
-| `firmware/ble/`, `third_party/jieli-ble/` | the optional advertise-only Bluetooth test image (`make ble`, [docs/BLE-TEST.md](docs/BLE-TEST.md)) and JieLi's Bluetooth controller it links |
+| `firmware/ble/`, `third_party/jieli-ble/` | the optional Bluetooth MIDI test image (`make ble`, [docs/BLE-TEST.md](docs/BLE-TEST.md)) and JieLi's Bluetooth controller it links |
 
 ## Licence
 

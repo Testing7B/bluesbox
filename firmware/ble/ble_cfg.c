@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* Controller configuration for the advertise-only image: the values the JieLi SDK's own
+/* Controller and host configuration of the Bluetooth test image: the values the JieLi SDK's own
  * apps/common/config/log_config/lib_btctrler_config.c (fw-AC79_AIoT_SDK V1.2.0, Apache-2.0, see
- * third_party/jieli-ble/) gives a Bluetooth LE only build, reduced to LE advertising and one slave link. The names and
+ * third_party/jieli-ble/) gives a Bluetooth LE only build, reduced to LE advertising, one slave link and a GATT server. The names and
  * types are the library's; the values for features we do not build are the SDK's defaults. */
 #include <stdint.h>
 

@@ -2,7 +2,7 @@
 # Docker command lines; Windows calls it from the .bat files. See docs/BUILDING.md.
 #   make doctor     check the prerequisites (Node, Docker, the image)
 #   make build      firmware/openpocket.bin, the update loader and docs/firmware/*.fwsc + manifest.json
-#   make ble        the advertise-only Bluetooth test image: firmware/openpocket-ble.bin, build/ble/*.fwsc (docs/BLE-TEST.md)
+#   make ble        the Bluetooth MIDI test image: firmware/openpocket-ble.bin, build/ble/*.fwsc (docs/BLE-TEST.md)
 #   make test       the host tests (tests/run_tests.sh)
 #   make package    build + build/SHA256SUMS of the outputs
 #   make package-test   the MIDI test channel package (docs/firmware/midi-test/, never the installer default)
