@@ -84,21 +84,37 @@ check("the tuner mutes the output with a ramp", () => {
   assert.equal(peak(tail(out)), 0);
 });
 check("output never leaves full scale", () => assert.ok(peak(run(engine(5), tone(110, 1, 8))) <= 1));
-check("the WebAssembly engine sounds as the native build of the same code", () => {
+// Every factory preset, on a test tone and on each bundled loop (at guitar level, 0.15), through the WebAssembly engine
+// (MASTER 50, x0.25, so nothing clips) and the native build of the same code. Both must be finite and agree exactly:
+// the code is the same, both use the pedal's px_math.c, and x0.25 is exact in floating point. The largest difference of
+// each pair is the evidence (EVIDENCE_DIR: audio-parity.tsv).
+const TOLERANCE = 0;
+const GAIN = Math.fround(0.15);
+check("every factory preset, on a tone and every loop: WebAssembly sounds as the native build", () => {
   const exe = join(TMP, "preset"), input = join(TMP, "in.wav"), output = join(TMP, "out.f32");
   const cc = spawnSync(process.env.CC || "cc", ["-O2", "-fno-builtin", "-ffp-contract=off", "-Iengine", "tests/engine/preset.c", "engine/px_dsp.c", "firmware/px_math.c", "-lm", "-o", exe], { cwd: ROOT, stdio: "inherit" });
   assert.equal(cc.status, 0);
-  writeFileSync(input, wavBytes(IN));
-  const samples = readWav(readFileSync(input)).samples;
-  for (const preset of [0, 5, 15, 20]) {
-    assert.equal(spawnSync(exe, [String(preset), input, output, "1"]).status, 0);
-    const b = readFileSync(output), native = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)), e = engine(preset, 50);
-    e.x.px_reset();                                    // as the harness: one px_engine_set() on a new engine
-    const wasm = run(e, samples);
-    const scale = peak(native);
-    assert.ok(scale > 0.01 && scale < 4, `preset ${preset + 1}: peak ${scale}`);
-    wasm.forEach((v, i) => assert.ok(Math.abs(v - native[i] * 0.25) <= 1e-5 * scale, `preset ${preset + 1}, sample ${i}: ${v} ${native[i] * 0.25}`));
+  const signals = [{ name: "tone 220 Hz", wav: wavBytes(IN), gain: 1 }];
+  for (const l of JSON.parse(read("assets/loops/manifest.json")).loops) signals.push({ name: l.file, wav: read(join("assets/loops", l.file)), gain: GAIN });
+  const rows = ["preset\tsignal\tnative_peak\twasm_peak\tmax_abs_diff\tdiff_over_native_peak"];
+  for (const { name, wav, gain } of signals) {
+    writeFileSync(input, wav);
+    const samples = readWav(wav).samples, heard = samples.map((v) => v * gain);
+    for (let preset = 0; preset < 52; preset++) {
+      assert.equal(spawnSync(exe, [String(preset), input, output, String(gain)]).status, 0);
+      const b = readFileSync(output), native = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)), e = engine(preset, 50);
+      e.x.px_reset();                                  // as the harness: one px_engine_set() on a new engine
+      const wasm = run(e, heard).subarray(0, native.length);
+      assert.ok(finite(native) && finite(wasm), `preset ${preset + 1}, ${name}: not finite`);
+      const scale = peak(native);
+      assert.ok(scale > 0.001 && scale < 4, `preset ${preset + 1}, ${name}: peak ${scale}`);
+      let worst = 0;
+      wasm.forEach((v, i) => { worst = Math.max(worst, Math.abs(v - native[i] * 0.25)); });
+      assert.ok(worst <= TOLERANCE * scale, `preset ${preset + 1}, ${name}: differs by ${worst} (native peak ${scale})`);
+      rows.push([preset + 1, name, scale, peak(wasm), worst, worst / scale].join("\t"));
+    }
   }
+  if (process.env.EVIDENCE_DIR) writeFileSync(join(process.env.EVIDENCE_DIR, "audio-parity.tsv"), rows.join("\n") + "\n");
 });
 
 const sim = await startSim({ port: 0, flash: join(TMP, "flash.bin") });
@@ -136,6 +152,7 @@ for (const l of manifest.loops) {
     assert.ok(l.license_url.includes(ALLOWED[l.license]), l.license_url);
     assert.ok(l.title && l.author && l.source.startsWith("https://") && l.attribution);
     assert.ok(attribution.includes(l.attribution), "ATTRIBUTION.md");
+    for (const field of [l.file, l.author, l.source, l.license_url]) assert.ok(attribution.includes(field), `ATTRIBUTION.md lacks ${field}`);
     assert.ok(["dry", "amped"].includes(l.signal));
     assert.equal(l.sha256, sha256(bytes));
     assert.equal(rate, l.sample_rate);
