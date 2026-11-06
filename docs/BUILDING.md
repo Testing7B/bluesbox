@@ -26,6 +26,7 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 
 | Command | What it does |
 | --- | --- |
+| `make doctor` | check Node, Docker and the image, one line each (exit 1 when the build cannot work) |
 | `make build` | `firmware/build.sh` in the container: `firmware/openpocket.bin`, the update loader, `docs/firmware/PocketX_9NN.fwsc`, `BlackBox_9NN.fwsc`, `manifest.json` |
 | `make package` | `build`, then `build/SHA256SUMS` |
 | `make test` | `tests/run_tests.sh` (engine, preset store, screen, simulated pedal, installer, editor; the browser page tests also run when Playwright is installed) |

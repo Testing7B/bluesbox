@@ -200,6 +200,7 @@ int main(int argc, char **argv)
                     continue;
                 }
                 mode = 1;
+                ota_deadline = 0;                       /* the loader is a fresh program: step 1's 2-minute limit is not its own */
                 stock = 0;
                 cur_id = "ota-OpenPocket_900";
                 printf("#port OpenPocket Update\n");

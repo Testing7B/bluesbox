@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // The one host-side entry point of the OpenPocket build (macOS, Linux, Windows; Node 18+). The Makefile and the
 // .bat files only call this. Every Docker command line lives here.
-//   node tools/op.mjs build | test | package | clean | shell | image | serve [editor|build]
+//   node tools/op.mjs doctor | build | test | package | clean | shell | image | serve [editor|build]
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 // NATIVE=1 runs the commands on this machine (toolchain from firmware/setup.sh) instead of in the container.
 import { spawnSync } from "node:child_process";
@@ -56,6 +56,20 @@ function inside(path) {
 }
 
 const commands = {
+  doctor() {                                   // prerequisites, one line each; exit 1 when the build cannot work
+    let bad = 0;
+    const line = (ok, text) => { console.log(`${ok ? "ok  " : "FAIL"} ${text}`); if (!ok) bad = 1; };
+    line(Number(process.versions.node.split(".")[0]) >= 18, `Node ${process.versions.node} (18 or newer)`);
+    const info = spawnSync("docker", ["info"], { stdio: "ignore" });
+    const up = !info.error && info.status === 0;
+    line(up, up ? "Docker is running" : "Docker is not installed or not running (Docker Desktop, Docker, or `colima start`)");
+    if (up) {
+      const img = spawnSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" });
+      console.log(img.status === 0 ? `ok   image ${IMAGE} is built` : `note image ${IMAGE} is not built yet: the first build or \`image\` makes it (about 1 minute)`);
+    }
+    if (process.arch === "arm64") console.log("note ARM machine: the linux/amd64 toolchain runs under emulation (a `test` takes about 1 minute)");
+    return bad;
+  },
   image,
   build: () => inContainer(["sh", "firmware/build.sh"]),
   test: () => inContainer(["sh", "tests/run_tests.sh"]),

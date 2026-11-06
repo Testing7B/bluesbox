@@ -52,6 +52,13 @@ assert.match(r.calls.at(-1).at(-1), /^sh firmware\/build\.sh && .*sha256sum .*op
 r = op(["shell"]);
 assert.deepEqual(r.calls.at(-1), ["run", "--rm", "-it", ...base(["bash"]).slice(2)], "shell has a tty and the user");
 
+r = op(["doctor"]);
+assert.equal(r.status, 0, "doctor with Docker up");
+assert.deepEqual(r.calls, [["info"], ["image", "inspect", "openpocket-build"]], "doctor looks, builds nothing");
+r = op(["doctor"], { env: { FAKE_DOCKER_DOWN: "1" } });
+assert.notEqual(r.status, 0, "doctor fails with Docker down");
+assert.deepEqual(r.calls, [["info"]]);
+
 r = op(["image"]);
 assert.deepEqual(r.calls, [["info"], BUILD], "image");
 
