@@ -8,9 +8,16 @@ changed.
 The normal firmware and the installer's packages in `docs/firmware/` are built exactly as before: `make build` gives the
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
-> **Status: built and linked, not yet run on a pedal.** No pedal was available to the author and there is no emulator of the
-> radio, so everything below about what the pedal does is the plan, not an observation. Read
-> [What is not verified](#what-is-not-verified) before you flash it.
+> **Status: built and linked. The first flash on a pedal crash-looped; that fault is fixed here but this build has not been
+> run on a pedal yet.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
+> observation. Read [What is not verified](#what-is-not-verified) before you flash it.
+
+**First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
+guard (`fm1_guard.h`, EMU bit 3) faults any stack pointer outside `[_ustack_lo, _sstack_top]`, and the controller's task
+stacks (`ble_os.c`) are in ordinary RAM below that window. The test image is now built with that one guard off
+(`OP_GUARD_STACK=0` in `firmware/build.sh`); the write, bus and code-range guards stay on. The normal firmware keeps all four.
+`firmware/app.ld` now refuses to link the image if the stack guard is on while the task stacks lie outside the window, so the
+mistake cannot come back unnoticed (`OP_BLE=1 OP_GUARD_STACK=1 sh firmware/build.sh` shows the refusal).
 
 ## Build
 
@@ -106,7 +113,14 @@ order I would suspect them:
    while testing.
 5. **Real-time load.** Starting the radio blocks the main loop for the length of the start-up (screen and knobs freeze,
    audio keeps running from its interrupt). Afterwards the cost is the two radio interrupts every 100 ms.
-6. **Regulation.** The pedal was certified with the stock firmware. This image uses the standard advertising channels,
+6. **Other guards, checked on paper only.** After the stack-limit fault, the library's start-up path was read for the other
+   guards (`fm1_guard.h`). *Write limits* cover only the two 256-byte stack bands and `0x01C7FD50` upward (boot info,
+   mailbox, vectors); the controller's data, heap and task stacks are in `.bss`/`.data` between `0x01C08000` and about
+   `0x01C1C000`, so none of its writes should land there. *Code range*: all of its code is linked into `.text` (`_etext`
+   bounds it) and none runs from RAM. *Bus-invalid*: only the radio's own registers are touched. *Interrupt stacks*: the two
+   BLE interrupts run on the system stack as every interrupt does, which is inside the window. None of this has run on
+   hardware; a fault on the next flash is still possible, and the crash screen's `EMU` and `DBG` values say which guard it was.
+7. **Regulation.** The pedal was certified with the stock firmware. This image uses the standard advertising channels,
    the 1M PHY and the library's own power table; it is a hobby experiment, not a product.
 
 ## Recovery

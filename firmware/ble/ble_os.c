@@ -121,7 +121,7 @@ typedef struct {
     uint32_t qh, qn;
     uint32_t stack[STACK_WORDS] __attribute__((aligned(8)));
 } task_t;
-static task_t tasks[MAXTASK];
+static task_t tasks[MAXTASK] __attribute__((section(".bss.ble_stack")));   /* app.ld brackets it as _ble_stack_lo.._hi */
 static task_t *cur;                                  /* the task being run, 0 in the scheduler */
 static uint32_t *sched_sp;
 
