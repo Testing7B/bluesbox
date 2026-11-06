@@ -6,6 +6,7 @@
 //   node tools/op.mjs flash --dry-run | --confirm-flash [--rescue] [--package FILE]   (writes to a connected pedal: docs/BUILDING.md)
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 //   node tools/op.mjs sim [--port 8766] [--flash FILE] [--reset] | --update FLASH.bin   the hosted simulated pedal
+//   node tools/op.mjs wasm   the engine as WebAssembly for the simulated pedal's sound (tools/sim/px_engine.wasm)
 // NATIVE=1 runs the commands on this machine (toolchain from firmware/setup.sh) instead of in the container.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -103,6 +104,7 @@ const commands = {
     return r.status ?? 0;
   },
   sim: (args) => exec(process.execPath, ["tools/sim.mjs", ...args]),   // the host's own Node and C compiler: no container
+  wasm: () => inContainer(["sh", "engine/wasm.sh"]),
   render([input, output, preset]) {
     if (!input) fail("usage: render in.wav [out.wav] [preset 1..52]");
     const rel = inside(input);

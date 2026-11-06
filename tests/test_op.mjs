@@ -116,6 +116,10 @@ assert.equal(r.status, 0, "sim is passed to tools/sim.mjs");
 assert.match(r.err, /usage: node tools\/op\.mjs sim/, "sim prints its own usage");
 assert.deepEqual(r.calls, [], "sim runs on the host: no Docker");
 
+r = op(["wasm"]);
+assert.equal(r.status, 0);
+assert.deepEqual(r.calls.at(-1).slice(-2), ["sh", "engine/wasm.sh"], "wasm builds the engine in the container");
+
 const make = spawnSync("make", ["--version"], { encoding: "utf8" });
 if (make.status === 0) {
   rmSync(log, { force: true });

@@ -13,11 +13,12 @@
 #   make flash ARGS="--dry-run"   write a built package to a connected pedal (ARGS="--confirm-flash" to really write)
 #   make flash-rescue ARGS="--confirm-flash"   wait for a pedal that restarts in a loop and install (docs/BUILDING.md)
 #   make sim [ARGS="--port 9000 --reset"]   the hosted simulated pedal on http://127.0.0.1:8766/ (docs/SIMULATOR.md)
+#   make wasm       the engine as WebAssembly for the simulator's sound (tools/sim/px_engine.wasm, committed)
 #   make render IN=guitar.wav [OUT=out.wav] [PRESET=1]   a WAV through the engine
 #   make appimage [DUMP=fm1-1.bin]   fm1-300.bin for the SD-card recovery
 # `make NATIVE=1 build` skips Docker (toolchain installed with firmware/setup.sh).
-.PHONY: doctor build ble test package clean shell image serve serve-ble render appimage flash flash-rescue sim
-doctor build ble test package clean shell image serve:
+.PHONY: doctor build ble test package clean shell image serve serve-ble wasm render appimage flash flash-rescue sim
+doctor build ble test package clean shell image serve wasm:
 	@node tools/op.mjs $@
 serve-ble:
 	@node tools/op.mjs serve ble
