@@ -3,7 +3,7 @@
 """tools/uboot_rescue.py against a simulated UBOOT pedal (tests/uboot_sim.py): protocol layer, guards, resume. No hardware.
   python3 tests/test_uboot_rescue.py [official-BlackBox.fwsc]   (the package tests are skipped without the official file)
 """
-import contextlib, io, os, random, sys, tempfile, unittest
+import contextlib, io, os, random, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -232,6 +232,14 @@ class Rescue(unittest.TestCase):
             self.assertEqual(ur.main(["--image", str(small) + ".missing"]), 1)
             self.assertEqual(ur.main(["--package", str(small) + ".missing"]), 1)
         self.assertIn("REFUSED", err.getvalue())
+
+    def test_check_reports_the_prerequisites(self):
+        r = subprocess.run([sys.executable, str(Path(ur.__file__)), "--check", "--package", str(Path(self.tmp.name) / "none.fwsc")],
+                           capture_output=True, text=True)
+        lines = r.stdout.splitlines()
+        self.assertTrue(any("libusb" in l for l in lines), r.stdout)
+        self.assertTrue(any(l.startswith("note official package not found") for l in lines), r.stdout)
+        self.assertEqual(r.returncode, 1 if any(l.startswith("FAIL") for l in lines) else 0)
 
     # ---- the official package
     @unittest.skipUnless(PACKAGE.exists(), "official BlackBox package not found")

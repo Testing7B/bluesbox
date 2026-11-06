@@ -568,8 +568,27 @@ def wait_for_pedal(usb, log):
         time.sleep(0.05)
 
 
+def check(a):
+    """Prerequisites, one line each, for `op.mjs doctor`; exit 1 only when the tool cannot run at all."""
+    bad = 0
+    try:
+        Libusb()
+        print("ok   libusb found")
+    except RescueError as e:
+        print(f"FAIL {e}")
+        bad = 1
+    package = Path(a.package or DEFAULT_PACKAGE).expanduser()
+    print(f"ok   official package {package}" if a.image or package.exists() else
+          f"note official package not found at {package}: pass --package FILE.fwsc (the BlackBox package from M-VAVE)")
+    print("ok   wl82loader.bin cached" if LOADER_CACHE.exists() else "note wl82loader.bin is downloaded on the first run (SHA-256 checked)")
+    if os.geteuid() != 0:
+        print("note the rescue needs root to take the pedal from macOS's mass-storage driver: `make rescue` asks for your password (sudo)")
+    return bad
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Restore the official firmware of a crash-looping BlackBox from its UBOOT state.")
+    ap.add_argument("--check", action="store_true", help="only check the prerequisites (libusb, package, loader, root) and exit")
     ap.add_argument("--write", action="store_true", help="really write the flash (default: read-only, steps 1 to 4)")
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--package", help="official .fwsc package (default ~/Documents/BlackBox (2).fwsc)")
@@ -578,6 +597,8 @@ def main(argv=None):
     ap.add_argument("--backup-dir", default=str(DEFAULT_BACKUPS), help="where the flash backup goes (default ~/OpenPocket-rescue)")
     ap.add_argument("--attempts", type=int, default=10, help="UBOOT windows to try before giving up (default 10)")
     a = ap.parse_args(argv)
+    if a.check:
+        return check(a)
 
     t0 = [time.monotonic()]
     log = lambda m: print(f"[{time.monotonic() - t0[0]:6.1f}s] {m}", flush=True)

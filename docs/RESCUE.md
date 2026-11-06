@@ -20,7 +20,11 @@ That is all. The tool is one Python 3 file that calls libusb through `ctypes` (n
   `d41da6126760c9d66660bcc0cac8d27d221806c5e369a8036921efe68dca5376` on every run. It is not in this repository. `make clean`
   removes the cache; `--loader FILE` uses a copy you downloaded yourself.
 
-## The two commands
+## The commands
+
+`make rescue` and `make rescue-write` (or `node tools/op.mjs rescue [--write]`, the entry point next to `flash`) run the tool with
+`sudo` for you and pass options on (`make rescue ARGS="--package FILE.fwsc"`). `make doctor` shows whether libusb, the package and
+the loader are in place. The `sudo python3 tools/uboot_rescue.py` lines below are the same thing written out.
 
 macOS keeps its own mass-storage driver on the pedal in this state, and libusb needs root to take the interface from it.
 Plug the pedal straight into the Mac (no hub), start the command, and it waits for the pedal and starts by itself the moment
@@ -29,7 +33,7 @@ it appears.
 1. **Read-only first.** Nothing is written to the pedal's flash; the loader goes to RAM only.
 
 ```
-sudo python3 tools/uboot_rescue.py
+make rescue                              # = sudo python3 tools/uboot_rescue.py
 ```
 
 It checks that the pedal answers INQUIRY as `WL82 UBOOT1.00`, loads the loader, reads the chip key (must be `0x980F`) and
@@ -40,7 +44,7 @@ backup: it is the only copy of what the pedal held before the rescue.
 2. **The rescue**, only after the read-only run has passed:
 
 ```
-sudo python3 tools/uboot_rescue.py --write
+make rescue-write                        # = sudo python3 tools/uboot_rescue.py --write
 ```
 
 Same steps, then for every 4 KiB sector in `[0x4000, 0xA3000)` that differs: erase, write, read back, compare. When it prints
@@ -48,8 +52,25 @@ Same steps, then for every 4 KiB sector in `[0x4000, 0xA3000)` that differs: era
 back), the tool waits and starts again by itself; running it again later also resumes. Only the sectors that still differ are
 written, so a rerun is short.
 
-Options: `--package`, `--image`, `--loader`, `--backup-dir DIR`, `--attempts N` (UBOOT windows to try, default 10).
+Options (after `ARGS=` with make): `--check` (prerequisites only), `--package`, `--image`, `--loader`, `--backup-dir DIR`, `--attempts N` (UBOOT windows to try, default 10).
 Exit codes: 0 done, 1 setup problem (libusb, root, files), 2 refused by a safety check, 130 stopped by Ctrl-C.
+
+## What the first real run showed
+
+The first run on a real, looping BlackBox was done by the captain, who reported that the rescue worked ("the rescue worked!").
+Only the files the tool left behind are recorded here; the captain's terminal output was not kept.
+
+| Item | What the files show |
+| --- | --- |
+| Backups | Two, in `~/OpenPocket-rescue`: `blackbox-20261105-213039.dump.bin` and `blackbox-20261105-213135.dump.bin`, 1,048,576 bytes each (a 1 MiB flash), written 56 s apart. They are byte for byte identical (same SHA-256), so both hold the flash from before any write. |
+| What the pedal held | Application `BlackBox_936`, the Bluetooth test image that caused the loop. Its app area passes the package's own CRC checks. |
+| Head `[0, 0x4000)` | Identical to the head of the official BlackBox_016 `flash.bin`, so the head check passes. |
+| Sectors to write | 159 of the 160 sectors in `[0x4000, 0xA3000)` differed from BlackBox_016 (first `0x4000`, last `0xA2000`). |
+| Restored package | BlackBox_016 (`BlackBox (2).fwsc`, the tool's default image). |
+| Chip key, flash id | Unknown: they are printed, not saved. The tool's checks (key `0x980F`, 1 MiB flash) passed, because it went on to write. |
+| Length of the UBOOT window, sectors written, time taken | Unknown: not saved. A later run should keep its output (`make rescue 2>&1 \| tee rescue.log`). |
+
+The two backups' times are consistent with a read-only run followed by the `--write` run, but no file records which was which.
 
 ## Safety rules
 
