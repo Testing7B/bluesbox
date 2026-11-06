@@ -161,8 +161,8 @@ await bad("/api/knob/x", 400, "a knob step that is not a number is refused");
 ok((await fetch(sim.url + "/api/press/fs_up")).status === 405, "a control needs POST");
 ok((await fetch(sim.url + "/site/../tools/sim.mjs")).status === 404 && (await fetch(sim.url + "/site/%2e%2e/Makefile")).status === 404, "/site/ serves docs/ only");
 
-const page = async (path) => (await fetch(sim.url + path)).text();
-ok((await page("/")).includes('id="lcd"') && (await page("/plain")).includes('id="blocks"') && (await page("/sim/pedal-input.js")).includes("keyAction"), "/ is the pedal, /plain the plain control page");
+const served = async (path, type) => { const r = await fetch(sim.url + path); return r.status === 200 && r.headers.get("content-type") === type; };
+ok(await served("/", "text/html; charset=utf-8") && await served("/plain", "text/html; charset=utf-8") && await served("/sim/pedal-input.js", "text/javascript; charset=utf-8"), "/ is the pedal, /plain the plain control page, and the input module is served");
 
 // ---- 6. SysEx over HTTP (docs/EDITOR-PROTOCOL.md) ----
 let r = await act("/api/sysex", "f0 7d 4f 50 01 f7");

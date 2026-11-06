@@ -332,13 +332,13 @@ document.addEventListener("keydown", (e) => {
   const a = keyAction(e.key, focused(e.target));
   if (!a) return;
   e.preventDefault();
-  if (a.hold) { if (!keysDown.has(e.key)) { keysDown.set(e.key, a.hold); down(a.hold); } }
+  if (a.hold) { if (!keysDown.has(e.code)) { keysDown.set(e.code, a.hold); down(a.hold); } }
   else if (a.turn) turn(a.turn);
   else if (a.master) moveMaster(a.master);
   else setMaster(a.masterTo);
 });
 document.addEventListener("keyup", (e) => {
-  if (keysDown.has(e.key)) { up(keysDown.get(e.key)); keysDown.delete(e.key); }
+  if (keysDown.has(e.code)) { up(keysDown.get(e.code)); keysDown.delete(e.code); }
 });
 const letGo = () => { for (const name of keysDown.values()) up(name); keysDown.clear(); };
 window.addEventListener("blur", letGo);
