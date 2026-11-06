@@ -67,6 +67,9 @@ it can with the on/off numbers above.
 The order is the order of the blocks above: CC 8 + n flips what CC 20 + n switches. The pedal never sends these numbers: it reports a
 block with its on/off number.
 
+A Chocolate Plus reaches these with Mode 5 in CubeSuite, a short press sending CC n value 0. That has been tried over Bluetooth on
+DRIVE, MOD, DELAY and REVERB.
+
 CC **7** (volume) sets the MASTER volume, 0 to 127 to 0 to 100, like the MASTER knob (turning the knob takes over again).
 
 What the "setting" numbers mean depends on the model (the screen shows the names): for the AMP they are GAIN, BASS, MID,
