@@ -544,6 +544,14 @@ static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u);
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #endif
 #endif
+#if OP_BLE_TEST             /* the advertise-only Bluetooth test image (docs/BLE-TEST.md): make ble */
+#include "ble/ble_os.c"
+#include "ble/ble_libc.c"
+#include "ble/ble_cfg.c"
+#include "ble/ble_rf.c"
+#include "ble/ble_stubs.c"
+#include "ble/ble_test.c"
+#endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
 static void rst_names(char *l, uint32_t r)
@@ -576,7 +584,11 @@ static void app_main(void)
     /* boot screen with the version: shows which image is running */
     lcd_rect(0,0,240,240,UI_BG);
     ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
+#if OP_BLE_TEST
+    ft_box(0, 126, 240, OP_VERSION " BLE TEST", &FT_SM, UI_DIM, UI_BG, 1);
+#else
     ft_box(0, 126, 240, OP_VERSION, &FT_SM, UI_DIM, UI_BG, 1);
+#endif
 #if !AUDIO_PROBE
     {   /* the supplies as found -> as set (fm1_cstart): "PWR 3>7 11>15 DCDC" */
         char l[32]; l[0] = 0;
@@ -654,10 +666,16 @@ static void app_main(void)
     ui_render();
     op_stage(ST_RUN, 0);
 #endif
+#if OP_BLE_TEST
+    ble_test_start();                    /* radio on, controller up, one advertisement (the pedal keeps working) */
+#endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {
         uint32_t now = ms_now();
         fm1_wdt_feed();
+#if OP_BLE_TEST
+        ble_test_poll();
+#endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
@@ -674,7 +692,18 @@ static void app_main(void)
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
+#if OP_BLE_TEST
+                {   /* "ADVERTISING C1 42%": the Bluetooth state first */
+                    char b[40]; int k = 0, j; const char *w = ble_test_state();
+                    while (*w && k < 14) b[k++] = *w++;
+                    b[k++] = ' ';
+                    for (j = 0; c[j]; j++) b[k++] = c[j];
+                    b[k] = 0;
+                    ui_status(b, a_bypass);
+                }
+#else
                 ui_status(c, a_bypass);
+#endif
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
 #endif
