@@ -16,6 +16,8 @@
  *   in   "#press NAME"           a control, as the pedal's main loop (openpocket.c) dispatches it: fs_up fs_dn fx home
  *                                push mod amp cab dly rev, push_long (SAVE), dpush (double click: MOVE), home_long
  *                                (tuner). "#press ok" / "#press err REASON"
+ *   in   "#down NAME"            a button goes down / comes up, timed as the main loop times it: fs_up fs_dn fx home push
+ *   in   "#up NAME"              mod amp cab dly rev. "#down ok" / "#up ok" / "... err REASON"
  *   in   "#knob N [fast]"        the PARA knob turned N detents (negative: the other way)
  *   in   "#vol N"                the MASTER knob, 0..100
  *   in   "#bat MV [USB_MV]"      the battery voltage (and the 5 V supply) the screen shows
@@ -148,8 +150,8 @@ static const char *press(const char *n)
     if (!known) return "unknown control";
     if (ui_mode == M_SAVE) {                           /* the save page: PUSH saves, HOME cancels, the others do nothing */
         if (is_push) save_confirm(); else if (is_home) save_close();
-    } else if (ui_mode == M_TUNER) {                   /* any control leaves the tuner */
-        tuner_close();
+    } else if (ui_mode == M_TUNER) {                   /* any control leaves the tuner, but a hold of HOME does nothing */
+        if (strcmp(n, "home_long")) tuner_close();
     } else if (!strcmp(n, "push_long")) {              /* hold PUSH (0.8 s) */
         save_open();
     } else if (ui_mode == M_MOVE) {                    /* moving a block: PUSH drops it, HOME puts it back */
@@ -169,12 +171,59 @@ static const char *press(const char *n)
     n_press++;
     return 0;
 }
+static int knob_pos;                                   /* detents turned since the start: where the knob points */
 static void knob(int n, int fast)
 {
     int dd = n < 0 ? -1 : 1;
+    knob_pos += n;
     for (int i = 0; i < (n < 0 ? -n : n); i++) {
         if (ui_mode == M_SAVE) save_knob(dd);
         else if (ui_mode != M_TUNER) ui_knob(dd, fast);
+    }
+}
+
+/* ---- a button held down, timed as the main loop times it: PUSH and HOME act at the release or after a hold, the others
+ * at the press. Two footswitches down are two presses: the firmware has no gesture for both. ---- */
+static const char *const BUTTON[] = {"fs_up", "fs_dn", "fx", "home", "push", "mod", "amp", "cab", "dly", "rev"};
+enum { N_BUTTON = sizeof BUTTON / sizeof *BUTTON, B_HOME = 3, B_PUSH = 4 };
+static struct { int down, fired; uint32_t t; } btn[N_BUTTON];
+static int clk_pend;                                   /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
+static uint32_t clk_t;
+static int button(const char *n)
+{
+    for (int i = 0; i < N_BUTTON; i++) if (!strcmp(n, BUTTON[i])) return i;
+    return -1;
+}
+static const char *button_down(const char *n, uint32_t now)
+{
+    int b = button(n);
+    if (b < 0) return "unknown button";
+    if (btn[b].down) return 0;
+    btn[b].down = 1; btn[b].fired = 0; btn[b].t = now;
+    return b == B_HOME || b == B_PUSH ? 0 : press(n);
+}
+static const char *button_up(const char *n, uint32_t now)
+{
+    int b = button(n);
+    if (b < 0) return "unknown button";
+    if (!btn[b].down) return 0;
+    btn[b].down = 0;
+    if (btn[b].fired) return 0;
+    if (b == B_HOME) return press(n);
+    if (b != B_PUSH) return 0;
+    if (ui_mode != M_CHAIN) return press(n);
+    if (clk_pend && now - clk_t < 350u) { clk_pend = 0; return press("dpush"); }
+    clk_pend = 1; clk_t = now;
+    return 0;
+}
+static void buttons_service(uint32_t now)
+{
+    if (btn[B_PUSH].down && !btn[B_PUSH].fired && now - btn[B_PUSH].t >= 800u) { btn[B_PUSH].fired = 1; press("push_long"); }
+    if (btn[B_HOME].down && !btn[B_HOME].fired && now - btn[B_HOME].t >= 700u) { btn[B_HOME].fired = 1; press("home_long"); }
+    if (ui_mode == M_MOVE) clk_pend = 0;
+    else if (clk_pend && ui_mode != M_SAVE && ui_mode != M_TUNER && (now - clk_t >= 350u || ui_mode != M_CHAIN)) {
+        clk_pend = 0;
+        if (ui_mode == M_CHAIN) press("push");
     }
 }
 
@@ -208,7 +257,9 @@ static void status(void)
            "\"last_press\":", ed_dirty(), st_saved(cur_preset), MODE[ui_mode], ui_blk, ui_item, master_vol, bat_mv, bat_usb_mv,
            (double)tuner_hz, writes_ok, fb_gen, ed_load(), ed_flags() & 1u, ed_flags() >> 1 & 1u);
     json_str(last_press);
-    printf(",\"presses\":%u,\"preset\":{\"name\":", n_press);
+    printf(",\"presses\":%u,\"knob\":%d,\"held\":[", n_press, knob_pos);
+    for (int i = 0, n = 0; i < N_BUTTON; i++) if (btn[i].down) { printf(n++ ? "," : ""); json_str(BUTTON[i]); }
+    printf("],\"preset\":{\"name\":");
     json_str(PRESET.name);
     printf(",\"on\":"); json_list(PRESET.on, PX_NBLK);
     printf(",\"type\":"); json_list(PRESET.type, PX_NBLK);
@@ -256,6 +307,14 @@ static void command(const char *l)
     } else if (sscanf(l, "#press %31s", name) == 1) {
         const char *err = press(name);
         printf(err ? "#press err %s\n" : "#press ok\n", err);
+        fflush(stdout);
+    } else if (sscanf(l, "#down %31s", name) == 1) {
+        const char *err = button_down(name, ms_now());
+        printf(err ? "#down err %s\n" : "#down ok\n", err);
+        fflush(stdout);
+    } else if (sscanf(l, "#up %31s", name) == 1) {
+        const char *err = button_up(name, ms_now());
+        printf(err ? "#up err %s\n" : "#up ok\n", err);
         fflush(stdout);
     } else if ((w = sscanf(l, "#knob %d %31s", &v, name)) >= 1) {
         knob(v, w == 2 && !strcmp(name, "fast"));
@@ -340,6 +399,7 @@ int main(int argc, char **argv)
     while (!closed) {
         poll_in(5);
         ed_service(ms_now());
+        buttons_service(ms_now());
         frame_draw();
         if (persist && flash_dirty) { flash_dirty = 0; if (write_flash(persist)) fprintf(stderr, "edsim: cannot write %s\n", persist); }
     }

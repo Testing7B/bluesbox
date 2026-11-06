@@ -27,6 +27,7 @@ const get = async (path) => (await fetch(sim.url + path)).json();
 const post = async (path, body) => fetch(sim.url + path, { method: "POST", body });
 const act = async (path, body) => { const r = await post(path, body); assert.equal(r.status, 200, `${path}: ${await r.clone().text()}`); return r.json(); };
 const state = () => get("/api/state");
+const bad = async (path, status, what) => ok((await post(path)).status === status, what);
 const png = async (path = "/api/screen.png") => Buffer.from(await (await fetch(sim.url + path)).arrayBuffer());
 
 // ---- 1. the pedal: a port, a state, the real catalogue ----
@@ -79,6 +80,61 @@ await act("/api/battery/3640/0");
 s = await state();
 ok(s.mode === "chain" && s.volume === 55 && s.battery_mv === 3640, "any control leaves the tuner; volume and battery are set");
 
+// ---- 3b. buttons held down, timed as the firmware times them ----
+const held = async () => (await state()).held;
+await act("/api/down/fs_up");
+s = await state();
+ok(s.slot === 1 && s.held.join() === "fs_up", "a footswitch acts when it goes down, and is reported held");
+await act("/api/up/fs_up");
+ok((await state()).slot === 1 && (await held()).length === 0, "its release does nothing more");
+await act("/api/down/fs_dn"); await act("/api/down/fs_up");
+s = await state();
+ok(s.slot === 1 && s.mode === "chain" && s.held.length === 2, "both footswitches: two presses, no tuner (as openpocket.c)");
+await act("/api/up/fs_dn"); await act("/api/up/fs_up");
+await act("/api/press/amp");
+await act("/api/down/home");
+ok((await state()).mode === "block", "HOME does nothing yet while it is down");
+await act("/api/up/home");
+ok((await state()).mode === "chain", "HOME acts at a short release");
+await act("/api/down/home");
+await sleep(760);
+ok((await state()).mode === "tuner", "HOME held 0.7 s: the tuner, before the release");
+await act("/api/up/home");
+s = await state();
+ok(s.mode === "tuner" && s.held.length === 0, "the release of that hold leaves the tuner open");
+await act("/api/down/home");
+await sleep(760);
+await act("/api/up/home");
+ok((await state()).mode === "tuner", "HOME held again does nothing on the tuner (as openpocket.c)");
+await act("/api/down/fx");
+s = await state();
+ok(s.mode === "chain", "any button leaves the tuner");
+await act("/api/up/fx");
+await act("/api/down/push");
+await sleep(860);
+ok((await state()).mode === "save", "PUSH held 0.8 s: the save page");
+await act("/api/up/push");
+ok((await state()).mode === "save", "the release of that hold stays on the save page");
+await act("/api/press/home");
+const click = async () => { await act("/api/down/push"); await act("/api/up/push"); };
+await click();
+ok((await state()).mode === "chain", "one click of PUSH on the chain waits for a second one");
+await sleep(400);
+ok((await state()).mode === "block", "after 350 ms it was a click: the block page");
+await act("/api/press/home");
+await click(); await click();
+await sleep(400);
+ok((await state()).mode === "move", "two clicks within 350 ms: MOVE");
+await act("/api/press/home");
+const k0 = (await state()).knob;
+await act("/api/knob/3");
+ok((await state()).knob === k0 + 3, "the state counts the knob's detents");
+await bad("/api/down/push_long", 400, "only a button goes down: a gesture is refused");
+await bad("/api/up/bogus", 400, "an unknown button is refused");
+await act("/api/up/fs_up");
+ok(true, "the release of a button that is not down is harmless");
+await act("/api/press/fs_dn");
+
 // ---- 4. save: the flash file, then a new session on it ----
 await act("/api/press/push_long");
 ok((await state()).mode === "save", "hold PUSH: the save page");
@@ -99,12 +155,14 @@ s = await state();
 ok(s.slot === 0 && s.saved === 0 && !existsSync(flash), "reset: a blank flash, the factory presets, the file gone");
 
 // ---- 5. bad requests ----
-const bad = async (path, status, what) => ok((await post(path)).status === status, what);
 await bad("/api/press/bogus", 400, "an unknown control is refused");
 await bad("/api/volume/500", 400, "a volume out of range is refused");
 await bad("/api/knob/x", 400, "a knob step that is not a number is refused");
 ok((await fetch(sim.url + "/api/press/fs_up")).status === 405, "a control needs POST");
 ok((await fetch(sim.url + "/site/../tools/sim.mjs")).status === 404 && (await fetch(sim.url + "/site/%2e%2e/Makefile")).status === 404, "/site/ serves docs/ only");
+
+const page = async (path) => (await fetch(sim.url + path)).text();
+ok((await page("/")).includes('id="lcd"') && (await page("/plain")).includes('id="blocks"') && (await page("/sim/pedal-input.js")).includes("keyAction"), "/ is the pedal, /plain the plain control page");
 
 // ---- 6. SysEx over HTTP (docs/EDITOR-PROTOCOL.md) ----
 let r = await act("/api/sysex", "f0 7d 4f 50 01 f7");
@@ -143,8 +201,8 @@ async function openShim(url) {
   runInContext(readFileSync(join(ROOT, "tools/sim/webmidi-shim.js"), "utf8"), sandbox);
   return sandbox;
 }
-let page = await openShim(sim.url);
-let access = await page.navigator.requestMIDIAccess({ sysex: true });
+let shim = await openShim(sim.url);
+let access = await shim.navigator.requestMIDIAccess({ sysex: true });
 ok(access.inputs.size === 1 && access.outputs.size === 1 && [...access.inputs.values()][0].name === "OpenPocket", "shim: requestMIDIAccess gives one input and one output, \"OpenPocket\"");
 const ed = new Editor(access);
 const inf = await ed.connect();
@@ -166,8 +224,8 @@ sim = await startSim({ port: 0, update: join(TMP, "flash_old.bin") });
 info = await get("/api/info");
 ok(info.kind === "update" && info.port === "OpenPocket" && info.log.some((l) => /PocketX_923/.test(l)), "--update: devsim runs the update code on the flash image (OpenPocket 923)");
 ok((await fetch(sim.url + "/api/state")).status === 409, "--update: no screen or controls");
-page = await openShim(sim.url);
-access = await page.navigator.requestMIDIAccess({ sysex: true });
+shim = await openShim(sim.url);
+access = await shim.navigator.requestMIDIAccess({ sysex: true });
 const up = new Updater(access, () => { });
 const dev = await up.identify();
 ok(dev && dev.id && dev.id.text === "PocketX_923", `installer (pxota.js) over the shim: found ${dev && dev.id && dev.id.text}`);

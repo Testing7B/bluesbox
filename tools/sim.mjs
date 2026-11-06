@@ -144,7 +144,8 @@ function png(be, scale = 1) {
 
 // ---- HTTP ----
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".css": "text/css", ".md": "text/plain; charset=utf-8" };
-const CONTROLS = ["fs_up", "fs_dn", "fx", "home", "push", "mod", "amp", "cab", "dly", "rev", "push_long", "dpush", "home_long"];
+const BUTTONS = ["fs_up", "fs_dn", "fx", "home", "push", "mod", "amp", "cab", "dly", "rev"];
+const CONTROLS = [...BUTTONS, "push_long", "dpush", "home_long"];
 const SHIM_TAG = '<script src="/sim/webmidi-shim.js"></script>';
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -232,6 +233,7 @@ export async function startSim(opts = {}) {
     }
     if (!post) throw new HttpError(405, "POST");
     if (what === "press") { if (!CONTROLS.includes(a)) throw new HttpError(400, `control: one of ${CONTROLS.join(" ")}`); return json(res, await ok(`#press ${a}`)); }
+    if (what === "down" || what === "up") { if (!BUTTONS.includes(a)) throw new HttpError(400, `button: one of ${BUTTONS.join(" ")}`); return json(res, await ok(`#${what} ${a}`)); }
     if (what === "knob") return json(res, await ok(`#knob ${Math.trunc(num(a, -200, 200, "knob steps"))}${query.has("fast") ? " fast" : ""}`));
     if (what === "volume") return json(res, await ok(`#vol ${Math.trunc(num(a, 0, 100, "volume"))}`));
     if (what === "battery") return json(res, await ok(`#bat ${Math.trunc(num(a, 0, 6000, "battery mV"))} ${b === undefined ? "" : Math.trunc(num(b, 0, 6000, "USB mV"))}`));
@@ -257,8 +259,9 @@ export async function startSim(opts = {}) {
       if (req.method === "OPTIONS") { res.writeHead(204, cors); return res.end(); }
       if (path.startsWith("/api/")) return await api(req, res, path, url.searchParams);
       if (req.method !== "GET") throw new HttpError(405, "GET");
-      if (path === "/") return file(res, join(SIM_FILES, "page.html"));
-      if (path === "/sim/webmidi-shim.js") return file(res, join(SIM_FILES, "webmidi-shim.js"));
+      if (path === "/") return file(res, join(SIM_FILES, "pedal.html"));
+      if (path === "/plain") return file(res, join(SIM_FILES, "page.html"));
+      if (path === "/sim/webmidi-shim.js" || path === "/sim/pedal-input.js") return file(res, join(SIM_FILES, path.slice(5)));
       if (path.startsWith("/site/")) { const p = within(join(ROOT, "docs"), path.slice(6) || "index.html"); return file(res, p, extname(p) === ".html"); }
       throw new HttpError(404, "not found");
     } catch (e) {
@@ -304,7 +307,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const sim = await startSim(o);
     console.log(`OpenPocket simulator (${sim.kind}) listening on ${sim.url}/`);
-    console.log(`  controls and screen: ${sim.url}/    installer: ${sim.url}/site/index.html    editor: ${sim.url}/site/editor.html`);
+    console.log(`  the pedal: ${sim.url}/    plain controls: ${sim.url}/plain    installer: ${sim.url}/site/index.html    editor: ${sim.url}/site/editor.html`);
     if (sim.kind === "pedal") console.log(`  flash: ${sim.flash}`);
     const quit = async () => { await sim.close(); process.exit(0); };
     process.on("SIGINT", quit); process.on("SIGTERM", quit);
