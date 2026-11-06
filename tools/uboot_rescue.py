@@ -376,7 +376,11 @@ def get_loader(path=None):
             raise RescueError(f"{where} is not the pinned wl82loader.bin (SHA-256 {LOADER_SHA256}); not using it")
         return blob
     if path:
-        return checked(Path(path).read_bytes(), path)
+        try:
+            blob = Path(path).read_bytes()
+        except OSError as e:
+            raise RescueError(f"cannot read {path}: {e.strerror}")
+        return checked(blob, path)
     if LOADER_CACHE.exists() and hashlib.sha256(LOADER_CACHE.read_bytes()).hexdigest() == LOADER_SHA256:
         return LOADER_CACHE.read_bytes()
     try:
