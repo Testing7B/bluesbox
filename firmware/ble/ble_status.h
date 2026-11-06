@@ -12,13 +12,15 @@
 #include <string.h>
 
 enum { BLE_FAIL_NONE, BLE_FAIL_TASK_CREATE, BLE_FAIL_INIT, BLE_FAIL_READY, BLE_FAIL_ADV_ENABLE, BLE_FAIL_TIMEOUT };
-enum { BLE_STAGE_IDLE, BLE_STAGE_TASK, BLE_STAGE_INIT, BLE_STAGE_RF, BLE_STAGE_READY, BLE_STAGE_ADV, BLE_STAGE_ENABLE };
+enum { BLE_STAGE_IDLE, BLE_STAGE_TASK, BLE_STAGE_INIT, BLE_STAGE_RF, BLE_STAGE_READY, BLE_STAGE_ADV, BLE_STAGE_ENABLE,
+       BLE_STAGE_RF_DONE, BLE_STAGE_BB };
 enum { BLE_OFF, BLE_STARTING, BLE_ADV, BLE_FAILED };
 
 static volatile uint32_t ble_state;
 static volatile uint32_t ble_stage;
 static volatile uint32_t ble_fail_step;
 static volatile int32_t ble_fail_code;
+static volatile uint32_t ble_wait;                 /* at a timeout: what the controller task is blocked on (ble_task_waiting) */
 
 static void ble_stage_set(uint32_t stage) { ble_stage = stage; }
 
@@ -66,7 +68,7 @@ static void ble_status_text(char *out)
 static void ble_status_full(char *out)
 {
     static const char *const step[] = { "none", "task_create", "btctrler_task_init", "btctrler_task_ready", "ll_hci_adv_enable", "timeout" };
-    static const char *const stage[] = { "idle", "task", "init", "radio-init", "ready-wait", "adv-setup", "enable" };
+    static const char *const stage[] = { "idle", "task", "init", "radio-init", "ready-wait", "adv-setup", "enable", "radio-done", "baseband-irq" };
     char *o;
     ble_status_text(out);
     if (ble_state != BLE_FAILED) return;
@@ -74,7 +76,12 @@ static void ble_status_full(char *out)
     o = ble__put(o, "  step ");
     o = ble__put(o, ble_fail_step < 6 ? step[ble_fail_step] : "?");
     o = ble__put(o, " stage ");
-    o = ble__put(o, ble_stage < 7 ? stage[ble_stage] : "?");
+    o = ble__put(o, ble_stage < 9 ? stage[ble_stage] : "?");
+    if (ble_wait) {                                              /* look the address up in firmware/build-ble/symbols.txt */
+        int i;
+        o = ble__put(o, " wait ");
+        for (i = 28; i >= 0; i -= 4) *o++ = "0123456789ABCDEF"[(ble_wait >> i) & 15u];
+    }
     *o = 0;
 }
 

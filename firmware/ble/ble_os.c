@@ -12,6 +12,7 @@
 #include "fm1_irq.h"
 #include "fm1_time.h"
 #include "ble_os.h"
+#include "ble_status.h"
 
 enum { OS_NO_ERR = 0, OS_TIMEOUT = 11, OS_TASKQ = 13, OS_TASK_NOT_EXIST = 14, OS_Q_FULL = 21, OS_Q_EMPTY = 22 };
 enum { OS_TICK_MS = 10 };                    /* OS_TICKS_PER_SEC is 100 in the SDK */
@@ -172,6 +173,12 @@ int task_kill(const char *name)
 }
 
 const char *os_current_task(void) { return cur ? cur->name : "main"; }
+/* what a task is blocked on, for the failure line: the semaphore or mutex address, or its state when it is not waiting on one */
+uint32_t ble_task_waiting(const char *name)
+{
+    task_t *t = task_find(name);
+    return !t ? 0xFFu : t->state == T_WAIT_SEM ? (uint32_t)(uintptr_t)t->wait_on : t->state;
+}
 
 int os_taskq_post_type(const char *name, int type, int argc, int *argv)
 {
@@ -323,6 +330,7 @@ uint32_t sys_timer_get_ms(void) { return fm1_uptime_ms(); }
 void request_irq(uint8_t idx, uint8_t prio, void (*handler)(void), uint8_t cpu)
 {
     (void)cpu;
+    ble_stage_set(BLE_STAGE_BB);                    /* le_hw_init: the baseband is set up and asks for its interrupts */
     fm1_irq_attach(idx, handler, prio);
 }
 void unrequest_irq(uint8_t idx, uint8_t cpu) { (void)cpu; FM1_ICFG(idx) &= ~(1u << ((idx & 7u) * 4u)); }

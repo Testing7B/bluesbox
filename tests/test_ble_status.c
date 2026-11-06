@@ -61,6 +61,9 @@ int main(void)
       }
       ble_marquee("ABCD", 7, 4, o);          /* fits: never moves */
       if (strcmp(o, "ABCD")) { puts("FAIL: a text that fits was scrolled"); bad++; } }
+    reset(); ble_state = BLE_STARTING; ble_stage_set(BLE_STAGE_BB); ble_wait = 0x01C1A5E0u; ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);
+    { char f[96]; ble_status_full(f); ble_wait = 0;
+      if (strcmp(f, "FAILED 5 8  step timeout stage baseband-irq wait 01C1A5E0")) { printf("FAIL wait line: \"%s\"\n", f); bad++; } }
     puts(bad ? "ble status: FAILED" : "ble status: ok");
     return bad != 0;
 }

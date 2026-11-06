@@ -21,6 +21,8 @@ extern void ll_hci_adv_set_data(uint8_t len, uint8_t *data);
 extern void ll_hci_adv_scan_response_set_data(uint8_t len, uint8_t *data);
 extern int ll_hci_adv_enable(bool enable);
 extern int task_create(void (*fn)(void *), void *arg, const char *name);   /* ble_os.c */
+extern uint32_t ble_task_waiting(const char *name);                        /* ble_os.c */
+extern int __crc16_mutex_init(void);        /* cpu.a crc16.c: creates the lock its CRC helpers take; the SDK's start-up calls it */
 
 enum { ADV_SCAN_IND = 2 };
 static uint32_t t_start;
@@ -31,6 +33,7 @@ static uint8_t adv_data[] = {
     17, 0x07,                                                   /* complete list of 128-bit service UUIDs, little endian */
     0x00, 0xC7, 0xC4, 0x4E, 0xE3, 0x6C, 0x51, 0xA7, 0x33, 0x4B, 0xE8, 0xED, 0x5A, 0x0E, 0xB8, 0x03,
 };
+static uint8_t no_addr[6];                                      /* direct address: unused by ADV_SCAN_IND, but the library reads six bytes */
 static uint8_t scan_rsp[] = { 20, 0x09, 'O','p','e','n','P','o','c','k','e','t','-','B','L','E','-','T','E','S','T' };
 
 /* btctrler_task_ready waits (on a semaphore) until the controller's own task has started, so this runs as a task of
@@ -46,7 +49,7 @@ static void test_task(void *arg)
     ble_stage_set(BLE_STAGE_READY);
     if (ble_judge_start(0, btctrler_task_ready())) return;
     ble_stage_set(BLE_STAGE_ADV);
-    ll_hci_adv_set_params(0x00A0, 0x00A0, ADV_SCAN_IND, 0, 0, chmap, 0);   /* 100 ms */
+    ll_hci_adv_set_params(0x00A0, 0x00A0, ADV_SCAN_IND, 0, no_addr, chmap, 0);   /* 100 ms */
     ll_hci_adv_set_data(sizeof(adv_data), adv_data);
     ll_hci_adv_scan_response_set_data(sizeof(scan_rsp), scan_rsp);
     ble_stage_set(BLE_STAGE_ENABLE);
@@ -56,6 +59,7 @@ static void test_task(void *arg)
 
 void ble_test_start(void)
 {
+    __crc16_mutex_init();                                       /* else thread_create (ll_init) waits for ever in crc_get_32bit */
     ble_state = BLE_STARTING;
     ble_stage_set(BLE_STAGE_TASK);
     t_start = fm1_uptime_ms();
@@ -67,7 +71,10 @@ void ble_test_poll(void)
 {
     ble_poll();
     if (ble_state == BLE_STARTING && fm1_uptime_ms() - t_start > 5000u)
-        ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);         /* (the task, if it is still waiting, is left alone) */
+    {   /* (the task, if it is still waiting, is left alone) */
+        ble_wait = ble_task_waiting("btctrler");
+        ble_fail(BLE_FAIL_TIMEOUT, (int32_t)ble_stage);
+    }
 }
 
 void ble_test_state(char *out) { ble_status_text(out); }

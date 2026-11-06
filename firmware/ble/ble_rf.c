@@ -20,6 +20,7 @@ void wf_rf_common_init(void)
     fm1_rf_cal_on = 1;
     fm1_ble_rf_run(no_record, no_record, no_record, no_record);
     fm1_wdt_feed();
+    ble_stage_set(BLE_STAGE_RF_DONE);                            /* the replay returned: what follows is the library's own start-up */
 }
 
 /* The library asks for saved items (trims, bonding): none, as in audio_probe.h. It stores nothing: the VM and BTIF

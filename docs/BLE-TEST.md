@@ -65,15 +65,18 @@ what the scanner shows and whether the pedal still works as a normal OpenPocket 
 
 | Text | Meaning |
 | --- | --- |
-| `STARTING n` | the last stage reached: 1 task created, 2 controller init called, 3 radio front end (the replayed start-up), 4 waiting for the controller task, 5 setting the advertisement, 6 enabling it |
+| `STARTING n` | the last stage reached: 1 task created, 2 controller init called, 3 radio front end replay entered, 4 waiting for the controller task, 5 setting the advertisement, 6 enabling it, 7 the replay returned, 8 the baseband asked for its interrupts. The markers are set by two tasks, so 3 and 7 can appear after 4; the number shown is the last one set, not the highest |
 | `FAILED s c` | step `s` failed with return value `c`. The status area is only 11 characters wide, so the whole line scrolls like a marquee (2 characters a second, resting 2 s on the start, then looping): `FAILED 2 -7  step btctrler_task_init stage init`. The short code is first, so it can be read before the scroll starts. The usual `C1 42%` is not shown while it has failed. |
 | `ADVERTISING` | the advertisement is on air |
 
 Failing steps: `1` `task_create` failed (`c` is -1); `2` `btctrler_task_init` returned `c` (not 0); `3`
 `btctrler_task_ready` returned `c` (0: the controller task did not answer); `4` `ll_hci_adv_enable` returned `c` (not
-0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). Example: `FAILED 5 3` is a hang
-in the radio front end replay. The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
+0); `5` still `STARTING` after 5 s, and `c` is the stage it stalled in (the list above). At a timeout the line ends with `wait XXXXXXXX`: the address of the semaphore or mutex the controller task is blocked on (look it up in `firmware/build-ble/symbols.txt`; a value below 0x10 is a task state instead). Example: `FAILED 5 3` only means the last marker passed was the entry of the radio replay; it does not say the replay hung. (In the first hardware run it was a deadlock after the radio start-up: see "Found on hardware" below.) The codes and the text come from `firmware/ble/ble_status.h`, checked on the PC by
 `tests/test_ble_status.c`. Please report the whole `FAILED s c` text.
+
+## Found on hardware
+
+The second flash showed `FAILED 5 3`. The cause (data/openpocket-ble-c1-diagnosis/report.md, read against the vendor code and the linked image): the controller's link-layer start-up calls `thread_create`, which calls `crc_get_32bit`, which waits for ever on a lock that the vendor function `__crc16_mutex_init()` creates and the SDK's own start-up calls. This image never called it, so the lock stayed "taken" and the controller task slept for ever. `ble_test_start` now calls it. Two more defects were fixed in the same change, because the first one would have exposed them: `ll_hci_adv_set_params` reads six bytes from its direct-address argument (it was NULL, which the bus guard is documented to fault on; now a zero array), and the context switch saved `r4`-`r9` while the compiler preserves `r4`-`r15` (now all of them, the list the compiler's own prologues use). None of the three has run on a pedal yet.
 
 ## How it works
 
