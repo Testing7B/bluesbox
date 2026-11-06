@@ -551,7 +551,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
 #if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
-#define ED_DIAG_LINES 4u
+#define ED_DIAG_LINES 5u
 #define ED_DIAG_LEN 224u
 static void ed_diag_line(uint32_t i, char *out);
 #endif
@@ -573,7 +573,8 @@ static void ed_diag_line(uint32_t i, char *out)
     if (i == 0u) ble_boot_text(out, ms_now(), op_diag.safe, op_diag.stage, op_pwr.rst, guard.failed);
     else if (i == 1u) ble_last_text(out, &ble_last);
     else if (i == 2u) ble_test_line(out);
-    else ble_midi_line(out);
+    else if (i == 3u) ble_midi_line(out);
+    else ble_trace_line(out);
 }
 #endif
 

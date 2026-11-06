@@ -49,6 +49,7 @@ void ble_test_poll(void)
     ble_busy(1);
     ble_poll();
     ble_busy(0);
+    ble_stub_collect();
     if (ble_state == BLE_STARTING && fm1_uptime_ms() - t_start > 5000u)
     {   /* (the task, if it is still waiting, is left alone) */
         ble_wait = ble_task_waiting("btctrler");

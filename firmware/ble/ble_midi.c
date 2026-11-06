@@ -53,7 +53,9 @@ static const uint8_t ble_profile[] = {
 
 static uint16_t ble_conn;                                       /* 0: no link */
 static uint16_t ble_conn_int, ble_conn_lat, ble_conn_tmo;       /* the link's interval (1.25 ms), latency, timeout (10 ms) */
+static uint8_t ble_peer[6];                                     /* little endian, as in the event */
 static uint32_t ble_links, ble_writes, ble_pairs, ble_drop_reason;
+static uint32_t ble_ev[8], ble_ev_n;                            /* the last events the host passed on, without Number Of Completed Packets: type, code, subevent or status, status */
 
 static uint16_t att_read(uint16_t con, uint16_t handle, uint16_t offset, uint8_t *buf, uint16_t size)
 {
@@ -84,6 +86,7 @@ static int att_write(uint16_t con, uint16_t handle, uint16_t mode, uint16_t offs
 static void ble_on_event(uint8_t type, uint16_t chan, uint8_t *p, uint16_t size)
 {
     (void)chan; (void)size;
+    if (p[0] != 0x13u) ble_ev[ble_ev_n++ % 8u] = (uint32_t)type << 24 | (uint32_t)p[0] << 16 | (uint32_t)p[2] << 8 | p[3];
     if (type != HCI_EVENT_PACKET) return;
     ble_cnt_hci++;
     if (p[0] == HCI_EVENT_DISCONNECTION_COMPLETE) {
@@ -100,7 +103,7 @@ static void ble_on_event(uint8_t type, uint16_t chan, uint8_t *p, uint16_t size)
             ble_conn_lat = (uint16_t)(q[2] | q[3] << 8);
             ble_conn_tmo = (uint16_t)(q[4] | q[5] << 8);
         }
-        if (q && p[2] != HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE) { ble_conn = (uint16_t)(p[4] | p[5] << 8); ble_links++; }
+        if (q && p[2] != HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE) { ble_conn = (uint16_t)(p[4] | p[5] << 8); ble_links++; memcpy(ble_peer, p + 8, 6); }
     }
 }
 
@@ -152,6 +155,18 @@ void update_bt_current_status(uint8_t *addr, uint8_t status, uint8_t value)
 /* the link line of the log channel, and of the status area while connected (ble_status.h); out: 128 bytes */
 void ble_midi_line(char *out)
 {
-    ble_link_text(out, ble_conn != 0, ble_links, ble_conn_int, ble_conn_lat, ble_conn_tmo, ble_writes, ble_pairs, ble_drop_reason,
+    ble_link_text(out, ble_conn != 0, ble_links, ble_peer, ble_conn_int, ble_conn_lat, ble_conn_tmo, ble_writes, ble_pairs, ble_drop_reason,
                   mid_last, ble_stub_calls, ble_stub_last);
+}
+
+/* the trace line of the log channel: "EV 43E0100 4050013 ... ST name name" (out: at most 216 bytes): the last events, oldest first, and
+ * the stand-ins called so far */
+void ble_trace_line(char *out)
+{
+    char *o = ble__put(out, "EV");
+    uint32_t i, n = ble_ev_n < 8u ? ble_ev_n : 8u;
+    for (i = ble_ev_n - n; i != ble_ev_n; i++) { *o++ = ' '; o = ble__hex(o, ble_ev[i % 8u]); }
+    o = ble__put(o, " ST");
+    for (i = 0; i < 12u && ble_stub_seen[i] && o - out + strlen(ble_stub_seen[i]) + 2u < 216u; i++) { *o++ = ' '; o = ble__put(o, ble_stub_seen[i]); }
+    *o = 0;
 }

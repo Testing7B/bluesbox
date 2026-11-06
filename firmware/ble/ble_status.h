@@ -136,15 +136,17 @@ static char *ble__hex(char *o, uint32_t v)
     return o;
 }
 
-/* the link line (out: 128 bytes): "LINK 1 n2 I48 L0 T400 W7 P1 D0 LAST 2 24 127 STUB 3 lmp_hci_reset". LINK 1 while connected; n links so far;
- * I interval (1.25 ms), L latency, T timeout (10 ms) of the link; W writes to the MIDI characteristic; P Just Works pairings accepted; D the
+/* the link line (out: 128 bytes): "LINK 1 n2 A A1B2C3D4E5F6 I48 L0 T400 W7 P1 D0 LAST 2 24 127 STUB 3 lmp_hci_reset". LINK 1 while connected; n links so far;
+ * A the peer's address; I interval (1.25 ms), L latency, T timeout (10 ms) of the link; W writes to the MIDI characteristic; P Just Works pairings accepted; D the
  * reason of the last disconnection; LAST the last message (PXM_PC or PXM_CC, data 1, data 2); STUB the calls of the stand-ins and the last one's name */
-static void ble_link_text(char *out, uint32_t up, uint32_t links, uint32_t ivl, uint32_t lat, uint32_t tmo, uint32_t writes, uint32_t pairs,
+static void ble_link_text(char *out, uint32_t up, uint32_t links, const uint8_t *peer, uint32_t ivl, uint32_t lat, uint32_t tmo, uint32_t writes, uint32_t pairs,
                           uint32_t reason, const uint8_t *last, uint32_t stubs, const char *stub)
 {
     char *o = out;
     o = ble__put(o, "LINK "); o = ble__dec(o, up);
     o = ble__put(o, " n"); o = ble__dec(o, links);
+    o = ble__put(o, " A ");
+    for (int i = 5; i >= 0; i--) { *o++ = "0123456789ABCDEF"[peer[i] >> 4]; *o++ = "0123456789ABCDEF"[peer[i] & 15u]; }
     o = ble__put(o, " I"); o = ble__dec(o, ivl);
     o = ble__put(o, " L"); o = ble__dec(o, lat);
     o = ble__put(o, " T"); o = ble__dec(o, tmo);

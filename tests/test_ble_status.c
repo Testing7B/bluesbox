@@ -112,11 +112,11 @@ int main(void)
       if (!n || (ble_adv_mac[5] & 1u)) { puts("FAIL: address is zero or a group address"); bad++; }
       if (BLE_ADV_IND != 0 || BLE_ADV_INTERVAL < 0x00A0 || BLE_ADV_INTERVAL > 0x4000 || BLE_ADV_CHMAP != 7 || BLE_ADV_FILTER != 0) {
           puts("FAIL: advertising parameters out of range"); bad++; } }
-    { char l[128]; static const uint8_t last[3] = {2, 24, 127};
-      ble_link_text(l, 1u, 2u, 48u, 0u, 400u, 7u, 1u, 0x13u, last, 3u, "lmp_hci_reset");
-      if (strcmp(l, "LINK 1 n2 I48 L0 T400 W7 P1 D13 LAST 2 24 127 STUB 3 lmp_hci_reset")) { printf("FAIL: link line: %s\n", l); bad++; }
-      ble_link_text(l, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, last, 0u, 0);
-      if (strcmp(l, "LINK 0 n0 I0 L0 T0 W0 P0 D0 LAST 2 24 127 STUB 0")) { printf("FAIL: idle link line: %s\n", l); bad++; }
+    { char l[128]; static const uint8_t last[3] = {2, 24, 127}, peer[6] = {0xF6, 0xE5, 0xD4, 0xC3, 0xB2, 0xA1};
+      ble_link_text(l, 1u, 2u, peer, 48u, 0u, 400u, 7u, 1u, 0x13u, last, 3u, "lmp_hci_reset");
+      if (strcmp(l, "LINK 1 n2 A A1B2C3D4E5F6 I48 L0 T400 W7 P1 D13 LAST 2 24 127 STUB 3 lmp_hci_reset")) { printf("FAIL: link line: %s\n", l); bad++; }
+      ble_link_text(l, 0u, 0u, peer, 0u, 0u, 0u, 0u, 0u, 0u, last, 0u, 0);
+      if (strcmp(l, "LINK 0 n0 A A1B2C3D4E5F6 I0 L0 T0 W0 P0 D0 LAST 2 24 127 STUB 0")) { printf("FAIL: idle link line: %s\n", l); bad++; }
     }
     puts(bad ? "ble status: FAILED" : "ble status: ok");
     { /* the log channel's boot lines (ble_diag.h) */

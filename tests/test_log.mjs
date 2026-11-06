@@ -79,7 +79,7 @@ await s.ready;
 let r = await run(s.access, fast);
 ok(r.code === 1 && /Bluetooth is off/.test(r.last.verdict.reason), "firmware text: OFF in a normal boot fails");
 ok(r.last.level === "full" && r.last.boot.clockMs === 30000 && r.last.lastBoot.failed === false, "DIAG reaches the parser through the real editor code");
-ok(/^LINK 1 n2 I48 /.test(r.last.link), "the link line comes through");
+ok(/^LINK 1 n2 A 060504030201 I48 /.test(r.last.link), "the link line comes through");
 
 s.ble("failed 5 3");
 r = await run(s.access, fast);

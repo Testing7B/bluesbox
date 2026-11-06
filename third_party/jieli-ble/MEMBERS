@@ -62,3 +62,4 @@ lib_ccm_aes.a	aes_tab.c.o	ccm/aes_tab.c.bc
 lib_ccm_aes.a	ccm_memory.c.o	ccm/ccm_memory.c.bc
 btstack.a	remote_device_list.c.o	btstack/remote_device_list.c.bc
 btstack.a	user_interface.c.o	btstack/user_interface.c.bc
+btctrler.a	hci_device_manager.c.o	btctrler/hci_device_manager.c.bc

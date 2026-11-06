@@ -9,9 +9,19 @@
 #include "ble_status.h"
 
 uint32_t ble_stub_calls;
-const char *ble_stub_last;
+const char *ble_stub_last, *ble_stub_seen[12];                  /* the different ones called, in order: the trace line */
+/* some of these run in the radio's interrupt, inside the 150 us before an answer goes out: only the two stores there */
 #define BLE_STUB(name) int name(void) { ble_stub_calls++; ble_stub_last = #name; return 0; }
-#define BLE_STUB_SLOT(name) int name(void) { ble_stub_calls++; ble_stub_last = #name; ble_cnt_slot++; return 0; }   /* the link scheduler's timer: counted apart */
+#define BLE_STUB_SLOT(name) int name(void) { ble_stub_calls++; ble_stub_last = #name; ble_cnt_slot++; return 0; }
+static void ble_stub_collect(void)                              /* from the main loop */
+{
+    const char *name = ble_stub_last;
+    uint32_t i;
+    for (i = 0; i < 12u; i++) {
+        if (ble_stub_seen[i] == name) return;
+        if (!ble_stub_seen[i]) { ble_stub_seen[i] = name; return; }
+    }
+}
 BLE_STUB(__slave_ll_send_vendor_wifi_detect_req)
 BLE_STUB(__slave_vendor_wifi_detect_done)
 BLE_STUB(a2dp_init)
@@ -52,7 +62,6 @@ BLE_STUB(bt_vm_interface)
 BLE_STUB(clear_sniff_cnt)
 BLE_STUB(conn_master_rx_post_handler)
 BLE_STUB(delete_link_key)
-BLE_STUB(dev_hci_set_event_mask)
 BLE_STUB(dut_bredr_close_recall)
 BLE_STUB(dut_hci_controller_init)
 BLE_STUB(dut_hci_emit_le_meta_event)
