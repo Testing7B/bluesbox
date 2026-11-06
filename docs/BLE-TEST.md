@@ -8,8 +8,8 @@ changed.
 The normal firmware and the installer's packages in `docs/firmware/` are built exactly as before: `make build` gives the
 same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
 
-> **Status: built and linked. The first flash on a pedal crash-looped and the second stalled at `FAILED 5 3`; both faults
-> are fixed here but this build has not been run on a pedal since, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
+> **Status: built and linked. The first flash on a pedal crash-looped, the second stalled at `FAILED 5 3` and the third
+> froze in the first `ble_poll`; all three faults are addressed here but this build has not been run on a pedal since, and the scanner check is still pending.** There is no emulator of the radio, so everything below about what the pedal does is the plan, not an
 > observation. Read [What is not verified](#what-is-not-verified) before you flash it.
 
 **First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
