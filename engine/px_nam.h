@@ -58,6 +58,8 @@ int pxn_load(pxn_model *m, const float *w, int32_t *r0, unsigned n0, int32_t *r1
 int pxn_selftest(int32_t *scratch);
 #define PXN_TEST_WORDS 1280
 int pxn_asm_in_use(void);
+/* the vector unit: its start-up check's largest difference with C if in use (>= 0), else -1 - that difference (or -1) */
+int pxn_vec_check(void);
 /* measurements for the firmware's bench screen (px_audio.h, BENCH_AT_BOOT): ticks, see px_nam.c */
 uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);

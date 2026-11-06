@@ -348,6 +348,13 @@ static void audio_bench(void)
     b_fix2(l, pxn_bench_part(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u));
     b_str(l, " GATH/F "); b_fix2(l, pxn_bench_part(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 192u));
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+    {
+        int vc = pxn_vec_check();
+        l[0] = 0; b_str(l, "VECTOR UNIT: "); b_str(l, vc >= 0 ? "IN USE D" : "OFF D");
+        b_num(l, (uint32_t)(vc >= 0 ? vc : -1 - vc));
+        if (vc >= 0) { b_str(l, " "); b_fix2(l, pxn_bench_part(pool, b_ticks, 3, 64) * 15u * 100u / (64u * 1920u)); }
+        lcd_text(4, y, l, vc >= 0 ? GRN : RED, UI_BG, 1); y += 12;
+    }
     l[0] = 0; b_str(l, "POST/F ");
     b_fix2(l, pxn_bench_part(pool, b_ticks, 2, 64) * 15u * 100u / (64u * 32u));
     b_str(l, " LAYER/MAC "); b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u));

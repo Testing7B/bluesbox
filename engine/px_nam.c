@@ -315,6 +315,43 @@ static void (*pxn_dot1)(const pxn_dot *) = pxn_dot1_c;
 static void (*pxn_post_f)(const pxn_post *) = pxn_post_c;
 static void (*pxn_gcopy)(int32_t *, const int32_t *, int, int) = pxn_gcopy_c;
 
+/* ---- the chip's vector unit (in its FFT block, 0x1EE0400): dot products in hardware ----
+ * One command computes nloop dot products of nlen 32-bit pairs, z = sum(y * x) >> q, the x, y and z addresses moving by
+ * their own byte steps between loops: a layer's weight row (y, still) against its X rows (x, one row a loop), into
+ * pxn_z (z, 3 words a loop). The register layout is the one in JieLi's AC79 SDK (apps/common/jl_math, Apache-2.0):
+ * control 0xAA1 = dot product, x y z 32 bits; config0 = q << 24 | nloop << 12 | nlen; config1 = z step << 20 |
+ * y step << 10 | x step; start 0x149, done = bit 7, cleared by setting bit 6. It runs beside the CPU. Used only if
+ * the start-up check finds it there and within 1 of the C result on every value. */
+static uint8_t pxn_vec_ok;
+static int32_t pxn_vec_diff = -1;                       /* the start-up check's largest difference (-1: not run) */
+#if PXN_ASM
+#define PXN_FFT_CON   (*(volatile uint32_t *)0x1EE0400u)
+#define PXN_FFT_CADR  (*(volatile uint32_t *)0x1EE0404u)
+#define PXN_FFT_CONST (*(volatile uint32_t *)0x1EE0408u)
+static volatile uint32_t pxn_vctx[8] __attribute__((aligned(32)));
+/* 0 = done, -1 = no answer (the unit is not there or not clocked) */
+static int pxn_vdot(const int32_t *w, const int32_t *x, int T, int sb, int32_t *z, int n)
+{
+    pxn_vctx[0] = 0xAA1u;
+    pxn_vctx[1] = (uint32_t)(uintptr_t)x;
+    pxn_vctx[2] = (uint32_t)(uintptr_t)w;
+    pxn_vctx[3] = (uint32_t)(uintptr_t)z;
+    pxn_vctx[4] = (24u << 24) | ((uint32_t)n << 12) | (uint32_t)T;
+    pxn_vctx[5] = (12u << 20) | (uint32_t)sb;
+    pxn_vctx[6] = 0;
+    pxn_vctx[7] = 0;
+    __asm__ volatile("csync" ::: "memory");
+    PXN_FFT_CONST = 0;
+    PXN_FFT_CADR = (uint32_t)(uintptr_t)pxn_vctx;
+    PXN_FFT_CON = 0x149u;
+    for (uint32_t k = 0; !(PXN_FFT_CON & 0x80u); k++)
+        if (k > 400000u) { PXN_FFT_CON = 0; return -1; }
+    PXN_FFT_CON |= 0x40u;
+    return 0;
+}
+#endif
+int pxn_vec_check(void) { return pxn_vec_ok ? (int)pxn_vec_diff : -1 - (pxn_vec_diff >= 0 ? (int)pxn_vec_diff : 0); }
+
 /* ---- start-up check ---- */
 /* the test pattern: X rows (9 of PXN_S + slack), weight rows, residual rows, both signs, values as large as a model
  * meets (+-32); scratch: PXN_TEST_WORDS */
@@ -322,16 +359,17 @@ static void (*pxn_gcopy)(int32_t *, const int32_t *, int, int) = pxn_gcopy_c;
 #define PXN_T_W(s)   ((s) + 10 * PXN_S)
 #define PXN_T_RR(s)  (PXN_T_W(s) + 3 * PXN_S + 4)
 #define PXN_T_O(s, k) (PXN_T_RR(s) + 12 + (k) * 64)       /* 8 output areas of 64 words */
-static void pxn_test_data(int32_t *s)
+static void pxn_test_data_sh(int32_t *s, int sh)
 {
     uint32_t r = 12345u;
     for (int i = 0; i < 13 * PXN_S + 16; i++) {
         r = r * 1103515245u + 12345u;
-        s[i] = (int32_t)r >> 6;
+        s[i] = (int32_t)r >> sh;
     }
     for (int k = 0; k < 8; k++)
         for (int i = 0; i < 64; i++) PXN_T_O(s, k)[i] = i * 77 - 1000;
 }
+static void pxn_test_data(int32_t *s) { pxn_test_data_sh(s, 6); }
 int pxn_selftest(int32_t *scratch)
 {
 #if PXN_ASM
@@ -355,6 +393,25 @@ int pxn_selftest(int32_t *scratch)
         if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4)) ok = 0;
     }
     if (ok) { pxn_dot3x4 = pxn_dot3x4_asm; pxn_dot1 = pxn_dot1_asm; pxn_post_f = pxn_post_asm; pxn_gcopy = pxn_gcopy_asm; }
+    /* the vector unit: rows of 20 and 47 over 8 X rows, against the C dot */
+    {
+        int vok = 1;
+        int32_t maxd = 0;
+        for (int pass = 0; pass < 2 && vok; pass++) {
+            pxn_test_data_sh(s, 9);                       /* +-4 (the z values a model gives fit in 32 bits) */
+            const int T = pass ? 47 : 20;
+            pxn_dot d = {PXN_T_W(s), PXN_T_X(s), T, PXN_S * 4, PXN_T_O(s, 0), 8};
+            pxn_dot1_c(&d);
+            if (pxn_vdot(PXN_T_W(s), PXN_T_X(s), T, PXN_S * 4, PXN_T_O(s, 1), 8)) { vok = 0; maxd = 99999; break; }
+            for (int f = 0; f < 8; f++) {
+                int32_t df = PXN_T_O(s, 0)[3 * f] - PXN_T_O(s, 1)[3 * f];
+                if (df < 0) df = -df;
+                if (df > maxd) maxd = df;
+            }
+        }
+        pxn_vec_diff = maxd;
+        pxn_vec_ok = (uint8_t)(vok && maxd <= 1);
+    }
     return ok;
 #else
     (void)scratch;
@@ -409,7 +466,8 @@ uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int
     uint32_t t0 = ticks();
     for (int r = 0; r < reps; r++) {
 #if PXN_ASM
-        if (part == 0) pxn_dot3x4_asm(&d);
+        if (part == 3) { for (int o = 0; o < 3; o++) pxn_vdot(d.w + 20 * o, pxn_x, 20, PXN_S * 4, pxn_z + o, 32); }
+        else if (part == 0) pxn_dot3x4_asm(&d);
         else if (part == 1) for (int k = 0; k < 6; k++) pxn_gcopy_asm(pxn_x + 2 + 3 * k, ring + 3 * k, 32, PXN_S * 4);
         else pxn_post_asm(&p);
 #else
@@ -570,6 +628,13 @@ static void pxn_gather(const int32_t *ring, int32_t len, int32_t w, int K, int d
 /* rows weight rows (1, or the 3 of a layer, contiguous) over the n X rows -> pxn_z */
 static void pxn_rows(const int32_t *w, int T, int rows, int n)
 {
+#if PXN_ASM
+    if (pxn_vec_ok) {
+        for (int o = 0; o < rows; o++)
+            if (pxn_vdot(w + o * T, pxn_x, T, PXN_S * 4, pxn_z + o, n)) { pxn_vec_ok = 0; break; }
+        if (pxn_vec_ok) return;
+    }
+#endif
     const int n4 = rows == PXN_C ? n & ~3 : 0;
     pxn_dot d = {w, pxn_x, T, PXN_S * 4, pxn_z, n4 >> 2};
     if (n4) pxn_dot3x4(&d);
