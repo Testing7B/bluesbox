@@ -1,0 +1,22 @@
+name: build
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the container, the firmware and the installer packages
+        run: node tools/op.mjs package
+      - name: Host tests
+        run: node tools/op.mjs test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openpocket-build
+          path: |
+            firmware/openpocket.bin
+            docs/firmware/*.fwsc
+            docs/firmware/manifest.json
+            build/SHA256SUMS
