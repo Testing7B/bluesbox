@@ -60,7 +60,8 @@ int pxn_selftest(int32_t *scratch);
 int pxn_asm_in_use(void);
 /* measurements for the firmware's bench screen (px_audio.h, BENCH_AT_BOOT): ticks, see px_nam.c */
 uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps);
-uint32_t pxn_bench_ops(int kind, int xip, const int32_t *buf, int reps, uint32_t (*ticks)(void));
+uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
+uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */
 void pxn_reset(pxn_model *m);
 /* n frames (any n): in -> out, float, in place allowed */

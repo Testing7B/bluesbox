@@ -332,29 +332,25 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* one instruction kind, 32 x 1024 times: cycles each (x 100) */
+    /* cycles at 360 MHz (x 100) for one loop of each instruction kind, then the parts of a NAM layer */
     int32_t *pool = px_nam_scratch();
-    for (int i = 0; i < 1024; i++) { b_ram[i] = i * 3 - 1500; pool[i] = i * 5 - 2000; }
-    static const char *K[4] = {"FMAC", "LD", "RMAC", "FMAC2"};
-    for (int xip = 0; xip < 2; xip++) {
-        for (int dat = 0; dat < (xip ? 1 : 2); dat++) {
-            l[0] = 0; b_str(l, xip ? "FLASH " : dat ? "RAM/P " : "RAM/R ");
-            for (int k = 0; k < 4; k++) {
-                uint32_t tk = pxn_bench_ops(k, xip, dat ? pool : b_ram, 32, b_ticks);
-                b_str(l, K[k]); b_str(l, " "); b_fix2(l, tk * 15u * 100u / (32u * 1024u)); b_str(l, k < 3 ? " " : "");
-            }
-            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-            fm1_wdt_feed();
-        }
+    for (int i = 0; i < 1024; i++) b_ram[i] = i * 3 - 1500;
+    static const char *K[8] = {"LD ", "LDD ", "LDM3 ", "ST ", "RMAC ", "PAIR ", "FMAC ", "RMAC2 "};
+    for (int k = 0; k < 8; k++) {
+        if (k % 3 == 0) l[0] = 0;
+        int n = 1;
+        uint32_t tk = pxn_bench_ops(k, b_ram, 32, &n, b_ticks);
+        b_str(l, K[k]); b_fix2(l, tk * 15u * 100u / (32u * (uint32_t)n)); b_str(l, " ");
+        if (k % 3 == 2 || k == 7) { lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12; }
     }
-    /* one kernel-6 layer, 32 frames (gather, 3 rows, post: 1920 multiply-adds): cycles per multiply-add (x 100); data in RAM / in POOL */
-    l[0] = 0; b_str(l, "LAYER CYC/MAC HAND ");
-    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u)); b_str(l, "/");
-    b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u));
+    fm1_wdt_feed();
+    l[0] = 0; b_str(l, "DOT/MAC ");
+    b_fix2(l, pxn_bench_part(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u));
+    b_str(l, " GATH/F "); b_fix2(l, pxn_bench_part(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 192u));
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-    l[0] = 0; b_str(l, "              C    ");
-    b_fix2(l, pxn_bench_layer(b_ram, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u)); b_str(l, "/");
-    b_fix2(l, pxn_bench_layer(pool, b_ticks, 0, 64) * 15u * 100u / (64u * 1920u));
+    l[0] = 0; b_str(l, "POST/F ");
+    b_fix2(l, pxn_bench_part(pool, b_ticks, 2, 64) * 15u * 100u / (64u * 32u));
+    b_str(l, " LAYER/MAC "); b_fix2(l, pxn_bench_layer(pool, b_ticks, 1, 64) * 15u * 100u / (64u * 1920u));
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 14;
     fm1_wdt_feed();
     /* whole presets: % of the real-time budget */

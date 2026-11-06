@@ -397,40 +397,66 @@ uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, in
     return ticks() - t0;
 }
 
+/* ticks for `reps` runs of one part of that layer work, by hand (C without hand code): 0 the dot (3 rows of 20 for
+ * 32 frames: 1,920 multiply-adds), 1 the gather (6 taps x 32 frames), 2 the post (32 frames, with the residual) */
+uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps)
+{
+    static int32_t ring[3 * 64];
+    int32_t *s = scratch;
+    pxn_test_data(s);
+    pxn_dot d = {PXN_T_W(s), pxn_x, 20, PXN_S * 4, pxn_z, 8};
+    pxn_post p = {pxn_z, pxn_x + 17, PXN_S * 4, PXN_T_RR(s), pxn_hs, ring, 32};
+    uint32_t t0 = ticks();
+    for (int r = 0; r < reps; r++) {
 #if PXN_ASM
-/* one instruction n times in the hardware loop (n words read from p): the cost of each kind of instruction, from RAM
- * (_r) and from the flash (_x). fmac: acc += [p++] * r; ld: r = [p++]; rmac: acc += r * r; fmac2: two accumulators
- * from two pointers (p and p + 2 KB) in turn. */
-#define PXN_UB(name, body, pre)                                                                                   \
+        if (part == 0) pxn_dot3x4_asm(&d);
+        else if (part == 1) for (int k = 0; k < 6; k++) pxn_gcopy_asm(pxn_x + 2 + 3 * k, ring + 3 * k, 32, PXN_S * 4);
+        else pxn_post_asm(&p);
+#else
+        if (part == 0) pxn_dot3x4_c(&d);
+        else if (part == 1) for (int k = 0; k < 6; k++) pxn_gcopy_c(pxn_x + 2 + 3 * k, ring + 3 * k, 32, PXN_S * 4);
+        else pxn_post_c(&p);
+#endif
+    }
+    return ticks() - t0;
+}
+
+#if PXN_ASM
+/* one instruction (or pair) n times in the hardware loop: what each kind costs on this CPU */
+#define PXN_UB(name, body)                                                                                        \
     "\t.global " name "\n" name ":\n\t[--sp] = {rets, r15-r4}\n"                                              \
-    "\tr4 = 0\n\tr5 = 0\n\tr6 = 0\n\tr7 = 0\n\tr3 = 5\n\tr10 = 3\n\tr12 = 4\n\tr2 = r0\n\tr11 = r1\n" pre      \
+    "\tr4 = 0\n\tr5 = 0\n\tr6 = 0\n\tr7 = 0\n\tr3 = 5\n\tr10 = 3\n\tr12 = 4\n\tr2 = r0\n\tr11 = r1\n"          \
     ".L" name ":\n\trep r11 {\n" body "\t}\n\tif (r11 != 0) goto .L" name "\n"                                  \
     "\t{pc, r15-r4} = [sp++]\n"
-#define PXN_UB_SET(sfx)                                                                                           \
-    PXN_UB("pxn_ub_fmac" sfx, "\tr5_r4 += [r2 ++= r12]*r10 (s)\n", "")                                         \
-    PXN_UB("pxn_ub_ld" sfx, "\tr3 = [r2++=4]\n", "")                                                            \
-    PXN_UB("pxn_ub_rmac" sfx, "\tr5_r4 += r3 * r10 (s)\n", "")                                                  \
-    PXN_UB("pxn_ub_fmac2" sfx, "\tr5_r4 += [r2 ++= r12]*r10 (s)\n\tr7_r6 += [r8 ++= r12]*r10 (s)\n",          \
-           "\tr8 = r0 + 2048\n\tr11 = r1 >> 1\n")
-__asm__("\t.section .ram_text,\"ax\"\n" PXN_UB_SET("_r") "\t.previous\n"
-        "\t.text\n" PXN_UB_SET("_x"));
-void pxn_ub_fmac_r(const int32_t *, int), pxn_ub_ld_r(const int32_t *, int), pxn_ub_rmac_r(const int32_t *, int),
-    pxn_ub_fmac2_r(const int32_t *, int), pxn_ub_fmac_x(const int32_t *, int), pxn_ub_ld_x(const int32_t *, int),
-    pxn_ub_rmac_x(const int32_t *, int), pxn_ub_fmac2_x(const int32_t *, int);
+__asm__("\t.text\n"
+        PXN_UB("pxn_ub_ld", "\tr3 = [r2++=4]\n")
+        PXN_UB("pxn_ub_ldd", "\tr5_r4 = d[r2++=8]\n")
+        PXN_UB("pxn_ub_ldm3", "\t{r6-r4} = [r2++]\n")
+        PXN_UB("pxn_ub_st", "\t[r2++=4] = r3\n")
+        PXN_UB("pxn_ub_rmac", "\tr5_r4 += r3 * r10 (s)\n")
+        PXN_UB("pxn_ub_pair", "\tr5_r4 += r3 * r10 (s)  #  r3 = [r2++=4]\n")
+        PXN_UB("pxn_ub_fmac", "\tr5_r4 += [r2 ++= r12]*r10 (s)\n")
+        PXN_UB("pxn_ub_rmac2", "\tr5_r4 += r3 * r10 (s)\n\tr7_r6 += r3 * r10 (s)\n"));
+void pxn_ub_ld(const int32_t *, int), pxn_ub_ldd(const int32_t *, int), pxn_ub_ldm3(const int32_t *, int),
+    pxn_ub_st(const int32_t *, int), pxn_ub_rmac(const int32_t *, int), pxn_ub_pair(const int32_t *, int),
+    pxn_ub_fmac(const int32_t *, int), pxn_ub_rmac2(const int32_t *, int);
 #endif
-/* ticks for reps x 1024 instructions of `kind` (0 fmac, 1 ld, 2 rmac, 3 fmac2), from RAM (xip 0) or the flash (1);
- * buf: 1024 words (4 KB) of data. 0 where there is no hand-written code. */
-uint32_t pxn_bench_ops(int kind, int xip, const int32_t *buf, int reps, uint32_t (*ticks)(void))
+/* ticks for reps x n loops of `kind`: 0 load, 1 64-bit load, 2 3-word load, 3 store, 4 multiply-add (registers),
+ * 5 multiply-add paired with a load, 6 multiply-add with its load, 7 two multiply-adds; buf: 1024 words. n: the
+ * loop count used (written). 0 without hand code. */
+uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void))
 {
 #if PXN_ASM
-    static void (*const F[2][4])(const int32_t *, int) = {
-        {pxn_ub_fmac_r, pxn_ub_ld_r, pxn_ub_rmac_r, pxn_ub_fmac2_r}, {pxn_ub_fmac_x, pxn_ub_ld_x, pxn_ub_rmac_x, pxn_ub_fmac2_x}};
-    void (*volatile f)(const int32_t *, int) = F[xip ? 1 : 0][kind & 3];   /* through a pointer: RAM code */
+    static void (*const F[8])(const int32_t *, int) = {pxn_ub_ld, pxn_ub_ldd, pxn_ub_ldm3, pxn_ub_st,
+                                                        pxn_ub_rmac, pxn_ub_pair, pxn_ub_fmac, pxn_ub_rmac2};
+    static const int N[8] = {1024, 512, 340, 1024, 1024, 1024, 1024, 1024};
+    *n = N[kind & 7];
     uint32_t t0 = ticks();
-    for (int r = 0; r < reps; r++) f(buf, 1024);
+    for (int r = 0; r < reps; r++) F[kind & 7](buf, *n);
     return ticks() - t0;
 #else
-    (void)kind; (void)xip; (void)buf; (void)reps; (void)ticks;
+    (void)kind; (void)buf; (void)reps; (void)ticks;
+    *n = 1;
     return 0;
 #endif
 }
