@@ -7,6 +7,7 @@
 #  - packages: tools/pxpkg.py rebuilds the official PocketX_016 app area byte for byte (needs the official file)
 #  - installer: docs/pxota.js + docs/pxpkg.js against a simulated pedal running the real update code (ota.c, ldr_core.c)
 #  - flasher: tools/flash.mjs (node tools/op.mjs flash) against the same simulated pedal: update, dry run, wrong model, damaged package
+#  - hosted simulator: tools/sim.mjs driven over HTTP (controls, screen, flash file, SysEx, the Web MIDI shim)
 #  - page: docs/index.html in headless Chromium (needs Playwright: npm i playwright && npx playwright install chromium)
 set -e
 cd "$(dirname "$0")/.."
@@ -28,6 +29,8 @@ echo "== flasher (tools/flash.mjs)"
 node tests/test_flash.mjs
 echo "== build entry point (tools/op.mjs)"
 node tests/test_op.mjs
+echo "== hosted simulator (tools/sim.mjs)"
+node tests/test_sim.mjs
 echo "== editor"
 $CC -O1 -Wall -Wno-unused-function -o build/edsim tests/edsim.c engine/px_dsp.c firmware/px_math.c -lm
 node tests/test_editor.mjs
