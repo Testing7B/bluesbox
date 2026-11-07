@@ -382,11 +382,10 @@ static void audio_bench(void)
     for (uint32_t i = 0; i < 100000u; i++) fa = fa * fb + fc;
     uint32_t tf = fm1_ticks() - t0;
     fm1_wdt_feed();
-    l[0] = 0; b_str(l, "INT 100K "); b_num(l, ti / 24u); b_str(l, " US  FLT "); b_num(l, tf / 24u); b_str(l, " US");
-    lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+    (void)ti; (void)tf;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 20: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 21: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -432,24 +431,23 @@ static void audio_bench(void)
 #undef B_P
     }
     fm1_wdt_feed();
-    /* whole presets: % of the real-time budget */
+    /* diagnostic 21: the network alone, then every factory preset as the audio interrupt runs it (with a NAM amp:
+     * pipelined on the two cores; otherwise the whole chain on one core), % of real time: green up to 80, yellow up
+     * to 85, red above (the safety bypass: 93 pipelined, 85 otherwise) */
     px_preset_t pp;
-    for (int c = 0; c < 4; c++) {
-        static const char *N[4] = {"NAM AMP ONLY    ", "01 TWIN CLEAN   ", "18 5150 RHYTHM  ", "18 FITTED 5150  "};
-        px_preset_factory(&pp, c == 1 ? 0 : 17);
-        if (c == 0) { for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0; pp.on[PX_B_AMP] = 1; }
-        if (c == 3) { pp.type[PX_B_AMP] = PX_AMP_5150; for (int k = 0; k < PX_NPAR; k++) pp.p[PX_B_AMP][k] = 50; }
+    px_preset_factory(&pp, 17);
+    for (int z = 0; z < PX_NBLK; z++) pp.on[z] = 0;
+    pp.on[PX_B_AMP] = 1;
+    {
         uint32_t pct = b_engine(&pp);
-        l[0] = 0; b_str(l, N[c]); b_num(l, pct); b_str(l, " %");
+        l[0] = 0; b_str(l, "NAM AMP ONLY "); b_num(l, pct); b_str(l, " %  PRESETS:");
         lcd_text(4, y, l, pct <= 85u ? GRN : RED, UI_BG, 1); y += 12;
     }
+    for (int f = 0; f < 24; f++) {
+        px_preset_factory(&pp, f);
+        uint32_t pct = b_engine(&pp);
 #if DSP_CPU1
-    {   /* diagnostic 19: the same two presets pipelined on the two cores (as the audio interrupt runs them) */
-        l[0] = 0; b_str(l, "PIPE 01 ");
-        for (int c = 0; c < 2; c++) {
-            px_preset_factory(&pp, c ? 17 : 0);
-            px_engine_set(&g_eng, &pp);
-            for (uint32_t i = 0; i < A_FR; i++) a_in[i] = 0.3f * sinf((float)i * 0.0157f) + 0.05f * sinf((float)i * 0.11f);
+        if (px_nam_dual(&g_eng)) {
             a_nbv = 0;
             uint32_t dt = 0;
             for (int r = 0; r < 12; r++) {
@@ -457,29 +455,16 @@ static void audio_bench(void)
                 dsp_pipe_run(1);
                 if (r >= 4) dt += fm1_ticks() - t0;
             }
+            a_nbv = 0;
             fm1_wdt_feed();
-            if (c) b_str(l, "% 18 ");
-            b_num(l, dt / 8u * 100u / A_BUDGET);
+            pct = dt / 8u * 100u / A_BUDGET;
         }
-        b_str(l, "%");
-        lcd_text(4, y, l, GRN, UI_BG, 1); y += 12;
-        a_nbv = 0;
-    }
 #endif
-    {   /* diagnostic 14: each block of 18 5150 RHYTHM and 01 TWIN CLEAN alone (AMP off), % of real time */
-        static const char *BN[PX_NBLK] = {"GT", "CP", "PI", "SF", "DR", "AM", "CB", "EQ", "MO", "DL", "RV", "SY"};
-        for (int c = 0; c < 2; c++) {               /* (diagnostic 18: the float filters, faster than integer ones) */
-            px_preset_t q;
-            px_preset_factory(&q, c & 1 ? 0 : 17);
-            l[0] = 0; b_str(l, c & 1 ? "01" : "18"); b_str(l, ":");
-            for (int z = 0; z < PX_NBLK; z++) {
-                if (!q.on[z] || z == PX_B_AMP) continue;
-                px_preset_t r = q;
-                for (int k = 0; k < PX_NBLK; k++) r.on[k] = k == z;
-                b_str(l, " "); b_str(l, BN[z]); b_num(l, b_engine(&r));
-            }
-            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-        }
+        l[0] = 0;
+        if (f < 9) b_str(l, "0");
+        b_num(l, (uint32_t)f + 1u); b_str(l, " "); b_num(l, pct);
+        lcd_text(4 + (uint32_t)(f % 5) * 48u, y, l, pct <= 80u ? GRN : pct <= 85u ? YEL : RED, UI_BG, 1);
+        if (f % 5 == 4 || f == 23) y += 12;
     }
     lcd_text(4, y + 4, "100% = REAL TIME. PLEASE TAKE A PHOTO", UI_ACC, UI_BG, 1);
     for (int i = 0; i < 120; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
