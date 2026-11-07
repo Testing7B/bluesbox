@@ -74,7 +74,7 @@ static void reset(void)
 
 int main(void)
 {
-    (void)mid_bt;                                   /* (the MIDI page's Bluetooth state: drawn by ui.h, not used here) */
+    (void)mid_bt; (void)mid_bt_rate;                /* (the MIDI page's Bluetooth state: drawn by ui.h, not used here) */
     reset();
     midi_enqueue(pc(0, 12), 1);
     px_midi_service();

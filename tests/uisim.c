@@ -99,7 +99,7 @@ int main(int argc, char **argv)
     midi_open(); midi_draw(); shot(d, "midi_defaults");
     midi_knob(1); midi_knob(1); midi_draw(); shot(d, "midi_channel_2");
     midi_push(); midi_knob(1); mid_usb_up = 1; mid_last[0] = PXM_CC; mid_last[1] = 25; mid_last[2] = 127; midi_draw(); shot(d, "midi_send_off_host_cc");
-    midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; mid_bt = PXM_BT_WAIT; midi_draw(); shot(d, "midi_clock_on_pc");
+    midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; mid_bt = PXM_BT_WAIT; mid_bt_rate[0] = 31; mid_bt_rate[2] = 12; midi_draw(); shot(d, "midi_clock_on_pc");
     midi_push(); mid_bt = PXM_BT_LINK; midi_draw(); shot(d, "midi_bluetooth_connected");
     midi_knob(1); midi_draw(); shot(d, "midi_bluetooth_off_after_restart");
     if (mid_cfg.ble) { printf("midi: the BLUETOOTH row must switch Bluetooth off\n"); return 1; }

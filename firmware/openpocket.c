@@ -671,6 +671,12 @@ static void ble_service(void)           /* every loop: the controller's tasks, a
                                          * competes with the DSP for the cache */
         t_poll = t;
         ble_test_poll();
+        static uint32_t t_rate, e0, r0, m0;
+        if (t - t_rate >= 1000u) {      /* the activity a second, for the MIDI page */
+            mid_bt_rate[0] = (uint16_t)(ble_cnt_irq_ev - e0); mid_bt_rate[1] = (uint16_t)(ble_cnt_irq_rx - r0);
+            mid_bt_rate[2] = (uint16_t)(ble_cnt_timer - m0);
+            e0 = ble_cnt_irq_ev; r0 = ble_cnt_irq_rx; m0 = ble_cnt_timer; t_rate = t;
+        }
         if (ble_bg.starting && (ble_state == BLE_ADV || ble_state == BLE_FAILED)) ble_bg.starting = 0;   /* it did not hang */
     }
     if (mi_ble_retry) {                 /* BLUETOOTH turned (back) on by hand on the MIDI page: try again, even after a crash */

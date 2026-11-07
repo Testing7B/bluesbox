@@ -44,6 +44,7 @@ static uint8_t mid_last[3];             /* the last message received: type (PXM_
  * (advertising), a device connected, failed, left off since a start that did not finish (until a power cycle), not built in */
 enum { PXM_BT_OFF, PXM_BT_STARTING, PXM_BT_WAIT, PXM_BT_LINK, PXM_BT_FAILED, PXM_BT_SKIPPED, PXM_BT_NONE };
 static uint8_t mid_bt;
+static uint16_t mid_bt_rate[3];         /* the radio's activity a second (diagnostic): event and receive interrupts, timers */
 static uint32_t px_midi_tx_chan(const px_midi_cfg_t *c) { return c->chan ? (uint32_t)c->chan - 1u : 0u; }
 
 /* ---- the Control Change map (docs/MIDI.md) ---- */

@@ -483,7 +483,8 @@ static void midi_open(void)
 static void midi_draw(void)
 {
     uint32_t h = (mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
-                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23) ^ (uint32_t)mid_bt << 29;
+                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23) ^ (uint32_t)mid_bt << 29 ^
+                 (uint32_t)mid_bt_rate[0] * 0x9E3779B1u ^ (uint32_t)mid_bt_rate[1] * 0x85EBCA6Bu ^ (uint32_t)mid_bt_rate[2] * 0xC2B2AE35u;
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
     static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY", "BLUETOOTH"};
@@ -501,7 +502,7 @@ static void midi_draw(void)
         ft_box(8, y + 6u, 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
         ft_box(140, y + 2u, 92, v[r], &FT_MD, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
     }
-    ft_box(0, 156, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
+    ft_box(0, 152, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
     {   /* Bluetooth: what the radio does now (the setting above takes effect when the page closes; off needs a restart) */
         const char *t = "BT: OFF";
         uint16_t c = UI_DIM;
@@ -514,13 +515,19 @@ static void midi_draw(void)
         else if (mid_bt == PXM_BT_WAIT) t = "BT: VISIBLE AS \"OPENPOCKET\"";
         else if (mid_bt == PXM_BT_LINK) { t = "BT: DEVICE CONNECTED"; c = GRN; }
         else if (mid_cfg.ble) t = "BT: ON WHEN YOU LEAVE";
-        ft_box(0, 174, 240, t, &FT_SM, c, UI_BG, 1);
+        ft_box(0, 168, 240, t, &FT_SM, c, UI_BG, 1);
+        char d[40]; d[0] = 0;                  /* the radio's activity a second (diagnostic) */
+        if (mid_bt >= PXM_BT_STARTING && mid_bt <= PXM_BT_FAILED) {
+            b_str(d, "IRQ "); b_num(d, mid_bt_rate[0]); b_str(d, " RX "); b_num(d, mid_bt_rate[1]);
+            b_str(d, " TIMERS "); b_num(d, mid_bt_rate[2]); b_str(d, " /S");
+        }
+        ft_box(0, 184, 240, d, &FT_SM, UI_DIM, UI_BG, 1);
     }
     char l[24]; l[0] = 0;
     if (mid_last[0] == PXM_PC) { b_str(l, "LAST: PC "); b_num(l, mid_last[1] + 1u); }
     else if (mid_last[0] == PXM_CC) { b_str(l, "LAST: CC "); b_num(l, mid_last[1]); b_str(l, " = "); b_num(l, mid_last[2]); }
     else b_str(l, "LAST: NONE");
-    ft_box(0, 194, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+    ft_box(0, 200, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
 }
 static void midi_close(void)
 {
