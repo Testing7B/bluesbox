@@ -681,7 +681,7 @@ static void app_main(void)
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
-        if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "C0" or BYP */
+        if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "2C" (NAM pipelined), "C0" or BYP */
             static uint32_t t_cpu;
             if (now - t_cpu >= 500u) {
                 t_cpu = now;
@@ -690,6 +690,7 @@ static void app_main(void)
                 if (l > 999u) l = 999u;
                 if (safe) { c[i++]='S'; c[i++]='A'; c[i++]='F'; c[i++]='E'; c[i++]=' '; }
                 else if (a_bypass) { c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' '; }
+                else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);

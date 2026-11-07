@@ -35,7 +35,12 @@
 - With a NAM amp the two cores work as a pipeline: CPU1 runs the effects after the amp on the previous block while
   CPU0 runs the effects before it, then both run the network. This adds one block of latency (2.9 ms).
 - The network reads each layer's history without any per-tap position arithmetic: every ring's first frames are
-  mirrored after its end.
+  mirrored after its end, and each layer's whole block runs in one hand-written call.
+- In the pipeline CPU1 goes straight from its effects to the network and takes the last frames of each network
+  block; CPU0 takes more frames when CPU1 comes late, so neither core waits for the other.
+- **Load on the pedal** (% of real time, measured): the network alone 66%, the 23 factory presets with a NAM amp
+  69–90% (most 75–83%). The status corner shows `2C` and the load while both cores run a NAM preset. Above 93% for
+  8 blocks in a row the pedal bypasses the effects (`BYP`) until the next change, as before (85% on one core).
 
 ## For developers
 - Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).

@@ -18,7 +18,7 @@
 #pragma once
 #include <stdint.h>
 #ifndef BENCH_AT_BOOT
-#define BENCH_AT_BOOT 1                                 /* 1 = DSP benchmark screen at boot (v37 diagnostic build: on) */
+#define BENCH_AT_BOOT 0                                 /* 1 = DSP benchmark screen at boot (diagnostics) */
 #endif
 #include <math.h>
 #include "px_dsp.h"
@@ -383,7 +383,7 @@ static void b_fix2(char *d, uint32_t v100)           /* 123 -> "1.23" */
 }
 static uint32_t b_ticks(void) { return fm1_ticks(); }
 /* v37: what the NAM network costs on the pedal, piece by piece (cycles at 360 MHz: ticks x 15). Off by default:
- * BENCH_AT_BOOT=1 (build.sh: OP_BENCH=1) shows it for 12 s at boot. */
+ * BENCH_AT_BOOT 1 (at the top of this file) shows it for 12 s at boot. */
 static void audio_bench(void)
 {
 #if BENCH_AT_BOOT
