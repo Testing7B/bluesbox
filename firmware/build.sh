@@ -1,8 +1,8 @@
 #!/bin/sh
 # Build OpenPocket -> firmware/openpocket.bin (app), build/loader/ota.bin (update loader),
 #                    docs/firmware/*.fwsc (packages for the web installer)   (in the container: tools/op.mjs build)
-# OP_BLE=1 sh firmware/build.sh builds the advertise-only Bluetooth test image instead (docs/BLE-TEST.md): the same
-#   firmware plus the JieLi controller (third_party/jieli-ble) -> firmware/openpocket-ble.bin and build/ble/*.fwsc.
+# OP_BLE=1 sh firmware/build.sh builds the Bluetooth MIDI test image instead (docs/BLE-TEST.md): the same
+#   firmware plus the JieLi controller and host (third_party/jieli-ble) -> firmware/openpocket-ble.bin and build/ble/*.fwsc.
 #   Nothing of the normal build's outputs is touched.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -136,12 +136,37 @@ static char *ble__hex(char *o, uint32_t v)
     return o;
 }
 
+/* the link line (out: 128 bytes): "LINK 1 n2 A A1B2C3D4E5F6 I48 L0 T400 W7 P1 D0 LAST 2 24 127 STUB 3 lmp_hci_reset". LINK 1 while connected; n links so far;
+ * A the peer's address; I interval (1.25 ms), L latency, T timeout (10 ms) of the link; W writes to the MIDI characteristic; P Just Works pairings accepted; D the
+ * reason of the last disconnection; LAST the last message (PXM_PC or PXM_CC, data 1, data 2); STUB the calls of the stand-ins and the last one's name */
+static void ble_link_text(char *out, uint32_t up, uint32_t links, const uint8_t *peer, uint32_t ivl, uint32_t lat, uint32_t tmo, uint32_t writes, uint32_t pairs,
+                          uint32_t reason, const uint8_t *last, uint32_t stubs, const char *stub)
+{
+    char *o = out;
+    o = ble__put(o, "LINK "); o = ble__dec(o, up);
+    o = ble__put(o, " n"); o = ble__dec(o, links);
+    o = ble__put(o, " A ");
+    for (int i = 5; i >= 0; i--) { *o++ = "0123456789ABCDEF"[peer[i] >> 4]; *o++ = "0123456789ABCDEF"[peer[i] & 15u]; }
+    o = ble__put(o, " I"); o = ble__dec(o, ivl);
+    o = ble__put(o, " L"); o = ble__dec(o, lat);
+    o = ble__put(o, " T"); o = ble__dec(o, tmo);
+    o = ble__put(o, " W"); o = ble__dec(o, writes);
+    o = ble__put(o, " P"); o = ble__dec(o, pairs);
+    o = ble__put(o, " D"); o = ble__hex(o, reason);
+    o = ble__put(o, " LAST "); o = ble__dec(o, last[0]);
+    o = ble__put(o, " "); o = ble__dec(o, last[1]);
+    o = ble__put(o, " "); o = ble__dec(o, last[2]);
+    o = ble__put(o, " STUB "); o = ble__dec(o, stubs);
+    if (stub) { o = ble__put(o, " "); o = ble__put(o, stub); }
+    *o = 0;
+}
+
 /* the advertising line, the numbers first so that they are on the screen before the marquee moves:
- * "ADV i12 e5 r0 t340 s0 CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)
+ * "ADV i12 e5 r0 t340 s0 V 7 A3 12AB CON 2001 IEN 101 IPND 0 STAT 80 IC45 3 IC29 3 BEN 1" (out: 96 bytes; the registers are read by the caller)\n *   V  the stored radio records: bit mask of VM 106, 107, 108 found, the active VM area (flash address / 4096, 0 = none), the first two bytes of VM 106
  *   i interrupts 45   e HCI packets returned   r interrupts 29   t library timers   s slot-timer stand-in calls
  *   CON/IEN/IPND/STAT baseband 0x28000/28/30/38   IC45, IC29 the interrupt configuration nibble (bit 0 = enabled, bits 3:1 =
  *   priority; 0 = the line is off)   BEN the BLE block enable 0x2FC80 (bit 0) */
-static void ble_adv_text(char *out, uint32_t con, uint32_t ien, uint32_t ipnd, uint32_t stat, uint32_t ic45, uint32_t ic29, uint32_t ben)
+static void ble_adv_text(char *out, uint32_t vmhave, uint32_t vmarea, uint32_t vmtrim, uint32_t con, uint32_t ien, uint32_t ipnd, uint32_t stat, uint32_t ic45, uint32_t ic29, uint32_t ben)
 {
     char *o = out;
     o = ble__put(o, "ADV i"); o = ble__dec(o, ble_cnt_irq_ev);
@@ -149,6 +174,9 @@ static void ble_adv_text(char *out, uint32_t con, uint32_t ien, uint32_t ipnd, u
     o = ble__put(o, " r"); o = ble__dec(o, ble_cnt_irq_rx);
     o = ble__put(o, " t"); o = ble__dec(o, ble_cnt_timer);
     o = ble__put(o, " s"); o = ble__dec(o, ble_cnt_slot);
+    o = ble__put(o, " V "); o = ble__hex(o, vmhave);
+    o = ble__put(o, " "); o = ble__hex(o, vmarea);
+    o = ble__put(o, " "); o = ble__hex(o, vmtrim);
     o = ble__put(o, " CON "); o = ble__hex(o, con);
     o = ble__put(o, " IEN "); o = ble__hex(o, ien);
     o = ble__put(o, " IPND "); o = ble__hex(o, ipnd);

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* Controller configuration for the advertise-only image: the values the JieLi SDK's own
+/* Controller and host configuration of the Bluetooth test image: the values the JieLi SDK's own
  * apps/common/config/log_config/lib_btctrler_config.c (fw-AC79_AIoT_SDK V1.2.0, Apache-2.0, see
- * third_party/jieli-ble/) gives a Bluetooth LE only build, reduced to LE advertising and one slave link. The names and
+ * third_party/jieli-ble/) gives a Bluetooth LE only build, reduced to LE advertising, one slave link and a GATT server. The names and
  * types are the library's; the values for features we do not build are the SDK's defaults. */
 #include <stdint.h>
 
@@ -42,7 +42,7 @@ const int CONFIG_TEST_FCC_CODE = 0;
 const int CONFIG_TEST_DUT_ONLY_BOX_CODE = 0;
 const int CONFIG_BREDR_INQUIRY = 0;
 
-const uint64_t config_btctler_le_features = 0;                /* no encryption: no connections in this image */
+const uint64_t config_btctler_le_features = 1;                /* LE_ENCRYPTION (LL_FEAT_ENCRYPTION): pairing */
 const int config_btctler_le_roles = LE_ADV | LE_SLAVE;
 const int config_btctler_le_afh_en = 0;
 const int config_btctler_le_hw_ram_use_static = 1;
@@ -58,3 +58,15 @@ const int config_btctler_le_slave_conn_update_winden = 2500;
 const int config_btctler_single_carrier_en = 0;
 const int sniff_support_reset_anchor_point = 0;
 const int config_bt_security_vulnerability = 0;
+
+/* the host (lib_btstack_config.c, bt_profile_config.c): LE only, one link, a GATT server, Just Works pairing */
+const int config_stack_modules = BIT(2);                      /* BT_BTSTACK_LE */
+const int config_le_hci_connection_num = 1;
+const int config_le_sm_support_enable = 1;
+const int config_le_gatt_server_num = 1;
+const int config_le_gatt_client_num = 0;
+const int config_le_sm_sub_sc_enable = 0;
+const int config_le_sm_sub_sc_bridge_edr_enable = 0;
+const int CONFIG_BTSTACK_BIG_FLASH_ENABLE = 1;
+const int CONFIG_BTSTACK_SUPPORT_AAC = 0;
+const int config_rcsp_stack_enable = 0;

@@ -28,7 +28,7 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 | --- | --- |
 | `make doctor` | check Node, Docker and the image, one line each (exit 1 when the build cannot work) |
 | `make build` | `firmware/build.sh` in the container: `firmware/openpocket.bin`, the update loader, `docs/firmware/PocketX_9NN.fwsc`, `BlackBox_9NN.fwsc`, `manifest.json` |
-| `make ble` | the advertise-only Bluetooth test image (`OP_BLE=1 firmware/build.sh`): `firmware/openpocket-ble.bin`, `build/ble/*.fwsc`. Own target, own output folders; [BLE-TEST.md](BLE-TEST.md) |
+| `make ble` | the Bluetooth MIDI test image (`OP_BLE=1 firmware/build.sh`): `firmware/openpocket-ble.bin`, `build/ble/*.fwsc`. Own target, own output folders; [BLE-TEST.md](BLE-TEST.md) |
 | `make serve-ble` | `make serve` with `build/ble/` as the installer's package folder, to flash the test image |
 | `make package` | `build`, then `build/SHA256SUMS` |
 | `make package-test` | the MIDI test channel (`OP_CHANNEL=midi-test`): `firmware/openpocket-midi-test.bin` and `docs/firmware/midi-test/` (v37 MIDI TEST, its own `manifest.json`), with `build/SHA256SUMS-midi-test`. The release files are not touched and the installer offers it only with `?channel=midi-test` |
@@ -38,6 +38,7 @@ Apple silicon and other ARM machines Docker emulates it (Rosetta or QEMU); you c
 | `make serve` | the installer and editor on `http://localhost:8765/` (offline install; needs Python 3 on the host) |
 | `make flash ARGS="--dry-run"` | write a built package to a connected pedal over USB MIDI, no browser (`--confirm-flash` really writes; see below) |
 | `make sim [ARGS="--port 9000"]` | the simulated pedal on `http://127.0.0.1:8766/`: screen, controls, state, an HTTP API, the installer and editor pages on a virtual MIDI port (`docs/SIMULATOR.md`; needs a C compiler on the host, no Docker) |
+| `make log ARGS="--follow"` | read a connected pedal's state over USB MIDI, with the fields explained and a verdict (`docs/BLE-TEST.md`, "Reading the pedal from a computer") |
 | `make render IN=guitar.wav [OUT=..] [PRESET=1]` | a DI recording through the engine |
 | `make appimage DUMP=fm1-1.bin` | `fm1-300.bin` for the SD-card recovery |
 | `make rescue` / `make rescue-write` | restore a looping BlackBox from its UBOOT state from a Mac (read-only first; asks for sudo; `ARGS="--package FILE"` for options): `docs/RESCUE.md` |

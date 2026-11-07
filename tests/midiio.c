@@ -56,6 +56,8 @@ static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const 
 { (void)x; (void)y; (void)w; (void)s; (void)f; (void)fg; (void)bg; (void)a; return 0; }
 #define UI_ACC 0
 #define UI_BG 0
+#define OP_BLE_TEST 1
+static uint32_t ms_now(void) { return 0; }
 #include "px_midi_io.h"
 
 static uint32_t cc(uint32_t ch, uint32_t n, uint32_t v) { return 0xBu | (0xB0u | ch) << 8 | n << 16 | v << 24; }
@@ -187,6 +189,33 @@ int main(void)
         mid_cfg.chan = 6; mid_cfg.send = 0;
         midi_persist();
         ok(commits == (int)c0 + 1 && st_midi == px_midi_cfg_pack(&mid_cfg), "leaving the MIDI page writes the settings byte to the store, once");
+    }
+    reset();
+    {
+        uint8_t on[] = {0x80, 0x80, 0xB0, 24, 127}, off[] = {0x80, 0x80, 0xB0, 24, 0}, pc[] = {0x80, 0x80, 0xC0, 7};
+        PRESET.on[PX_B_DRIVE] = 0;
+        px_midi_ble_write(on, sizeof on);
+        px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == 1 && mid_last[0] == PXM_CC && mid_last[1] == 24 && mid_last[2] == 127, "a Bluetooth write switches a block as USB does, and the page shows it");
+        ok(pop_out() == 0, "what came over Bluetooth is not sent back");
+        ui_mode = M_SAVE;
+        px_midi_ble_write(off, sizeof off);
+        px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == 1 && ble_in_r == ble_in_w, "the SAVE page ignores Bluetooth too, and the ring is emptied");
+        ui_mode = M_CHAIN;
+        px_midi_ble_write(pc, sizeof pc);
+        px_midi_service();
+        ok(cur_preset == 7, "a Bluetooth Program Change loads the preset");
+        uint8_t tap[] = {0x80, 0x8E, 0xB1, 12, 0x7F}, tap0[] = {0x80, 0x8E, 0xB1, 12, 0x00};
+        uint32_t was = PRESET.on[PX_B_DRIVE];
+        px_midi_ble_write(tap, sizeof tap); px_midi_ble_write(tap0, sizeof tap0);
+        px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == !was, "a Chocolate tap on CC 12 over Bluetooth flips DRIVE once");
+        load_preset(cur_preset);
+        was = PRESET.on[PX_B_DRIVE];
+        px_midi_ble_write(tap0, sizeof tap0);
+        px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == !was, "after a preset change the toggle flips what the new preset has");
     }
     printf("\n%s\n", failed ? "MIDI glue tests FAILED" : "all MIDI glue tests passed");
     return failed ? 1 : 0;

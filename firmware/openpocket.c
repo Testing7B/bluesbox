@@ -561,6 +561,11 @@ static void nm_changed(uint32_t s)   /* v37: a user model was written or erased:
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
     audio_apply();
 }
+#if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
+#define ED_DIAG_LINES 5u
+#define ED_DIAG_LEN 224u
+static void ed_diag_line(uint32_t i, char *out);
+#endif
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #include "px_midi_io.h"     /* musical MIDI over USB (docs/MIDI.md) */
 #endif
@@ -571,13 +576,23 @@ static void nm_changed(uint32_t s)   /* v37: a user model was written or erased:
 #endif
 #include "led_probe.h"      /* the LED map (issue #8) */
 #endif
-#if OP_BLE_TEST             /* the advertise-only Bluetooth test image (docs/BLE-TEST.md): make ble */
+#if OP_BLE_TEST             /* the Bluetooth MIDI test image (docs/BLE-TEST.md): make ble */
 #include "ble/ble_os.c"
 #include "ble/ble_libc.c"
 #include "ble/ble_cfg.c"
 #include "ble/ble_rf.c"
 #include "ble/ble_stubs.c"
 #include "ble/ble_test.c"
+#include "ble/ble_midi.c"
+#include "ble/ble_diag.h"
+static void ed_diag_line(uint32_t i, char *out)
+{
+    if (i == 0u) ble_boot_text(out, ms_now(), op_diag.safe, op_diag.stage, op_pwr.rst, guard.failed);
+    else if (i == 1u) ble_last_text(out, &ble_last);
+    else if (i == 2u) ble_test_line(out);
+    else if (i == 3u) ble_midi_line(out);
+    else ble_trace_line(out);
+}
 #endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
@@ -676,6 +691,10 @@ static void app_main(void)
             ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
             ft_box(0, 126, 240, OP_VERSION " SAFE MODE", &FT_SM, UI_DIM, UI_BG, 1);
         }
+#if OP_BLE_TEST
+        ble_last = (ble_boot_t){ st != ST_OK || crashed, crashed, st, op_diag.blocks, op_diag.load, op_diag.peak, op_diag.nans, op_diag.c1,
+                                 op_diag.loops, fm1_crash.vec, fm1_crash.pc, fm1_crash.rets, fm1_crash.dbg, fm1_crash.emu, fm1_crash.uptime_ms };
+#endif
         op_diag.crash_seen = cc; op_diag.safe = (uint32_t)safe;
         op_diag.blocks = op_diag.load = op_diag.peak = op_diag.nans = op_diag.c1 = op_diag.loops = 0;
     }
@@ -714,7 +733,7 @@ static void app_main(void)
 #endif
 #if OP_BLE_TEST
     if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
-        ble_test_start();                /* radio on, controller up, one advertisement (the pedal keeps working) */
+        ble_test_start();                /* radio on, controller and host up, advertising (the pedal keeps working) */
 #endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {
@@ -744,11 +763,11 @@ static void app_main(void)
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
 #if OP_BLE_TEST
                 {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
-                    char b[48], full[96]; int k, j;
+                    char b[48], full[128]; int k, j;
                     static uint32_t scroll;
                     ble_test_state(b);
                     if (ble_state == BLE_FAILED || ble_state == BLE_ADV) {   /* longer than the status area: scroll it (ble_status.h) */
-                        if (ble_state == BLE_FAILED) ble_status_full(full); else ble_test_adv_line(full);
+                        if (ble_conn) ble_midi_line(full); else ble_test_line(full);
                         ble_marquee(full, scroll++, 11, b);
                     } else {
                         for (k = 0; b[k]; k++) ;

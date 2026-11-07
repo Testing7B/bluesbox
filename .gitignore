@@ -13,5 +13,6 @@ __pycache__/
 fm1-1.bin
 fm1-300.bin
 *.dump.bin
+*.fcp
 openpocket.bundle
 node_modules/

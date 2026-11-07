@@ -5,8 +5,8 @@ and tells the computer when you change the sound on the pedal. This page is the 
 checklist for the first test is [MIDI-TEST.md](MIDI-TEST.md).
 
 **Status.** Written and tested on a PC (host simulators, see "How it was checked"). Not yet tried on a real pedal. It ships
-as a separate test package (OpenPocket v37 MIDI TEST), not in the normal installer. **Bluetooth MIDI is not included**: see
-"Bluetooth MIDI: why not yet".
+as a separate test package (OpenPocket v37 MIDI TEST), not in the normal installer. **Bluetooth MIDI is only in the separate
+Bluetooth test image** ([BLE-TEST.md](BLE-TEST.md)).
 
 ## What the pedal does
 
@@ -15,7 +15,7 @@ as a separate test package (OpenPocket v37 MIDI TEST), not in the normal install
 | Message | What happens |
 | --- | --- |
 | Program Change 0 to 51 | Loads preset slot 1 to 52, as the footswitches do (unsaved changes are dropped). 52 and above are ignored |
-| Control Change, the map below | Switches a block on or off, picks a block's model, sets one of its 5 settings, or sets the MASTER volume |
+| Control Change, the map below | Switches or flips a block on or off, picks a block's model, sets one of its 5 settings, or sets the MASTER volume |
 | MIDI clock (24 per quarter note), when CLOCK > DELAY is on | Sets the delay TIME to one quarter note |
 | Start, Continue, Stop | Restart the tempo measurement |
 | Everything else | Ignored: notes, pitch bend, bank select (0 and 32), modulation, sustain, "all notes off", system messages |
@@ -55,6 +55,17 @@ last model.
 | DELAY | 29 | 61 | 97 | 102 | 103 | 104 | 105 |
 | REVERB | 30 | 62 | 106 | 107 | 108 | 109 | 110 |
 | SYN | 31 | 63 | 111 | 112 | 113 | 114 | 115 |
+
+**Toggles (footswitches).** CC 8 to 19 flip a block with **value 0** and ignore every other value, so a footswitch that sends
+127 then 0 for a tap flips it once. The pedal holds the state, so a preset change cannot put the footswitch out of step, as
+it can with the on/off numbers above.
+
+| CC | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Block | GATE | COMP | PITCH | SFX | DRIVE | AMP | CAB | EQ | MOD | DELAY | REVERB | SYN |
+
+The order is the order of the blocks above: CC 8 + n flips what CC 20 + n switches. The pedal never sends these numbers: it reports a
+block with its on/off number.
 
 CC **7** (volume) sets the MASTER volume, 0 to 127 to 0 to 100, like the MASTER knob (turning the knob takes over again).
 
@@ -134,37 +145,16 @@ and the pedal's state; `firmware/ui.h` has the MIDI page; `firmware/px_store.h` 
 - **Update and recovery paths.** Unchanged. The tests of the installer, the update loader and the editor run as before.
 - **Never flash from here.** The test package is built and checked on a PC; the captain installs it.
 
-## Bluetooth MIDI: why not yet
+## Bluetooth MIDI
 
-Bluetooth MIDI (the standard BLE MIDI service) is **not** in this release. What the repository and the official firmware show:
+Bluetooth MIDI is not in this release. The Bluetooth test image (`make ble`, [BLE-TEST.md](BLE-TEST.md)) is a connectable BLE MIDI
+peripheral on JieLi's Apache-2.0 controller and host libraries. A write to the characteristic goes through
+`firmware/px_ble_midi.h` into the same `px_midi_decode` and `px_midi_in` as USB, so Program Change, Control Change, the clock and the
+page guards mean the same on both roads. It only receives: the pedal's own changes are not sent over Bluetooth.
 
-- The repository has only register definitions for the chip's Bluetooth baseband (`firmware/bsp/chip/fm1_ble*.h`). They were
-  written from a clean-room fact sheet, and the files state that nothing in them has run on a real chip. The radio's analog
-  start-up has open items, and there is **no link layer, no L2CAP, no ATT or GATT server, no pairing code**.
-- The official BlackBox firmware does contain a complete Bluetooth stack and a BLE-MIDI service (a scout report of
-  2026-11-05, kept privately and not in this repository): a standard GATT table with the BLE MIDI service, a parser for the
-  timestamped packets with running status and multi-packet SysEx, all as ordinary tasks of its own operating system. There is no
-  hardware or ROM shortcut: the stack is code in that image, bound to the vendor's operating system, and cannot be copied (it
-  is vendor code). The same report found how the official firmware describes itself on USB (a MIDI interface with one input and
-  one output cable plus USB audio), and found **no published Program Change or Control Change map** in it.
-- JieLi's public Apache-2.0 SDK ships the controller and host stacks only as precompiled libraries that expect the vendor
-  operating system; whether those may be linked here needs the captain's decision on their licence, and each one needs OpenPocket to
-  supply the operating-system services it calls.
-
-**What a BLE stack would need** (future work, in the order it would be done):
-
-1. The captain scans a stock pedal with a phone (advertised name, data, interval) and connects it to a Mac as a Bluetooth MIDI
-   device, to fix the target behaviour. No code.
-2. An advertise-only build on a test channel, to prove the radio comes up from the stored calibration without disturbing the audio.
-3. Either write a minimal stack from the Bluetooth Core specification (link layer slave, L2CAP, ATT, a GATT server with the
-   BLE MIDI service `03B80E5A-EDE8-4B33-A751-6CE34EC4C700` and characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3`,
-   LE security for pairing), or build against the SDK's libraries once their licence is settled.
-4. A BLE-MIDI framing layer: a header byte and per-message timestamps, running status, SysEx across packets, and a decoder that
-   ends in the same `px_midi_decode` used here (the musical code is already independent of the transport).
-5. A setting to switch the radio off (saved in the store; default off, so a pedal that never uses it pays nothing), and a
-   measurement of the DSP load and glitches with a link up.
-6. Regulatory care: the radio must run with the chip's stored calibration, and the transmit power must not exceed what the
-   stock firmware uses.
+Before this can leave the test image it needs a setting to switch the radio off (saved in the store; default off, so a pedal that
+never uses it pays nothing), a measurement of the DSP load and glitches with a link up, and bonds that survive a power cycle. The
+transmit power must not exceed what the stock firmware uses.
 
 ## How it was checked (and what was not)
 

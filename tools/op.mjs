@@ -4,6 +4,7 @@
 // .bat files only call this. Every Docker command line lives here.
 //   node tools/op.mjs doctor | build | ble | test | package | clean | shell | image | serve [editor|build|ble]
 //   node tools/op.mjs flash --dry-run | --confirm-flash [--package FILE]   (writes to a connected pedal: docs/BUILDING.md)
+//   node tools/op.mjs log [--follow] [--json] [--wait SEC] [--scan SEC]   (reads a connected pedal's state: docs/BLE-TEST.md)
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 //   node tools/op.mjs rescue [--write] [options]   (restore a looping BlackBox from its UBOOT state; read-only without --write; docs/RESCUE.md)
 //   node tools/op.mjs rescue-check   (the UBOOT rescue tool against a simulated pedal: Python 3 only, no Docker)
@@ -83,7 +84,7 @@ const commands = {
   },
   image,
   build: () => inContainer(["sh", "firmware/build.sh"]),
-  ble: () => inContainer(["sh", "-c", "OP_BLE=1 sh firmware/build.sh && sha256sum firmware/openpocket-ble.bin build/ble/*.fwsc"]),   // the advertise-only Bluetooth test image (docs/BLE-TEST.md)
+  ble: () => inContainer(["sh", "-c", "OP_BLE=1 sh firmware/build.sh && sha256sum firmware/openpocket-ble.bin build/ble/*.fwsc"]),   // the Bluetooth MIDI test image (docs/BLE-TEST.md)
   test: () => inContainer(["sh", "tests/run_tests.sh"]),
   package: () => inContainer(["sh", "-c", `sh firmware/build.sh && mkdir -p build && sha256sum ${OUTS} > build/SHA256SUMS && cat build/SHA256SUMS`]),
   "package-test": () => inContainer(["sh", "-c", `OP_CHANNEL=midi-test sh firmware/build.sh && mkdir -p build && sha256sum ${TEST} > build/SHA256SUMS-midi-test && cat build/SHA256SUMS-midi-test`]),
@@ -98,6 +99,9 @@ const commands = {
   shell: () => inContainer(["bash"], { tty: true }),
   async flash(args) {                          // runs on this machine: the pedal is a USB device, not in the container
     return (await import("./flash.mjs")).main(args);
+  },
+  async log(args) {                            // the same: reads the connected pedal, writes nothing
+    return (await import("./log.mjs")).main(args);
   },
   serve([arg]) {
     const ble = arg === "ble";                 // the Bluetooth test packages (build/ble) instead of docs/firmware
