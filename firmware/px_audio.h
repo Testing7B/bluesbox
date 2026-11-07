@@ -337,7 +337,7 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 17: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 18: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -359,7 +359,27 @@ static void audio_bench(void)
             if (m == 4 || m == 8) { lcd_text(4, y, l, GRN, UI_BG, 1); y += 12; }
         }
         b_str(l, " >"); b_num(l, (uint32_t)pxn_mode());
-        lcd_text(4, y, l, GRN, UI_BG, 1); y += 14;
+        lcd_text(4, y, l, GRN, UI_BG, 1); y += 12;
+        /* diagnostic 18: where the CPU alone (mode 0) spends it: input, tap tables, kernel (groups of 4 frames), the
+         * gathered 1..3-frame rests, post, the head (groups, rest, rings + output), the whole */
+#define B_P(k) (pxn_prof_ticks(k) * 100u / (A_BUDGET * 2u))
+        const uint32_t g1 = pxn_prof_ticks(1), g8 = pxn_prof_ticks(8);
+        l[0] = 0; b_str(l, "IN "); b_num(l, B_P(0)); b_str(l, " TBL "); b_num(l, B_P(8));
+        b_str(l, " KER "); b_num(l, (g1 > g8 ? g1 - g8 : 0u) * 100u / (A_BUDGET * 2u));
+        b_str(l, " REST "); b_num(l, B_P(2));
+        lcd_text(4, y, l, YEL, UI_BG, 1); y += 12;
+        l[0] = 0; b_str(l, "POST "); b_num(l, B_P(3)); b_str(l, " HEAD "); b_num(l, B_P(6)); b_str(l, "+");
+        b_num(l, B_P(7)); b_str(l, "+"); b_num(l, B_P(4)); b_str(l, " ALL "); b_num(l, B_P(5));
+        lcd_text(4, y, l, YEL, UI_BG, 1); y += 12;
+        {   /* the new post (post3) against post2, mode 0; >3 when it is the one used */
+            const int p3 = pxn_post3_state();
+            l[0] = 0; b_str(l, "POST2 "); b_num(l, pxn_post_ticks(0) * 100u / (A_BUDGET * 2u));
+            b_str(l, " POST3 ");
+            if (p3) b_num(l, pxn_post_ticks(1) * 100u / (A_BUDGET * 2u)); else b_str(l, "FAILED");
+            b_str(l, p3 == 2 ? " >3" : " >2");
+            lcd_text(4, y, l, p3 ? YEL : RED, UI_BG, 1); y += 14;
+        }
+#undef B_P
     }
     fm1_wdt_feed();
     /* whole presets: % of the real-time budget */
@@ -375,11 +395,10 @@ static void audio_bench(void)
     }
     {   /* diagnostic 14: each block of 18 5150 RHYTHM and 01 TWIN CLEAN alone (AMP off), % of real time */
         static const char *BN[PX_NBLK] = {"GT", "CP", "PI", "SF", "DR", "AM", "CB", "EQ", "MO", "DL", "RV", "SY"};
-        for (int c = 0; c < 4; c++) {               /* (diagnostic 17: then with the float filters, as before) */
+        for (int c = 0; c < 2; c++) {               /* (diagnostic 18: the float filters, faster than integer ones) */
             px_preset_t q;
-            px_fx_int = c < 2;
             px_preset_factory(&q, c & 1 ? 0 : 17);
-            l[0] = 0; b_str(l, c & 1 ? "01" : "18"); b_str(l, c < 2 ? ":" : "F:");
+            l[0] = 0; b_str(l, c & 1 ? "01" : "18"); b_str(l, ":");
             for (int z = 0; z < PX_NBLK; z++) {
                 if (!q.on[z] || z == PX_B_AMP) continue;
                 px_preset_t r = q;
@@ -388,11 +407,10 @@ static void audio_bench(void)
             }
             lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         }
-        px_fx_int = 1;
         px_preset_t q;
         px_preset_factory(&q, 17);
         for (int k = 0; k < PX_NBLK; k++) q.on[k] = 0;
-        l[0] = 0; b_str(l, "ALL OFF "); b_num(l, b_engine(&q)); b_str(l, "%  INT FILTERS "); b_str(l, px_fx_hand ? "HAND" : "C");
+        l[0] = 0; b_str(l, "ALL OFF "); b_num(l, b_engine(&q)); b_str(l, "%");
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     }
     lcd_text(4, y + 4, "100% = REAL TIME. PLEASE TAKE A PHOTO", UI_ACC, UI_BG, 1);

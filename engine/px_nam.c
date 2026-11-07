@@ -32,6 +32,18 @@ static uint8_t pxn_rd = 1;                              /* the CPU's layers by r
 static uint32_t pxn_rdt[3];                             /* that timing (mode 0): [0] gathered, [1] rdot, [2] rdq */
 static uint8_t pxn_rdq_on = 1;                          /* rdot's load-ahead versions (rdq) where checked: timed */
 uint32_t pxn_rdot_ticks(int rd) { return rd >= 0 && rd < 3 ? pxn_rdt[rd] : 0; }
+/* v37 diagnostic 18: where the CPU's time goes (mode 0, timed by pxn_tune): [0] input, [1] layers' 4-frame groups (tap
+ * tables + kernel), [2] layers' 1..3-frame rests (gathered), [3] post, [4] rings + head copy + output, [5] whole block,
+ * [6] head groups, [7] head rest, [8] [1] again with the kernel skipped (the tap tables alone) */
+static uint32_t (*pxn_pt)(void);
+static uint32_t pxn_prof[9];
+static uint8_t pxn_pskip, pxn_pd = 1;
+static uint8_t pxn_p3ok, pxn_pc = 4;                 /* post3 checked; frames per post call (4 with the vector unit) */
+static uint32_t pxn_ptt[2];                          /* mode 0 timed with post2 and post3 */
+uint32_t pxn_post_ticks(int v) { return v >= 0 && v < 2 ? pxn_ptt[v] : 0; }
+int pxn_post3_state(void) { return pxn_p3ok ? 1 + (pxn_ptt[1] && pxn_ptt[1] < pxn_ptt[0]) : 0; }
+#define PXN_T() (pxn_pt ? pxn_pt() : 0u)
+uint32_t pxn_prof_ticks(int k) { return k >= 0 && k < 9 ? pxn_prof[k] : 0; }
 static int32_t pxn_z[PXN_N * PXN_C + 4], pxn_hs[PXN_N * PXN_C];
 static int32_t pxn_u[PXN_N + 4];                        /* the block's input (Q20), for rdot */
 static const int32_t *pxn_tpt[2][PXN_HK];               /* rdot's tap tables, one per core */
@@ -162,6 +174,7 @@ void pxn_dot3x4_asm(const pxn_dot *j);
 void pxn_dot1_asm(const pxn_dot *j);
 void pxn_post_asm(const pxn_post *j);
 void pxn_post2_asm(const pxn_post *j);
+void pxn_post3_asm(const pxn_post *j);
 void pxn_rdot_asm(const pxn_rdot *j);
 void pxn_rdot6_asm(const pxn_rdot *j);
 void pxn_rdq6_asm(const pxn_rdot *j), pxn_rdq15_asm(const pxn_rdot *j), pxn_rdq16_asm(const pxn_rdot *j);
@@ -400,6 +413,69 @@ __asm__(
     "\tr15 = [sp+0]\n\tr15 += -1\n\t[sp+0] = r15\n"
     "\tif (r15 != 0) goto .Lpxn_p2h\n"
     ".Lpxn_p2e:\n"
+    "\tsp += 8\n"
+    "\t{pc, r15-r4} = [sp++]\n"
+    /* post3 (v37 diagnostic 18): post2 with the three LeakyReLU products computed side by side (one predicated move
+     * each), the residual's weights at fixed offsets from r0 and loaded two multiply-adds ahead in r4/r5 (activations
+     * in r14 r15 r6). r1 z, r2 x, r3 hs, r7 out, r0 the rr2 weights; [sp+0] frames left, [sp+4] x stride - 12 */
+    "\t.global pxn_post3_asm\n"
+    "pxn_post3_asm:\n"
+    "\t[--sp] = {rets, r15-r4}\n"
+    "\tsp += -8\n"
+    "\tr1 = [r0+0]\n\tr2 = [r0+4]\n\tr3 = [r0+16]\n\tr7 = [r0+20]\n"
+    "\tr15 = [r0+24]\n\t[sp+0] = r15\n"
+    "\tr15 = [r0+8]\n\tr15 += -12\n\t[sp+4] = r15\n"
+    "\tr0 = [r0+28]\n"
+    "\tif (r7 == 0) goto .Lpxn_p3h\n"
+    ".Lpxn_p3f:\n"
+    "\t{r6-r4} = [r1++]\n"
+    "\tr15 = 42949673\n"
+    "\tr9_r8 = r4 * r15 (s)\n"
+    "\tr11_r10 = r5 * r15 (s)\n"
+    "\tr13_r12 = r6 * r15 (s)\n"
+    "\tifs (r4 < 0) {\n\tr4 = r9\n\t}\n"
+    "\tifs (r5 < 0) {\n\tr5 = r11\n\t}\n"
+    "\tifs (r6 < 0) {\n\tr6 = r13\n\t}\n"
+    "\tr14 = r4\n\tr15 = r5\n"
+    "\tr4 = [r0+0]\n\tr5 = [r0+4]\n"
+    "\t{r10-r8} = [r3++]\n"
+    "\tr8 += r14\n\tr9 += r15\n\tr10 += r6\n"
+    "\t[r3+-12] = r8\n\t[r3+-8] = r9\n\t[r3+-4] = r10\n"
+    "\tr9_r8 = r14 * r4 (s)  #  r4 = [r0+8]\n"
+    "\tr11_r10 = r14 * r5 (s)  #  r5 = [r0+12]\n"
+    "\tr13_r12 = r14 * r4 (s)  #  r4 = [r0+16]\n"
+    "\tr9_r8 += r15 * r5 (s)  #  r5 = [r0+20]\n"
+    "\tr11_r10 += r15 * r4 (s)  #  r4 = [r0+24]\n"
+    "\tr13_r12 += r15 * r5 (s)  #  r5 = [r0+28]\n"
+    "\tr9_r8 += r6 * r4 (s)  #  r4 = [r0+32]\n"
+    "\tr11_r10 += r6 * r5 (s)  #  r5 = [r0+36]\n"
+    "\tr13_r12 += r6 * r4 (s)  #  r4 = [r0+40]\n"
+    "\tr9_r8 >>= 24\n\tr11_r10 >>= 24\n\tr13_r12 >>= 24\n"
+    "\tr8 += r5\n\tr5 = [r0+44]\n"
+    "\tr10 += r4\n"
+    "\tr12 += r5\n"
+    "\t{r6-r4} = [r2++]\n"
+    "\tr8 += r4\n\tr10 += r5\n\tr12 += r6\n"
+    "\t[r7++=4] = r8\n\t[r7++=4] = r10\n\t[r7++=4] = r12\n"
+    "\tr15 = [sp+4]\n\tr2 += r15\n"
+    "\tr15 = [sp+0]\n\tr15 += -1\n\t[sp+0] = r15\n"
+    "\tif (r15 != 0) goto .Lpxn_p3f\n"
+    "\tgoto .Lpxn_p3e\n"
+    ".Lpxn_p3h:\n"
+    "\t{r6-r4} = [r1++]\n"
+    "\tr15 = 42949673\n"
+    "\tr9_r8 = r4 * r15 (s)\n"
+    "\tr11_r10 = r5 * r15 (s)\n"
+    "\tr13_r12 = r6 * r15 (s)\n"
+    "\tifs (r4 < 0) {\n\tr4 = r9\n\t}\n"
+    "\tifs (r5 < 0) {\n\tr5 = r11\n\t}\n"
+    "\tifs (r6 < 0) {\n\tr6 = r13\n\t}\n"
+    "\t{r10-r8} = [r3++]\n"
+    "\tr8 += r4\n\tr9 += r5\n\tr10 += r6\n"
+    "\t[r3+-12] = r8\n\t[r3+-8] = r9\n\t[r3+-4] = r10\n"
+    "\tr15 = [sp+0]\n\tr15 += -1\n\t[sp+0] = r15\n"
+    "\tif (r15 != 0) goto .Lpxn_p3h\n"
+    ".Lpxn_p3e:\n"
     "\tsp += 8\n"
     "\t{pc, r15-r4} = [sp++]\n"
     /* rdot: r0 the weights (row after row), r1 a tap's pointer, r2 the tap table, r3 taps left, r4 u, r5 a weight,
@@ -1574,7 +1650,7 @@ static void pxn_test_data(int32_t *s) { pxn_test_data_sh(s, 6); }
 int pxn_selftest(int32_t *scratch)
 {
 #if PXN_ASM
-    int32_t *s = scratch, ok = 1, p2ok = 1;
+    int32_t *s = scratch, ok = 1, p2ok = 1, p3ok = 1;
     for (int pass = 0; pass < 4 && ok; pass++) {
         pxn_test_data(s);
         const int T = pass & 1 ? 47 : 20, sb = PXN_S * 4;
@@ -1599,6 +1675,9 @@ int pxn_selftest(int32_t *scratch)
             q.rr2 = r2;
             pxn_post2_asm(&q);
             if (memcmp(PXN_T_O(s, 2), PXN_T_O(s, 4), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 5), 64 * 4)) p2ok = 0;
+            for (int i = 0; i < 64; i++) PXN_T_O(s, 2)[i] = PXN_T_O(s, 3)[i] = i * 77 - 1000;
+            pxn_post3_asm(&q);                            /* post3: the same check */
+            if (memcmp(PXN_T_O(s, 2), PXN_T_O(s, 4), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 5), 64 * 4)) p3ok = 0;
         }
         pxn_gcopy_c(PXN_T_O(s, 0), PXN_T_W(s) + pass, 5, 40);
         pxn_gcopy_asm(PXN_T_O(s, 1), PXN_T_W(s) + pass, 5, 40);
@@ -1646,6 +1725,7 @@ int pxn_selftest(int32_t *scratch)
     if (ok) {
         pxn_dot3x4 = pxn_dot3x4_asm; pxn_dot1 = pxn_dot1_asm; pxn_gcopy = pxn_gcopy_asm;
         pxn_post_f = p2ok ? pxn_post2_asm : pxn_post_asm;
+        pxn_p3ok = (uint8_t)(p2ok && p3ok);             /* pxn_tune times post3 against post2 */
     }
     /* the vector unit: rows of 20 and 47 over 8 X rows, against the C dot */
     {
@@ -1696,7 +1776,7 @@ int pxn_selftest(int32_t *scratch)
 int pxn_post2_in_use(void)
 {
 #if PXN_ASM
-    return pxn_post_f == pxn_post2_asm;
+    return pxn_post_f == pxn_post2_asm || pxn_post_f == pxn_post3_asm;
 #else
     return 0;
 #endif
@@ -2106,7 +2186,7 @@ static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring
     if (r >= L->len) r -= L->len;
     if (ring) p.sb = 12;
     while (n > 0) {
-        int c = n < 4 ? n : 4;
+        int c = n < pxn_pc ? n : pxn_pc;
         if (N) {
             if (c > N->len - w) c = N->len - w;
             p.out = N->ring + 3 * w;
@@ -2141,6 +2221,7 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
 {
     const int32_t **tp = pxn_tpt[core];
     const int n4 = pxn_rd ? n & ~3 : 0;
+    uint32_t t0 = PXN_T();
     for (int g = 0; g < n4; g += 4) {
         const int f = f0 + g;
         for (int k = 0; k < K; k++) {
@@ -2156,22 +2237,27 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
             }
         }
         pxn_rdot j = {wr, tp, K, pxn_u + f, pxn_z + 3 * f, rows};
-        if (pxn_rdq_on && pxn_rdq_f[K]) pxn_rdq_f[K](&j);
+        if (pxn_pskip) ;
+        else if (pxn_rdq_on && pxn_rdq_f[K]) pxn_rdq_f[K](&j);
         else if (K == 6) pxn_rdot6_f(&j);
         else pxn_rdot_f(&j);
         if (kick) pxn_kick();
     }
+    uint32_t t1 = PXN_T();
     if (n4 < n) {
         pxn_gather(ring, len, w, K, d, f0 + n4, n - n4, kick);
         pxn_rows_cpu(wr, 3 * K + 2, rows, f0 + n4, n - n4);
     }
+    if (pxn_pt) { pxn_prof[pxn_pd] += t1 - t0; pxn_prof[pxn_pd + 1] += PXN_T() - t1; }
 }
 /* layer i for frames f0 .. f0+n-1, by the CPU alone */
 static void pxn_range_cpu(pxn_model *m, int i, int f0, int n, int kick, int core)
 {
     pxn_layer *L = &m->L[i];
     pxn_direct(L->ring, L->len, L->w, L->k, L->d, m->wa + L->off, PXN_C, f0, n, core, kick);
+    uint32_t t0 = PXN_T();
     pxn_post_part(m, i, f0, n, kick, 1);
+    if (pxn_pt) pxn_prof[3] += PXN_T() - t0;
 }
 
 /* ---- two cores: the helper (the other core, through the caller's job functions) takes the first h frames ---- */
@@ -2294,6 +2380,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
 {
     pxn_layer *L0 = &m->L[0];
     int32_t w0 = L0->w;
+    const uint32_t tb = PXN_T();
     for (int f = 0; f < n; f++) {                        /* Q20, clamped to +-64 (far above any guitar) */
         float v = in[f] * 1048576.0f;
         const int32_t u = v >= 67108864.0f ? 67108864 : v <= -67108864.0f ? -67108864 : (int32_t)v;
@@ -2306,11 +2393,13 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     }
     memset(pxn_hs, 0, (unsigned)n * PXN_C * 4u);
     const int h = PXN_MC[pxn_mode_v].h, pipe = PXN_MC[pxn_mode_v].pipe && pxn_vec_ok, c = PXN_MC[pxn_mode_v].c;
+    pxn_pc = (uint8_t)(pipe || (pxn_mode_v == 1 && pxn_vec_ok) ? 4 : PXN_N);   /* post in 4-frame steps only to kick the unit */
     {   /* the X rows: in the fast memory when the vector unit reads them (input columns copied over) */
         int32_t *xb = (pipe || pxn_mode_v == 1) && pxn_vec_ok && pxn_xf ? pxn_xf : pxn_xs;
         if (xb != pxn_xs) for (int f = 0; f < n; f++) { xb[f * PXN_S] = pxn_xs[f * PXN_S]; xb[f * PXN_S + 1] = PXN_ONE; }
         pxn_x = xb;
     }
+    if (pxn_pt) pxn_prof[0] += PXN_T() - tb;
     if (h && n == PXN_N) {                               /* two cores */
         pxn_hstart(m, h);
 #if PXN_VQON
@@ -2326,6 +2415,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     else if (pxn_mode_v == 1 && pxn_vec_ok) for (int i = 0; i < PXN_NL; i++) pxn_layer_block(m, i, n);
     else for (int i = 0; i < PXN_NL; i++) pxn_range_cpu(m, i, 0, n, 1, 0);
     (void)pipe; (void)c;
+    const uint32_t th = PXN_T();
     for (int i = 0; i < PXN_NL; i++) {                   /* every ring moves on by the block */
         pxn_layer *L = &m->L[i];
         L->w += n;
@@ -2342,10 +2432,19 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     if ((pxn_mode_v == 1 || PXN_MC[pxn_mode_v].pipe) && pxn_vec_ok) {
         pxn_gather(m->hring, m->hlen, hw, PXN_HK, 1, 0, n, 1);
         pxn_rows(m, m->head, PXN_S, 1, n);
-    } else pxn_direct(m->hring, m->hlen, hw, PXN_HK, 1, m->head, 1, 0, n, 0, 1);
+    } else {
+        pxn_pd = 6;
+        pxn_direct(m->hring, m->hlen, hw, PXN_HK, 1, m->head, 1, 0, n, 0, 1);
+        pxn_pd = 1;
+    }
     const float g = m->out_gain;
     for (int f = 0; f < n; f++) out[f] = (float)pxn_z[3 * f] * g;
     pxn_x = pxn_xs;
+    if (pxn_pt) {
+        const uint32_t te = PXN_T();
+        pxn_prof[5] += te - tb;
+        pxn_prof[4] += te - th;                          /* (the head's groups and rest taken out by the caller) */
+    }
 }
 int pxn_dual(void) { return PXN_MC[pxn_mode_v].h != 0; }
 
@@ -2376,6 +2475,41 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
         for (int rd = 1; rd < 3; rd++) if (pxn_rdt[rd] && pxn_rdt[rd] < pxn_rdt[b]) b = rd;
         pxn_rd = (uint8_t)(b > 0);
         pxn_rdq_on = (uint8_t)(b == 2);
+    }
+#if PXN_ASM
+    if (pxn_p3ok) for (int v = 0; v < 2; v++) {          /* post2 or post3: the faster */
+        pxn_post_f = v ? pxn_post3_asm : pxn_post2_asm;
+        pxn_mode_v = 0;
+        pxn_reset(m);
+        uint32_t r = 4321u, dt = 0;
+        for (int b = 0; b < 10; b++) {
+            for (int f = 0; f < PXN_N; f++) { r = r * 1103515245u + 12345u; in[f] = (float)((int32_t)r >> 8) * (0.5f / 8388608.0f); }
+            uint32_t t0 = ticks();
+            pxn_block(m, in, out, PXN_N);
+            if (b >= 2) dt += ticks() - t0;
+        }
+        pxn_ptt[v] = dt;
+    }
+    if (pxn_p3ok) pxn_post_f = pxn_ptt[1] < pxn_ptt[0] ? pxn_post3_asm : pxn_post2_asm;
+#endif
+    for (int pass = 0; pass < 2; pass++) {               /* the profile (mode 0, the chosen way), then without kernel */
+        uint32_t keep[9];
+        memcpy(keep, pxn_prof, sizeof keep);
+        pxn_mode_v = 0;
+        pxn_reset(m);
+        pxn_pskip = (uint8_t)pass;
+        uint32_t r = 4321u;
+        for (int b = 0; b < 10; b++) {
+            for (int f = 0; f < PXN_N; f++) { r = r * 1103515245u + 12345u; in[f] = (float)((int32_t)r >> 8) * (0.5f / 8388608.0f); }
+            if (b == 2 && !pass) for (int k = 0; k < 9; k++) pxn_prof[k] = 0;
+            if (b == 2 && pass) pxn_prof[1] = 0;
+            pxn_pt = b >= 2 ? ticks : 0;
+            pxn_block(m, in, out, PXN_N);
+        }
+        pxn_pt = 0;
+        pxn_pskip = 0;
+        if (pass) { const uint32_t t1 = pxn_prof[1]; memcpy(pxn_prof, keep, sizeof keep); pxn_prof[8] = t1; }
+        else pxn_prof[4] -= pxn_prof[6] + pxn_prof[7];
     }
     for (int mode = 0; mode < PXN_MODES; mode++) {
         const int unit = mode == 1 || PXN_MC[mode].pipe;

@@ -113,7 +113,7 @@ static void bq_block2(px_bq *p, px_bq *q, float *b, int n)
  * Q26 (+-32), the coefficients in Q29 (+-4), direct form I with a 64-bit sum. The float filter's coefficients
  * are converted each call (they may change between calls); 0 = a coefficient out of range: not run (use bq_block). */
 typedef struct { int32_t x1, x2, y1, y2; } px_fq;      /* (laid out as int32_t[4]) */
-int px_fx_int = 1;
+int px_fx_int = 0;
 int px_fx_hand;                                         /* the integer filter loop by hand (px_fx_check) */
 #define FQ_CB 29                                       /* coefficient fraction bits */
 #define FQ_SB 26                                       /* signal fraction bits (+-32) */

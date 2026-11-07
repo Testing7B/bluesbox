@@ -30,6 +30,8 @@
   never need later ones, so CPU1 never waits). At start-up the pedal times the ways it can run the network and keeps
   the fastest.
 - A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
+- Effects run over a whole block, one after another, instead of sample by sample (same output, about 20% cheaper).
+  In front of a NAM amp the drive runs at ×2 oversampling instead of ×4.
 
 ## For developers
 - Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).
