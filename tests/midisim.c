@@ -218,16 +218,12 @@ int main(void)
         }
         ok(!bad, "any stored byte unpacks to a legal setting, and packing it again is stable");
         px_midi_cfg_unpack(&c, 0);
-        ok(c.chan == 0 && c.send == 1 && c.clock == 0 && c.ble == 0, "0 (every earlier save) = omni, send on, clock sync off, Bluetooth off");
+        ok(c.chan == 0 && c.send == 1 && c.clock == 0, "0 (every earlier save) = omni, send on, clock sync off");
         px_midi_cfg_unpack(&c, 0xFF);
-        ok(c.chan == 0 && !c.send && c.clock && c.ble, "a value this firmware never wrote is omni, not a wild channel");
-        c.chan = 16; c.send = 0; c.clock = 1; c.ble = 1;
+        ok(c.chan == 0 && !c.send && c.clock, "a value this firmware never wrote is omni, not a wild channel");
+        c.chan = 16; c.send = 0; c.clock = 1;
         px_midi_cfg_unpack(&d, px_midi_cfg_pack(&c));
-        ok(d.chan == 16 && !d.send && d.clock && d.ble, "channel 16, send off, clock on survive a save");
-        ok(px_midi_cfg_pack(&c) == (16u | PXM_CFG_NOSEND | PXM_CFG_CLOCK | PXM_CFG_BLE), "Bluetooth on is bit 7");
-        c.ble = 0;
-        px_midi_cfg_unpack(&d, px_midi_cfg_pack(&c));
-        ok(!d.ble && d.chan == 16, "Bluetooth off survives a save");
+        ok(d.chan == 16 && !d.send && d.clock, "channel 16, send off, clock on survive a save");
     }
 
     /* ---- MIDI clock -> a quarter note ---- */

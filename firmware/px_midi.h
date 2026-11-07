@@ -18,15 +18,12 @@ typedef struct {
     uint8_t chan;          /* 0 = omni (receive any channel; send on 1), 1..16 = that channel */
     uint8_t send;          /* 1 = the pedal sends Program Change / Control Change when its sound changes */
     uint8_t clock;         /* 1 = MIDI clock sets the delay TIME to a quarter note */
-    uint8_t ble;           /* 1 = Bluetooth MIDI on (v37; off by default: a pedal that never uses it pays nothing) */
 } px_midi_cfg_t;
 #define PXM_CFG_NOSEND 0x20u
 #define PXM_CFG_CLOCK  0x40u
-#define PXM_CFG_BLE    0x80u
 static uint8_t px_midi_cfg_pack(const px_midi_cfg_t *c)
 {
-    return (uint8_t)((c->chan & 31u) | (c->send ? 0u : PXM_CFG_NOSEND) | (c->clock ? PXM_CFG_CLOCK : 0u) |
-                     (c->ble ? PXM_CFG_BLE : 0u));
+    return (uint8_t)((c->chan & 31u) | (c->send ? 0u : PXM_CFG_NOSEND) | (c->clock ? PXM_CFG_CLOCK : 0u));
 }
 static void px_midi_cfg_unpack(px_midi_cfg_t *c, uint8_t b)
 {
@@ -34,17 +31,11 @@ static void px_midi_cfg_unpack(px_midi_cfg_t *c, uint8_t b)
     if (c->chan > 16u) c->chan = 0;                    /* a byte this firmware never wrote: omni */
     c->send = (b & PXM_CFG_NOSEND) ? 0u : 1u;
     c->clock = (b & PXM_CFG_CLOCK) ? 1u : 0u;
-    c->ble = (b & PXM_CFG_BLE) ? 1u : 0u;
 }
 /* the pedal's MIDI state, shared by the screen (ui.h) and the glue (px_midi_io.h) */
-static px_midi_cfg_t mid_cfg;           /* all-zero until the store is read (then: omni, send on, clock off, Bluetooth off) */
+static px_midi_cfg_t mid_cfg;           /* all-zero until the store is read: omni, send on, clock off */
 static uint8_t mid_usb_up;              /* a USB host is connected */
 static uint8_t mid_last[3];             /* the last message received: type (PXM_*), data 1, data 2 */
-/* Bluetooth MIDI, as the MIDI page shows it (openpocket.c ble_service): off (the setting), starting, waiting for a device
- * (advertising), a device connected, failed, left off since a start that did not finish (until a power cycle), not built in */
-enum { PXM_BT_OFF, PXM_BT_STARTING, PXM_BT_WAIT, PXM_BT_LINK, PXM_BT_FAILED, PXM_BT_SKIPPED, PXM_BT_NONE };
-static uint8_t mid_bt;
-static uint16_t mid_bt_rate[3];         /* the radio's activity a second (diagnostic): event and receive interrupts, timers */
 static uint32_t px_midi_tx_chan(const px_midi_cfg_t *c) { return c->chan ? (uint32_t)c->chan - 1u : 0u; }
 
 /* ---- the Control Change map (docs/MIDI.md) ---- */

@@ -43,14 +43,13 @@ extern int keep_BT_CMPUK1, keep_BT_CMPUK2, keep_BT_CMPUK3, keep_BT_OFSI, keep_BT
 /* Returns 0 like the stock start-up on a first run: the library calls wlc_main (the Wi-Fi/Bluetooth coexistence arbiter on, 0x14000
  * bit 1) when this is not 0, and a void function left a stray register value there. The five trims are the neutral base value of
  * bt_rf_analog_init (0x80008080 for 0x2FC10); left at zero they write a zero I/Q gain, which a silent transmitter fits. */
-static void rf_run(void) { fm1_ble_rf_run(vm_rec[0], vm_rec[1], vm_rec[2], vm_rec[3]); }
 int wf_rf_common_init(void)
 {
     ble_stage_set(BLE_STAGE_RF);
     fm1_wdt_feed();                                              /* the replay takes a while: keep the watchdog fed around it */
     fm1_rf_cal_on = (ble_vm_have & 8u) ? 0u : 1u;                /* the pedal's own stored calibration (VM 187) when it has one, else measure */
     ble_busy(0);                                                 /* the replay is long, and its waits are bounded */
-    ble_on_main_stack(rf_run);                                   /* in RAM, not on the task's stack (cache RAM): ble_os.c */
+    fm1_ble_rf_run(vm_rec[0], vm_rec[1], vm_rec[2], vm_rec[3]);
     ble_busy(1);
     fm1_wdt_feed();
     keep_BT_CMPUK1 = 0x80; keep_BT_CMPUK2 = 0x80; keep_BT_CMPUK3 = 0; keep_BT_OFSI = 0; keep_BT_OFSQ = 0;

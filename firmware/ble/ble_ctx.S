@@ -8,8 +8,6 @@
  *   void ble_ctx_enter(uint32_t **save, uint32_t *top, void (*fn)(void))
  *                                                                suspend here into *save, call fn on the stack at top
  *                                                                (fn never returns)
- *   void ble_call_on(uint32_t *top, void (*fn)(void))            call fn on the stack at top, come back on this one
- *                                                                (v37: the radio start-up runs on the main stack, in RAM)
  */
 	.section .text.ble_ctx,"ax",@progbits
 	.balign 4
@@ -29,12 +27,3 @@ ble_ctx_enter:
 	sp = r1
 	call r2
 	goto .
-
-	.globl ble_call_on
-ble_call_on:
-	[--sp] = {rets, r4}
-	r4 = sp
-	sp = r0
-	call r1
-	sp = r4
-	{pc, r4} = [sp++]

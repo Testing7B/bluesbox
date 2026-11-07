@@ -9,10 +9,6 @@
 #include <stdint.h>
 #define AUDIO_PROBE 0      /* 1 = audio test (find IN/OUT on the I2S) instead of the UI */
 #define DSP_CPU1 1         /* 1 = DSP engine on the 2nd core (automatic fallback to CPU0 on trouble) */
-#if AUDIO_PROBE             /* (no Bluetooth in the probe build) */
-#undef OP_BLE
-#define OP_BLE 0
-#endif
 #if DSP_CPU1 && !AUDIO_PROBE
 #define FM1_CPU1 1         /* fm1_irq.h hands 2nd-core faults to fm1_cpu1.h */
 #define FM1_CPU1_FALLBACK 1
@@ -314,20 +310,8 @@ static void fm1_fault(const fm1_crash_t *c)
 #ifndef OP_TAG
 #define OP_TAG ""
 #endif
-#ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). Bluetooth's task stacks are in the cache RAM, above */
-#define OP_GUARD_STACK 1    /* [_ustack_lo, _sstack_top]: ble_guard_window raises the top before they run (app.ld checks where they are) */
-#endif
-/* v37: Bluetooth MIDI (the JieLi controller and host, third_party/jieli-ble; docs/BLUETOOTH.md) is in every build: build.sh
- * passes OP_BLE=1 (OP_NOBLE=1 leaves it out). OP_BLE_TEST (make ble) is the same firmware with the test image's presentation:
- * the radio's state scrolling in the status area, "BLE TEST" at boot, the radio on whatever the setting. */
-#ifndef OP_BLE
-#define OP_BLE 0
-#endif
-#ifndef OP_BLE_TEST
-#define OP_BLE_TEST 0
-#endif
-#if OP_BLE_TEST && !OP_BLE
-#error "OP_BLE_TEST needs OP_BLE"
+#ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). build.sh turns it off for the Bluetooth test image, */
+#define OP_GUARD_STACK 1    /* whose task stacks (ble_os.c) lie outside [_ustack_lo, _sstack_top]; app.ld checks this at link time */
 #endif
 #define OP_VERSION "v" OP_VERSION_NUM OP_TAG   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
@@ -602,7 +586,7 @@ static void nm_changed(uint32_t s)   /* v37: a user model was written or erased:
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
     audio_apply();
 }
-#if OP_BLE                  /* the log channel (firmware/ble/ble_diag.h, node tools/op.mjs log): the firmware with Bluetooth answers DIAG */
+#if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
 #define ED_DIAG_LINES 5u
 #define ED_DIAG_LEN 224u
 static void ed_diag_line(uint32_t i, char *out);
@@ -617,7 +601,7 @@ static void ed_diag_line(uint32_t i, char *out);
 #endif
 #include "led_probe.h"      /* the LED map (issue #8) */
 #endif
-#if OP_BLE                  /* Bluetooth MIDI (docs/BLUETOOTH.md; the test image: docs/BLE-TEST.md, make ble) */
+#if OP_BLE_TEST             /* the Bluetooth MIDI test image (docs/BLE-TEST.md): make ble */
 #include "ble/ble_os.c"
 #include "ble/ble_libc.c"
 #include "ble/ble_cfg.c"
@@ -633,60 +617,6 @@ static void ed_diag_line(uint32_t i, char *out)
     else if (i == 2u) ble_test_line(out);
     else if (i == 3u) ble_midi_line(out);
     else ble_trace_line(out);
-}
-
-/* v37: the radio in the release. A reset while it was starting (a hang the watchdog ended, a crash) is remembered in .noinit:
- * the next boots leave it off until the pedal is switched off and on again (the MIDI page says so), so a radio that does not
- * start on some unit costs one restart, never a loop. */
-#define BLE_BG_MAGIC 0x424C4547u
-static volatile struct { uint32_t magic, starting, skipped; } ble_bg __attribute__((section(".noinit")));
-static int ble_started, ble_safe;      /* ble_safe: this boot follows a failed one (the radio waits for the user) */
-extern char _ble_stack_hi[];
-static void ble_guard_window(void)      /* the stack guard's window up to the top of the controller's task stacks (cache RAM) */
-{
-#if OP_GUARD_STACK
-    fm1__dbg_unlock();
-    FM1_EMU_CON &= ~(1u << 3);
-    FM1_EMU_SSP_H = (uint32_t)(uintptr_t)_ble_stack_hi;
-    FM1_EMU_USP_H = (uint32_t)(uintptr_t)_ble_stack_hi;
-    FM1_EMU_CON |= 1u << 3;
-    fm1__dbg_lock();
-#endif
-}
-static void ble_go(void)                /* the radio on, once a boot (main loop) */
-{
-    if (ble_started) return;
-    ble_started = 1;
-    if (pxc_status != PXC_READY) { ble_fail(BLE_FAIL_NO_RAM, (int32_t)pxc_status); return; }   /* its tasks live there */
-    ble_guard_window();
-    ble_bg.starting = 1;
-    ble_test_start();
-}
-static void ble_service(void)           /* every loop: the controller's tasks, and the state the MIDI page shows */
-{
-    static uint32_t t_poll;
-    uint32_t t = fm1_uptime_ms();
-    if (ble_started && t != t_poll) {   /* once a millisecond (its clock is 10 ms): not every pass of the main loop, whose
-                                         * spinning through the scheduler's tables (cache RAM) and the library's code (flash)
-                                         * competes with the DSP for the cache */
-        t_poll = t;
-        ble_test_poll();
-        static uint32_t t_rate, e0, r0, m0;
-        if (t - t_rate >= 1000u) {      /* the activity a second, for the MIDI page */
-            mid_bt_rate[0] = (uint16_t)(ble_cnt_irq_ev - e0); mid_bt_rate[1] = (uint16_t)(ble_cnt_irq_rx - r0);
-            mid_bt_rate[2] = (uint16_t)(ble_cnt_timer - m0);
-            e0 = ble_cnt_irq_ev; r0 = ble_cnt_irq_rx; m0 = ble_cnt_timer; t_rate = t;
-        }
-        if (ble_bg.starting && (ble_state == BLE_ADV || ble_state == BLE_FAILED)) ble_bg.starting = 0;   /* it did not hang */
-    }
-    if (mi_ble_retry) {                 /* BLUETOOTH turned (back) on by hand on the MIDI page: try again, even after a crash */
-        mi_ble_retry = 0;
-        if (!ble_started) { ble_bg.skipped = 0; ble_safe = 0; ble_go(); }
-    }
-    if (!ble_started && mid_cfg.ble && !ble_bg.skipped && !ble_safe && ui_mode != M_MIDI) ble_go();   /* switched on there */
-    mid_bt = !ble_started ? ((ble_bg.skipped || (ble_safe && mid_cfg.ble)) ? PXM_BT_SKIPPED : PXM_BT_OFF)
-           : ble_state == BLE_FAILED ? PXM_BT_FAILED : ble_state != BLE_ADV ? PXM_BT_STARTING
-           : ble_conn ? PXM_BT_LINK : PXM_BT_WAIT;
 }
 #endif
 
@@ -786,13 +716,9 @@ static void app_main(void)
             ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
             ft_box(0, 126, 240, OP_VERSION " SAFE MODE", &FT_SM, UI_DIM, UI_BG, 1);
         }
-#if OP_BLE
+#if OP_BLE_TEST
         ble_last = (ble_boot_t){ st != ST_OK || crashed, crashed, st, op_diag.blocks, op_diag.load, op_diag.peak, op_diag.nans, op_diag.c1,
                                  op_diag.loops, fm1_crash.vec, fm1_crash.pc, fm1_crash.rets, fm1_crash.dbg, fm1_crash.emu, fm1_crash.uptime_ms };
-#endif
-#if OP_BLE
-        if (ble_bg.magic != BLE_BG_MAGIC) { ble_bg.magic = BLE_BG_MAGIC; ble_bg.starting = 0; ble_bg.skipped = 0; }   /* power-on */
-        if (ble_bg.starting) { ble_bg.starting = 0; ble_bg.skipped = 1; }   /* the last boot ended while the radio started */
 #endif
         op_diag.crash_seen = cc; op_diag.safe = (uint32_t)safe;
         op_diag.blocks = op_diag.load = op_diag.peak = op_diag.nans = op_diag.c1 = op_diag.loops = 0;
@@ -820,11 +746,7 @@ static void app_main(void)
 #if DSP_CPU1
     px_nam_helper(a_hrun, a_hwait);      /* v37: CPU1 can take a part of the NAM network */
 #endif
-    {   /* the vector unit's inputs: what the cache RAM has left after the CPU-only buffers (app.ld .cram) */
-        extern char _cram_hi[];
-        uint32_t lo = (uint32_t)(uintptr_t)_cram_hi;
-        if (pxc_status == PXC_READY && lo < PXC_END) px_nam_fast((void *)(uintptr_t)lo, PXC_END - lo);
-    }
+    if (pxc_status == PXC_READY) px_nam_fast((void *)PXC_BEGIN, PXC_END - PXC_BEGIN);   /* the vector unit's inputs */
     px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     leds_init();                         /* the button lights: all off loaded, then on (PC7 low), as stock */
@@ -834,19 +756,16 @@ static void app_main(void)
     ui_render();
     op_stage(ST_RUN, 0);
 #endif
-#if OP_BLE
-    ble_safe = safe;
-    if (!safe && !ble_bg.skipped && (OP_BLE_TEST || mid_cfg.ble))   /* after a failed boot it stays off: the pedal runs */
-        ble_go();                        /* radio on, controller and host up, advertising (the pedal keeps working) */
-#else
-    mid_bt = PXM_BT_NONE;
+#if OP_BLE_TEST
+    if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
+        ble_test_start();                /* radio on, controller and host up, advertising (the pedal keeps working) */
 #endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {
         uint32_t now = ms_now();
         fm1_wdt_feed();
-#if OP_BLE
-        ble_service();
+#if OP_BLE_TEST
+        ble_test_poll();
 #endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
@@ -868,10 +787,6 @@ static void app_main(void)
                 }
                 else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
-                if (mid_bt == PXM_BT_LINK && i <= 5) {   /* a Bluetooth MIDI link: "BT C1 42%" */
-                    for (int k = i; k > 0; k--) c[k + 2] = c[k - 1];
-                    c[0] = 'B'; c[1] = 'T'; c[2] = ' '; i += 3;
-                }
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;

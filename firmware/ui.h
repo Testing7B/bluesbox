@@ -466,14 +466,13 @@ static void save_confirm(void)
 /* ===================================================== MIDI page ======== */
 /* hold FX: the MIDI settings (docs/MIDI.md). KNOB changes the selected row, PUSH moves to the next row and, after the
  * last one, leaves; HOME leaves. The settings are saved (a flash write, as SAVE) only if something changed. */
-enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_BLE, MI_ROWS };
+enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_ROWS };
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig;
-static uint8_t mi_ble_touched, mi_ble_retry;     /* the BLUETOOTH row was turned; left ON after that: try the radio again */
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
 static void midi_open(void)
 {
-    ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ble_touched = 0;
+    ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg);
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
     ft_box(8, 4, 232, "MIDI", &FT_MD, BLK, UI_ACC, 0);
@@ -482,57 +481,34 @@ static void midi_open(void)
 }
 static void midi_draw(void)
 {
-    uint32_t h = (mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
-                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23) ^ (uint32_t)mid_bt << 29 ^
-                 (uint32_t)mid_bt_rate[0] * 0x9E3779B1u ^ (uint32_t)mid_bt_rate[1] * 0x85EBCA6Bu ^ (uint32_t)mid_bt_rate[2] * 0xC2B2AE35u;
+    uint32_t h = mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
+                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23;
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
-    static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY", "BLUETOOTH"};
+    static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY"};
     char v[MI_ROWS][8];
     if (mid_cfg.chan) { v[0][0] = (char)(mid_cfg.chan >= 10 ? '0' + mid_cfg.chan / 10 : ' '); v[0][1] = (char)('0' + mid_cfg.chan % 10); v[0][2] = 0; }
     else { v[0][0] = 'O'; v[0][1] = 'M'; v[0][2] = 'N'; v[0][3] = 'I'; v[0][4] = 0; }
-    v[1][0] = v[2][0] = v[3][0] = 0;
+    v[1][0] = v[2][0] = 0;
     b_str(v[1], mid_cfg.send ? "ON" : "OFF");
     b_str(v[2], mid_cfg.clock ? "ON" : "OFF");
-    b_str(v[3], mid_cfg.ble ? "ON" : "OFF");
     for (uint32_t r = 0; r < MI_ROWS; r++) {
-        uint32_t y = 36u + r * 29u;
+        uint32_t y = 44u + r * 36u;
         uint16_t bg = r == mi_row ? C_CARD : UI_BG;
-        lcd_rect(0, y, 240, 27, bg);
-        ft_box(8, y + 6u, 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
+        lcd_rect(0, y, 240, 32, bg);
+        ft_box(8, y + 4u, 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
         ft_box(140, y + 2u, 92, v[r], &FT_MD, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
     }
-    ft_box(0, 152, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
-    {   /* Bluetooth: what the radio does now (the setting above takes effect when the page closes; off needs a restart) */
-        const char *t = "BT: OFF";
-        uint16_t c = UI_DIM;
-        if (mid_bt == PXM_BT_NONE) t = "BT: NOT IN THIS FIRMWARE";
-        else if (mid_bt == PXM_BT_SKIPPED && mi_ble_touched && mid_cfg.ble) t = "BT: TRIES AGAIN WHEN YOU LEAVE";
-        else if (mid_bt == PXM_BT_SKIPPED) { t = "BT: STOPPED - SET OFF, THEN ON"; c = RED; }
-        else if (mid_bt == PXM_BT_FAILED) { t = "BT: FAILED TO START"; c = RED; }
-        else if (!mid_cfg.ble && mid_bt != PXM_BT_OFF) t = "BT: OFF AFTER A RESTART";
-        else if (mid_bt == PXM_BT_STARTING) t = "BT: STARTING";
-        else if (mid_bt == PXM_BT_WAIT) t = "BT: VISIBLE AS \"OPENPOCKET\"";
-        else if (mid_bt == PXM_BT_LINK) { t = "BT: DEVICE CONNECTED"; c = GRN; }
-        else if (mid_cfg.ble) t = "BT: ON WHEN YOU LEAVE";
-        ft_box(0, 168, 240, t, &FT_SM, c, UI_BG, 1);
-        char d[40]; d[0] = 0;                  /* the radio's activity a second (diagnostic) */
-        if (mid_bt >= PXM_BT_STARTING && mid_bt <= PXM_BT_FAILED) {
-            b_str(d, "IRQ "); b_num(d, mid_bt_rate[0]); b_str(d, " RX "); b_num(d, mid_bt_rate[1]);
-            b_str(d, " TIMERS "); b_num(d, mid_bt_rate[2]); b_str(d, " /S");
-        }
-        ft_box(0, 184, 240, d, &FT_SM, UI_DIM, UI_BG, 1);
-    }
+    ft_box(0, 160, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
     char l[24]; l[0] = 0;
     if (mid_last[0] == PXM_PC) { b_str(l, "LAST: PC "); b_num(l, mid_last[1] + 1u); }
     else if (mid_last[0] == PXM_CC) { b_str(l, "LAST: CC "); b_num(l, mid_last[1]); b_str(l, " = "); b_num(l, mid_last[2]); }
     else b_str(l, "LAST: NONE");
-    ft_box(0, 200, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+    ft_box(0, 186, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
 }
 static void midi_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
-    if (mi_ble_touched && mid_cfg.ble) mi_ble_retry = 1;
     if (px_midi_cfg_pack(&mid_cfg) != mi_orig) midi_persist();
     lcd_rect(0, 0, 240, 240, UI_BG);
     uc.screen = -1;
@@ -542,8 +518,7 @@ static void midi_knob(int dd)
 {
     if (mi_row == MI_CHAN) mid_cfg.chan = (uint8_t)((mid_cfg.chan + 17u + (uint32_t)(dd > 0 ? 1 : 16)) % 17u);
     else if (mi_row == MI_SEND) mid_cfg.send ^= 1u;
-    else if (mi_row == MI_CLOCK) mid_cfg.clock ^= 1u;
-    else { mid_cfg.ble ^= 1u; mi_ble_touched = 1; }
+    else mid_cfg.clock ^= 1u;
 }
 static void midi_push(void) { if (++mi_row >= MI_ROWS) midi_close(); }
 

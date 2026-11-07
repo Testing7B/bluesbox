@@ -47,7 +47,7 @@ The 12 blocks, by index: 0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 
 | 20 NAM_WRITE | piece (2 bytes: bits 0-6, 7-13), 128 packed bytes | the 2 piece bytes, rc (0 ok, 1 invalid). Piece i holds bytes 112 i .. 112 i + 111 of a model (the last piece fewer), packed 7 bit: groups of a byte of high bits (bit j = bit 7 of byte j) then 7 bytes. Stored in RAM only |
 | 21 NAM_COMMIT | slot (0..15) | slot, rc (0 ok, 1 invalid: header, a weight that is not a number, CRC; 2 flash). Checks the pieces received and writes them to the user slot |
 | 22 NAM_ERASE | slot (0..15) | slot, rc (0 ok, 1 invalid, 2 flash). Empties the user slot |
-| 23 DIAG | — | n (5), then n strings: this boot, the last boot, the status line, the link, the trace. Read only. The firmware with Bluetooth answers (v37 and the test image); a build without it gives no reply. `docs/BLE-TEST.md`, "Reading the pedal from a computer" |
+| 23 DIAG | — | n (5), then n strings: this boot, the last boot, the status line, the link, the trace. Read only. Only the Bluetooth test image answers: other firmware gives no reply. `docs/BLE-TEST.md`, "Reading the pedal from a computer" |
 
 ### NAM models (protocol 2)
 
