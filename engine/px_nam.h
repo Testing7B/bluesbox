@@ -70,10 +70,10 @@ uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps, int v2);
 uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nloop, int xs, int zs, int reps, int start_only);
 /* how the blocks run: 0 the CPU alone, 1 each dot product on the vector unit in turn, 2..4 the vector unit and the
  * CPU at once (half a block on the unit while the CPU prepares or finishes the other half; the CPU also takes 0, 4 or
- * 8 frames of each half's dot products itself), 5..8 two cores (the other core takes the block's first 16 or 12
+ * 8 frames of each half's dot products itself), 5..10 two cores (the other core takes the block's first 12 to 24
  * frames; with or without the vector unit beside this one). pxn_tune times them on a loaded model and keeps the
  * fastest (ticks for 256 frames in t[], 0 = not available); the model is cleared after. */
-#define PXN_MODES 9
+#define PXN_MODES 11
 /* the other core, for modes 5..8: run(fn, arg) hands it fn(arg) (1 = taken, 0 = do it yourself), wait() waits for it
  * (0 = done, -1 = dropped). Without it those modes are not used. */
 void pxn_set_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));

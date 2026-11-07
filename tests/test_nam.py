@@ -33,7 +33,7 @@ for k, (name, wt) in enumerate(zip(names, models)):
     ref = nam_a2.run(nam_a2.unpack(wt.astype(np.float64), 3), x.astype(np.float64))
     worst = 1e9
     outs = {}
-    runs = [(64, 0, 0), (37, 1, 0), (1, 0, 0)] + [(64, 0, md) for md in range(1, 9)] + [(37, 1, 4), (37, 1, 6)]
+    runs = [(64, 0, 0), (37, 1, 0), (1, 0, 0)] + [(64, 0, md) for md in range(1, 11)] + [(37, 1, 4), (37, 1, 6)]
     for blk, split, pipe in runs:
         env = dict(os.environ)
         if split: env["NAM_SPLIT"] = "1"

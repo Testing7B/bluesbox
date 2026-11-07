@@ -2049,7 +2049,8 @@ static const int32_t *pxn_uw(const pxn_model *m, const int32_t *w)
  * earlier frames never need later ones), the calling core the rest; pipe: the vector unit beside the calling core
  * (block or range in two halves), the CPU taking c frames of each half's dot products itself */
 static const struct { uint8_t h, pipe, c; } PXN_MC[PXN_MODES] = {
-    {0, 0, 0}, {0, 0, 0}, {0, 1, 0}, {0, 1, 4}, {0, 1, 8}, {16, 0, 0}, {12, 1, 0}, {16, 1, 0}, {12, 1, 4}};
+    {0, 0, 0}, {0, 0, 0}, {0, 1, 0}, {0, 1, 4}, {0, 1, 8}, {16, 0, 0}, {12, 1, 0}, {16, 1, 0}, {12, 1, 4},
+    {20, 0, 0}, {24, 0, 0}};
 /* the K taps (dilation d) of frames f0 .. f0+n-1 of the block (the block starts at ring position w) into X columns 2..;
  * kick: this core drives the vector unit */
 static void pxn_gather(const int32_t *ring, int32_t len, int32_t w, int K, int d, int f0, int n, int kick)

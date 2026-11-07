@@ -337,7 +337,7 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 13: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 14: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -349,13 +349,14 @@ static void audio_bench(void)
         b_str(l, pxn_rdq_in_use() ? "% >Q" : pxn_rdot_chosen() ? "% >R" : "% >G");
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         fm1_wdt_feed();
-        static const char *M[PXN_MODES] = {"C", " V", " B0 ", " B4 ", " B8 ", "2C ", " V12 ", " V16 ", " V12C4 "};
+        static const char *M[PXN_MODES] = {"C", " V", " B0 ", " B4 ", " B8 ", "2C ", " V12 ", " V16 ", " V12C4 ",
+                                           " 2C20 ", " 2C24 "};
         for (int m = 0; m < PXN_MODES; m++) {
-            if (m == 0 || m == 5) l[0] = 0;
+            if (m == 0 || m == 5 || m == 9) l[0] = 0;
             uint32_t t = px_nam_tuned(m);
             b_str(l, M[m]);
             if (t) b_num(l, t * 100u / (A_BUDGET * 2u)); else b_str(l, "-");
-            if (m == 4) { lcd_text(4, y, l, GRN, UI_BG, 1); y += 12; }
+            if (m == 4 || m == 8) { lcd_text(4, y, l, GRN, UI_BG, 1); y += 12; }
         }
         b_str(l, " >"); b_num(l, (uint32_t)pxn_mode());
         lcd_text(4, y, l, GRN, UI_BG, 1); y += 14;
@@ -371,6 +372,26 @@ static void audio_bench(void)
         uint32_t pct = b_engine(&pp);
         l[0] = 0; b_str(l, N[c]); b_num(l, pct); b_str(l, " %");
         lcd_text(4, y, l, pct <= 85u ? GRN : RED, UI_BG, 1); y += 12;
+    }
+    {   /* diagnostic 14: each block of 18 5150 RHYTHM and 01 TWIN CLEAN alone (AMP off), % of real time */
+        static const char *BN[PX_NBLK] = {"GT", "CP", "PI", "SF", "DR", "AM", "CB", "EQ", "MO", "DL", "RV", "SY"};
+        for (int c = 0; c < 2; c++) {
+            px_preset_t q;
+            px_preset_factory(&q, c ? 0 : 17);
+            l[0] = 0; b_str(l, c ? "01:" : "18:");
+            for (int z = 0; z < PX_NBLK; z++) {
+                if (!q.on[z] || z == PX_B_AMP) continue;
+                px_preset_t r = q;
+                for (int k = 0; k < PX_NBLK; k++) r.on[k] = k == z;
+                b_str(l, " "); b_str(l, BN[z]); b_num(l, b_engine(&r));
+            }
+            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        }
+        px_preset_t q;
+        px_preset_factory(&q, 17);
+        for (int k = 0; k < PX_NBLK; k++) q.on[k] = 0;
+        l[0] = 0; b_str(l, "ALL OFF "); b_num(l, b_engine(&q)); b_str(l, "%");
+        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     }
     lcd_text(4, y + 4, "100% = REAL TIME. PLEASE TAKE A PHOTO", UI_ACC, UI_BG, 1);
     for (int i = 0; i < 120; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
