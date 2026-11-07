@@ -339,27 +339,16 @@ static void audio_bench(void)
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
     /* cycles at 360 MHz (x 100) for one loop of each instruction kind, then the parts of a NAM layer */
     int32_t *pool = px_nam_scratch();
-    /* v37 diagnostic 8: the vector unit's cost a multiply-add (cycles at 360 MHz x 100; 32 dot products of 20 words a
-     * command) with 32-bit and 16-bit weights; then the ways of running the network as timed at start-up (% of real
-     * time, NAM alone): the CPU, the unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores
-     * (CPU1 taking 16 or 12 frames of 32), with the unit beside CPU0 or not */
+    /* v37 diagnostic 9: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+     * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
+     * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather) by hand */
     {
-        int32_t *xp = pool, *wp = pool + 30000, *zp = pool + 31000;
-        for (int i = 0; i < 1000; i++) { pool[i] = pool[30000 + i] = 3000 - i * 7; }
-        if (pxn_vec_check() >= 0) {
-            l[0] = 0; b_str(l, "VEC W32 ");
-            b_fix2(l, pxn_bench_vplace(xp, wp, zp, 80, b_ticks, 64, 0) * 1500u / (64u * 640u));
-            b_str(l, " W16 "); b_fix2(l, pxn_bench_vplace(xp, wp, zp, 80, b_ticks, 64, 1) * 1500u / (64u * 640u));
-            b_str(l, pxn_y16_in_use() ? " ON" : " OFF");
-            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-            fm1_wdt_feed();
-        } else { lcd_text(4, y, "VECTOR UNIT: OFF", RED, UI_BG, 1); y += 12; }
-        l[0] = 0; b_str(l, "POST/F "); b_fix2(l, pxn_bench_post(pool, b_ticks, 64, 0) * 15u * 100u / (64u * 32u));
-        b_str(l, " POST2/F "); b_fix2(l, pxn_bench_post(pool, b_ticks, 64, 1) * 15u * 100u / (64u * 32u));
+        l[0] = 0; b_str(l, "RDOT "); b_str(l, pxn_rdot_in_use() ? "HAND" : "C");
+        b_str(l, "  POST2/F "); b_fix2(l, pxn_bench_post(pool, b_ticks, 64, 1) * 15u * 100u / (64u * 32u));
         b_str(l, pxn_post2_in_use() ? " ON" : " OFF");
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         fm1_wdt_feed();
-        static const char *M[PXN_MODES] = {"CPU", " VEC", " B0 ", " B4 ", " B8 ", "2C ", " 2CV12 ", " 2CV16 ", " 2CV12C4 "};
+        static const char *M[PXN_MODES] = {"C", " V", " B0 ", " B4 ", " B8 ", "2C ", " V12 ", " V16 ", " V12C4 "};
         for (int m = 0; m < PXN_MODES; m++) {
             if (m == 0 || m == 5) l[0] = 0;
             uint32_t t = px_nam_tuned(m);

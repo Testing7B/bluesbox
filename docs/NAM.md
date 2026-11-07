@@ -63,20 +63,19 @@ trained at 44.1 kHz and are not affected.
 - `engine/px_nam.c`: the network in fixed point (activations with 20 fraction bits, weights with 24, 64-bit sums),
   checked against a float reference (`tools/nam_a2.py`) for every factory model by `tests/test_nam.py`: about 99 dB
   signal to error.
-- Blocks of 32 frames, layer by layer: each frame's inputs to the layer are gathered into one row (3 words moved
-  by one instruction), then each output is a dot product with 4 frames at a time (a weight read once for 4 frames),
-  then LeakyReLU, the head sum and the residual. On the pedal these three steps are hand-written (pi32v2 assembly:
-  hardware loops, multiply-adds paired with loads, no branch per sample), because this CPU has no data cache in front
-  of its RAM and a taken branch costs about 8 cycles. At start-up they are run against the C versions on a test
-  pattern, and the C versions are used if they differ by a single bit.
+- Blocks of 32 frames, layer by layer. On the CPU, each output channel of a layer is computed for 4 frames at a time
+  straight from the layer's history ring (`rdot`): for each kernel tap, the 4 frames' 3 channels sit side by side in
+  the ring (12 words), so a weight is read once for 4 frames and no input is copied (where a tap's 4 frames wrap
+  round the ring, those 12 words are copied first). Then LeakyReLU, the head sum and the residual (`post`). On the
+  pedal these are hand-written (pi32v2 assembly: multiply-adds paired with loads, 3 words moved by one instruction,
+  no branch per sample), because this CPU has no data cache in front of its RAM and a taken branch costs about 8
+  cycles. At start-up they are run against the C versions on a test pattern, and the C versions are used if they
+  differ by a single bit.
 - The dot products can also run on the chip's vector unit (in its FFT block: one command computes a row of weights
-  against many X rows, beside the CPU). In that mode the block is cut in two halves, and half B of a layer never needs
-  the next layer's half A: so while the unit computes one half, the CPU gathers or posts the other, and may compute
-  the last 4 or 8 frames of a half itself. The unit costs about 4.8 cycles a multiply-add with 32-bit weights (about as
-  much as the CPU: it is limited by its reads); if its start-up check passes with 16-bit weights, the models are
-  loaded with each weight row on 16 bits (the row's largest weight sets a shift, so that the CPU's 32-bit row is
-  exactly the 16-bit one shifted: both give the same result). That adds an error 65 to 85 dB below the signal, far
-  below each model's own error against its amp.
+  against many X rows, beside the CPU; each frame's inputs to the layer are then gathered into one X row). The block
+  is cut in two halves, and half B of a layer never needs the next layer's half A: so while the unit computes one
+  half, the CPU gathers or posts the other, and may compute the last 4 or 8 frames of a half itself. The unit costs
+  about 4.8 cycles a multiply-add on the pedal, about as much as the CPU, wherever its data sits.
 - Two cores: frame t of a layer needs only frames t and earlier of the layer before. So CPU1 takes the first 12 or 16
   frames of each 32-frame block through all 23 layers without ever waiting, and CPU0 the rest, waiting before each
   layer until CPU1 has posted the one before (one counter). With a NAM amp in two-core mode the whole audio block runs

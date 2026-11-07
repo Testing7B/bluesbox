@@ -22,13 +22,13 @@
 - The 8 fitted amps of v34 stay available as AMP types, and your saved presets keep the amp they use.
 
 ## Faster engine
-- The NAM network has hand-written routines for the pedal's CPU (blocks of 32 frames, a weight read once for 4
-  frames, multiply-adds paired with loads), checked against the C versions at every start-up.
-- It can also use the chip's **vector unit** (in its FFT block) for the dot products, beside the CPU (the block cut in
-  two halves: while the unit computes one, the CPU prepares or finishes the other), with the weights on 16 bits when
-  the unit reads them (fewer reads; the error this adds is far below each model's own), and the **second core**: with a
-  NAM amp, CPU0 runs the block and CPU1 takes the first frames of each network block (earlier frames never need later
-  ones, so CPU1 never waits). At start-up the pedal times the ways it can run the network and keeps the fastest.
+- The NAM network has hand-written routines for the pedal's CPU, checked against the C versions at every start-up:
+  each layer is read straight from its history ring (no copy), 4 frames at a time, a weight read once for the 4,
+  multiply-adds paired with loads.
+- It can use the chip's **vector unit** (in its FFT block) for the dot products beside the CPU, and the **second
+  core**: with a NAM amp, CPU0 runs the block and CPU1 takes the first frames of each network block (earlier frames
+  never need later ones, so CPU1 never waits). At start-up the pedal times the ways it can run the network and keeps
+  the fastest.
 - A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
 
 ## For developers

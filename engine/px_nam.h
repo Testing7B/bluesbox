@@ -26,7 +26,6 @@
 #define PXN_QA     20                   /* activations: fraction bits */
 #define PXN_QW     24                   /* weights: fraction bits */
 #define PXN_LOOK   6331                 /* sum of (kernel - 1) x dilation */
-#define PXN_T2(T)  (((T) + 1) & ~1)    /* a 16-bit row's stride */
 #define PXN_RING   (PXN_LOOK + (PXN_HK - 1) + (PXN_NL + 1) * PXN_N)   /* frames in all rings (head included) */
 
 
@@ -35,19 +34,14 @@ typedef struct {
     int32_t len, w;                     /* ring length (lookback + PXN_N), where the next block is written */
     int16_t k, d;                       /* kernel, dilation */
     int32_t off;                        /* this layer's weight rows in pxn_model.wa */
-    int32_t off16;                      /* and in pxn_model.wa16 (rows of PXN_T2(row length): 4-byte aligned) */
     int32_t rr[12];                     /* its residual 1x1: 3 x {w[o][0..2] Q24, bias[o] Q20} */
     int32_t rr2[12];                    /* the same for the pedal's post2: w[o][c] by c then o, then the 3 biases */
-    uint8_t q[PXN_C];                   /* each row's shift for its 16-bit copy (pxn_model.wa16): z = sum >> q */
 } pxn_layer;
 
 typedef struct {
     int32_t wa[1542 + 4];               /* each layer's 3 rows [mixin, bias, taps x channels], Q24 (+ slack) */
     int32_t rech[PXN_C];
     int32_t head[PXN_S + 4];            /* [0, bias, 16 taps x 3 channels] Q24 (+ slack) */
-    int16_t wa16[1552] __attribute__((aligned(4)));   /* the same rows on 16 bits for the vector unit, if it reads */
-    int16_t head16[PXN_S + 6] __attribute__((aligned(4)));   /* them (then wa = wa16 << (24 - q)) */
-    uint8_t hq;
     float out_gain;                     /* head_scale / 2^20 */
     pxn_layer L[PXN_NL];
     int32_t hlen, hw;                   /* head ring */
@@ -74,7 +68,6 @@ uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, in
 uint32_t pxn_bench_dot(int32_t *x, int32_t *w, int32_t *z, int vec, uint32_t (*ticks)(void), int reps);
 uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps, int v2);
 uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nloop, int xs, int zs, int reps, int start_only);
-uint32_t pxn_bench_vplace(const int32_t *x, const int32_t *w, int32_t *z, int xs, uint32_t (*ticks)(void), int reps, int y16);
 /* how the blocks run: 0 the CPU alone, 1 each dot product on the vector unit in turn, 2..4 the vector unit and the
  * CPU at once (half a block on the unit while the CPU prepares or finishes the other half; the CPU also takes 0, 4 or
  * 8 frames of each half's dot products itself), 5..8 two cores (the other core takes the block's first 16 or 12
@@ -88,7 +81,7 @@ int pxn_dual(void);                     /* 1 = the mode in use wants the other c
 int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES]);
 int pxn_mode(void);
 int pxn_post2_in_use(void);
-int pxn_y16_in_use(void);
+int pxn_rdot_in_use(void);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */
