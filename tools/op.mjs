@@ -7,6 +7,7 @@
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 //   node tools/op.mjs rescue [--write] [options]   (restore a looping BlackBox from its UBOOT state; read-only without --write; docs/RESCUE.md)
 //   node tools/op.mjs rescue-check   (the UBOOT rescue tool against a simulated pedal: Python 3 only, no Docker)
+//   node tools/op.mjs sim [--port 8766] [--flash FILE] [--reset] | --update FLASH.bin   the hosted simulated pedal
 // NATIVE=1 runs the commands on this machine (toolchain from firmware/setup.sh) instead of in the container.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -75,6 +76,8 @@ const commands = {
     const rescue = spawnSync(python[0], [...python.slice(1), "tools/uboot_rescue.py", "--check"], { cwd: root, encoding: "utf8" });
     if (rescue.error) console.log("note rescue (looping pedal): Python 3 not found, `make rescue` is unavailable");
     else for (const l of rescue.stdout.split("\n").filter(Boolean)) console.log(l.startsWith("FAIL") ? `note rescue: ${l.slice(5)}` : `${l.slice(0, 4)} rescue: ${l.slice(5)}`);
+    const cc = spawnSync(process.env.CC || "cc", ["--version"], { stdio: "ignore" });
+    console.log(cc.error || cc.status !== 0 ? "note no C compiler (cc): `sim`, the hosted simulated pedal, needs one (Xcode command line tools, build-essential)" : "ok   C compiler for `sim`");
     if (process.arch === "arm64") console.log("note ARM machine: the linux/amd64 toolchain runs under emulation (a `test` takes about 1 minute)");
     return bad;
   },
@@ -117,6 +120,7 @@ const commands = {
     if (r.error) fail("Python 3 is needed for the rescue tool tests (python.org).");
     return r.status ?? 1;
   },
+  sim: (args) => exec(process.execPath, ["tools/sim.mjs", ...args]),   // the host's own Node and C compiler: no container
   render([input, output, preset]) {
     if (!input) fail("usage: render in.wav [out.wav] [preset 1..52]");
     const rel = inside(input);

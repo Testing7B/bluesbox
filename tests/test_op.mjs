@@ -23,6 +23,7 @@ chmodSync(join(fakebin, "docker"), 0o755);
 const root = join(tmp, "work");
 mkdirSync(join(root, "tools"), { recursive: true });
 cpSync(join(repo, "tools/op.mjs"), join(root, "tools/op.mjs"));
+cpSync(join(repo, "tools/sim.mjs"), join(root, "tools/sim.mjs"));
 
 function op(args, { env = {}, cwd = root, path = fakebin, script = join(root, "tools/op.mjs") } = {}) {
   rmSync(log, { force: true });
@@ -135,6 +136,10 @@ assert.ok(rc.calls.every((c) => c[0] !== "sudo"));
 rmSync(rlog, { force: true });
 op(["doctor"], { path: `${fakebin}:${rescuebin}` });
 assert.deepEqual(readFileSync(rlog, "utf8").trim().split("\n").at(-1).split("\t"), ["python3", "tools/uboot_rescue.py", "--check"], "doctor checks the rescue prerequisites");
+r = op(["sim", "--help"]);
+assert.equal(r.status, 0, "sim is passed to tools/sim.mjs");
+assert.match(r.err, /usage: node tools\/op\.mjs sim/, "sim prints its own usage");
+assert.deepEqual(r.calls, [], "sim runs on the host: no Docker");
 
 const make = spawnSync("make", ["--version"], { encoding: "utf8" });
 if (make.status === 0) {
