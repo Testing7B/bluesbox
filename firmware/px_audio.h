@@ -46,7 +46,7 @@ void *os_current_task_rom(void) { return 0; }
 void cpu_assert_debug(void) { }
 void P33_SYSTEM_RESET(void) { for (;;) ; }
 
-#if !OP_BLE_TEST   /* the ble build has a real heap (ble/ble_os.c); iis_open draws its block from it */
+#if !OP_BLE   /* with Bluetooth there is a real heap (ble/ble_os.c); iis_open draws its block from it */
 static uint8_t jl_heap[4096] __attribute__((aligned(8)));   /* iis_open: 2 channels x 8 x sr_points (256) */
 void *malloc(unsigned n) { return (n <= sizeof jl_heap) ? jl_heap : 0; }   /* single block: iis_open */
 void free(void *p) { (void)p; }
@@ -229,10 +229,13 @@ static void a_collect(void)                            /* collects the block in 
 
 /* ---- tuner: the interrupt stores the input decimated by 4 (11025 Hz); the main loop estimates the note ---- */
 #define TN_N 1024u
-static float tn_buf[TN_N];
+/* v37: both 4 KB buffers in the cache RAM (px_cacheram.h, app.ld CRAM: CPU-only data, the RAM is full with Bluetooth); without
+ * it (pxc_init failed) the tuner shows nothing */
+static float tn_buf[TN_N] __attribute__((section(".cram.tuner")));
 static volatile uint32_t tn_w;
 static void tn_capture(const float *x, uint32_t n)
 {
+    if (pxc_status != PXC_READY) return;
     uint32_t w = tn_w;
     for (uint32_t i = 0; i + 3u < n; i += 4u) {
         tn_buf[w] = (x[i] + x[i + 1u] + x[i + 2u] + x[i + 3u]) * 0.25f;
@@ -240,13 +243,14 @@ static void tn_capture(const float *x, uint32_t n)
     }
     tn_w = w;
 }
-static float tn_lin[TN_N];
-static float tn_d[200];
+static float tn_lin[TN_N] __attribute__((section(".cram.tuner")));
+static float tn_d[200] __attribute__((section(".cram.tuner")));
 static float tuner_estimate(void)      /* frequency in Hz, or 0 (silence / unclear). YIN algorithm. */
 {
     const uint32_t W = 600u, TMIN = 10u, TMAX = 180u;  /* 61 Hz .. 1100 Hz at 11025 Hz */
     uint32_t w = tn_w;
     float e = 0.0f;
+    if (pxc_status != PXC_READY) return 0.0f;
     for (uint32_t i = 0; i < TN_N; i++) { tn_lin[i] = tn_buf[(w + i) & (TN_N - 1u)]; e += tn_lin[i] * tn_lin[i]; }
     if (e < (float)TN_N * 1.0e-6f) return 0.0f;        /* too weak: nothing to tune */
     const float *x = tn_lin + (TN_N - W - TMAX);

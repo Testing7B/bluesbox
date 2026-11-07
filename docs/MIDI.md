@@ -5,8 +5,8 @@ and tells the computer when you change the sound on the pedal. This page is the 
 checklist for the first test is [MIDI-TEST.md](MIDI-TEST.md).
 
 **Status.** Written and tested on a PC (host simulators, see "How it was checked"). Not yet tried on a real pedal. It ships
-as a separate test package (OpenPocket v37 MIDI TEST), not in the normal installer. **Bluetooth MIDI is only in the separate
-Bluetooth test image** ([BLE-TEST.md](BLE-TEST.md)).
+as a separate test package (OpenPocket v37 MIDI TEST), not in the normal installer. **Bluetooth MIDI** is in the v37 firmware,
+off until switched on from the MIDI page ([BLUETOOTH.md](BLUETOOTH.md)).
 
 ## What the pedal does
 
@@ -99,9 +99,10 @@ follow a tempo with another note value, set the delay's own TIME; this is not a 
 | CHANNEL | OMNI, 1 to 16 | OMNI |
 | SEND | ON, OFF | ON |
 | CLOCK > DELAY | ON, OFF | OFF |
+| BLUETOOTH | ON, OFF (v37: [BLUETOOTH.md](BLUETOOTH.md)) | OFF |
 
 The knob changes the row, PUSH goes to the next one (after the last it leaves), HOME leaves. The page also shows whether a
-host is connected and the last Program or Control Change received ("LAST: CC 25 = 127"), which is what to look at first when
+host is connected, what the Bluetooth radio is doing, and the last Program or Control Change received ("LAST: CC 25 = 127"), which is what to look at first when
 nothing happens. Leaving saves the settings only if you changed something (one flash write, about 0.3 s of silence, like SAVE).
 
 The settings are one byte in the header of the preset store (`firmware/px_store.h`). Older copies have 0 there, which means the
@@ -147,14 +148,14 @@ and the pedal's state; `firmware/ui.h` has the MIDI page; `firmware/px_store.h` 
 
 ## Bluetooth MIDI
 
-Bluetooth MIDI is not in this release. The Bluetooth test image (`make ble`, [BLE-TEST.md](BLE-TEST.md)) is a connectable BLE MIDI
-peripheral on JieLi's Apache-2.0 controller and host libraries. A write to the characteristic goes through
+The pedal is a connectable BLE MIDI peripheral on JieLi's Apache-2.0 controller and host libraries ([BLUETOOTH.md](BLUETOOTH.md);
+first built as a test image, [BLE-TEST.md](BLE-TEST.md)). The MIDI page's BLUETOOTH row switches it (settings byte bit 7, off by
+default). A write to the characteristic goes through
 `firmware/px_ble_midi.h` into the same `px_midi_decode` and `px_midi_in` as USB, so Program Change, Control Change, the clock and the
 page guards mean the same on both roads. It only receives: the pedal's own changes are not sent over Bluetooth.
 
-Before this can leave the test image it needs a setting to switch the radio off (saved in the store; default off, so a pedal that
-never uses it pays nothing), a measurement of the DSP load and glitches with a link up, and bonds that survive a power cycle. The
-transmit power must not exceed what the stock firmware uses.
+Still open: a measurement of the DSP load and glitches with a link up, and bonds that survive a power cycle. The transmit power
+is the stock firmware's (`bt_max_pwr_set(10, 5, 8, 9)`, as the SDK's start-up).
 
 ## How it was checked (and what was not)
 

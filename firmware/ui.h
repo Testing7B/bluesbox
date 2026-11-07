@@ -97,7 +97,8 @@ static int bat_percent(int mv)         /* a Li-ion cell at rest: 4.15 V full, 3.
     for (int i = 1; i < 12; i++) if (mv < V[i]) return P[i - 1] + (P[i] - P[i - 1]) * (mv - V[i - 1]) / (V[i] - V[i - 1]);
     return 100;
 }
-/* battery, top centre of PLAY: a cell icon + "78%" (green / amber / red), "USB" when the 5 V supply is there */
+/* battery, top centre of PLAY: a cell icon + "78%" (green / amber / red), "USB" when the 5 V supply is there, an empty cell and
+ * "--" while there is no reading (v37: shown, not hidden: the raw readings are on the tuner page, bat_raw) */
 static void draw_battery(int force)
 {
     static int last = -100;
@@ -105,21 +106,21 @@ static void draw_battery(int force)
     if (!force && key == last) return;
     last = key;
     const uint32_t x = 84u, y = 4u;                    /* icon 22 x 12 + tip, then the text */
-    if (pct < 0 && !usb) { lcd_rect(x, 0, 74, S_H, UI_PANEL); return; }
     uint16_t c = usb ? GRN : pct <= 15 ? RED : pct <= 30 ? YEL : GRN;
     lcd_rect(x, 0, 74, y, UI_PANEL); lcd_rect(x, y + 12u, 74, S_H - y - 12u, UI_PANEL);
     lcd_rect(x, y, 22, 1, UI_TXT); lcd_rect(x, y + 11u, 22, 1, UI_TXT);
     lcd_rect(x, y + 1u, 1, 10, UI_TXT); lcd_rect(x + 21u, y + 1u, 1, 10, UI_TXT);
     lcd_rect(x + 22u, y + 3u, 2, 6, UI_TXT); lcd_rect(x + 22u, y, 2, 3, UI_PANEL); lcd_rect(x + 22u, y + 9u, 2, 3, UI_PANEL);
-    uint32_t f = pct < 0 ? 18u : (uint32_t)pct * 18u / 100u;
+    uint32_t f = pct < 0 ? (usb ? 18u : 0u) : (uint32_t)pct * 18u / 100u;
     if (f) lcd_rect(x + 2u, y + 2u, f, 8, c);
     if (f < 18u) lcd_rect(x + 2u + f, y + 2u, 18u - f, 8, UI_PANEL);
     lcd_rect(x + 1u, y + 1u, 1, 10, UI_PANEL); lcd_rect(x + 20u, y + 1u, 1, 10, UI_PANEL);
     lcd_rect(x + 2u, y + 1u, 18, 1, UI_PANEL); lcd_rect(x + 2u, y + 10u, 18, 1, UI_PANEL);
     char b[8] = "USB";
-    if (!usb) { num3(b, (uint32_t)pct); int i = 0; while (b[i]) i++; b[i] = '%'; b[i + 1] = 0; }
+    if (!usb && pct < 0) { b[0] = '-'; b[1] = '-'; b[2] = 0; }
+    else if (!usb) { num3(b, (uint32_t)pct); int i = 0; while (b[i]) i++; b[i] = '%'; b[i + 1] = 0; }
     lcd_rect(x + 24u, y, 4, 12, UI_PANEL);
-    ft_box(x + 28u, 3, 46, b, &FT_SM, usb ? GRN : (pct <= 15 ? RED : UI_TXT), UI_PANEL, 0);
+    ft_box(x + 28u, 3, 46, b, &FT_SM, usb ? GRN : pct < 0 ? UI_DIM : (pct <= 15 ? RED : UI_TXT), UI_PANEL, 0);
 }
 
 /* ---- status bar / footer, shared ---- */
@@ -465,7 +466,7 @@ static void save_confirm(void)
 /* ===================================================== MIDI page ======== */
 /* hold FX: the MIDI settings (docs/MIDI.md). KNOB changes the selected row, PUSH moves to the next row and, after the
  * last one, leaves; HOME leaves. The settings are saved (a flash write, as SAVE) only if something changed. */
-enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_ROWS };
+enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_BLE, MI_ROWS };
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig;
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
@@ -480,30 +481,44 @@ static void midi_open(void)
 }
 static void midi_draw(void)
 {
-    uint32_t h = mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
-                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23;
+    uint32_t h = (mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
+                 (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23) ^ (uint32_t)mid_bt << 29;
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
-    static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY"};
+    static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY", "BLUETOOTH"};
     char v[MI_ROWS][8];
     if (mid_cfg.chan) { v[0][0] = (char)(mid_cfg.chan >= 10 ? '0' + mid_cfg.chan / 10 : ' '); v[0][1] = (char)('0' + mid_cfg.chan % 10); v[0][2] = 0; }
     else { v[0][0] = 'O'; v[0][1] = 'M'; v[0][2] = 'N'; v[0][3] = 'I'; v[0][4] = 0; }
-    v[1][0] = v[2][0] = 0;
+    v[1][0] = v[2][0] = v[3][0] = 0;
     b_str(v[1], mid_cfg.send ? "ON" : "OFF");
     b_str(v[2], mid_cfg.clock ? "ON" : "OFF");
+    b_str(v[3], mid_cfg.ble ? "ON" : "OFF");
     for (uint32_t r = 0; r < MI_ROWS; r++) {
-        uint32_t y = 44u + r * 36u;
+        uint32_t y = 36u + r * 29u;
         uint16_t bg = r == mi_row ? C_CARD : UI_BG;
-        lcd_rect(0, y, 240, 32, bg);
-        ft_box(8, y + 4u, 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
+        lcd_rect(0, y, 240, 27, bg);
+        ft_box(8, y + 6u, 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
         ft_box(140, y + 2u, 92, v[r], &FT_MD, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
     }
-    ft_box(0, 160, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
+    ft_box(0, 156, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
+    {   /* Bluetooth: what the radio does now (the setting above takes effect when the page closes; off needs a restart) */
+        const char *t = "BT: OFF";
+        uint16_t c = UI_DIM;
+        if (mid_bt == PXM_BT_NONE) t = "BT: NOT IN THIS FIRMWARE";
+        else if (mid_bt == PXM_BT_SKIPPED) { t = "BT: FAILED - SWITCH OFF AND ON"; c = RED; }
+        else if (mid_bt == PXM_BT_FAILED) { t = "BT: FAILED TO START"; c = RED; }
+        else if (!mid_cfg.ble && mid_bt != PXM_BT_OFF) t = "BT: OFF AFTER A RESTART";
+        else if (mid_bt == PXM_BT_STARTING) t = "BT: STARTING";
+        else if (mid_bt == PXM_BT_WAIT) t = "BT: VISIBLE AS \"OPENPOCKET\"";
+        else if (mid_bt == PXM_BT_LINK) { t = "BT: DEVICE CONNECTED"; c = GRN; }
+        else if (mid_cfg.ble) t = "BT: ON WHEN YOU LEAVE";
+        ft_box(0, 174, 240, t, &FT_SM, c, UI_BG, 1);
+    }
     char l[24]; l[0] = 0;
     if (mid_last[0] == PXM_PC) { b_str(l, "LAST: PC "); b_num(l, mid_last[1] + 1u); }
     else if (mid_last[0] == PXM_CC) { b_str(l, "LAST: CC "); b_num(l, mid_last[1]); b_str(l, " = "); b_num(l, mid_last[2]); }
     else b_str(l, "LAST: NONE");
-    ft_box(0, 186, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+    ft_box(0, 194, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
 }
 static void midi_close(void)
 {
@@ -517,7 +532,8 @@ static void midi_knob(int dd)
 {
     if (mi_row == MI_CHAN) mid_cfg.chan = (uint8_t)((mid_cfg.chan + 17u + (uint32_t)(dd > 0 ? 1 : 16)) % 17u);
     else if (mi_row == MI_SEND) mid_cfg.send ^= 1u;
-    else mid_cfg.clock ^= 1u;
+    else if (mi_row == MI_CLOCK) mid_cfg.clock ^= 1u;
+    else mid_cfg.ble ^= 1u;
 }
 static void midi_push(void) { if (++mi_row >= MI_ROWS) midi_close(); }
 
@@ -568,6 +584,22 @@ static void tuner_level(void)
     b[i] = 0;
     ft_box(0, 36, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
+/* v37: the battery's raw ADC readings (openpocket.c bat_read: bandgap, VBAT/4, 5 V/4; -1 = no conversion) and the two spare
+ * analog pins PA7 / PA8, for a photo when the gauge does not work */
+static uint32_t tn_last_raw = ~0u;
+static int r_str(char *b, int32_t v) { if (v < 0) { b[0] = '-'; b[1] = '-'; return 2; } char t[8]; t[0] = 0; b_num(t, (uint32_t)v); int i = 0; while (t[i]) { b[i] = t[i]; i++; } return i; }
+static void tuner_bat_raw(void)
+{
+    uint32_t h = 0;
+    for (int k = 0; k < 5; k++) h = h * 0x9E3779B1u + (uint32_t)bat_raw[k];
+    if (h == tn_last_raw) return;
+    tn_last_raw = h;
+    static const char *const N[5] = {"BG ", " VB ", " 5V ", " A7 ", " A8 "};
+    char b[48]; int i = 0;
+    for (int k = 0; k < 5; k++) { for (const char *p = N[k]; *p; p++) b[i++] = *p; i += r_str(b + i, bat_raw[k]); }
+    b[i] = 0;
+    ft_box(0, 206, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
+}
 #define TN_BAR_Y 172u
 static void tuner_open(void)
 {
@@ -579,9 +611,10 @@ static void tuner_open(void)
     ui_rbox(18, TN_BAR_Y - 2u, 204, 14, 5, C_BAR, UI_BG);
     lcd_rect(110, TN_BAR_Y - 2u, 20, 14, ui_dark(GRN));
     lcd_rect(119, TN_BAR_Y - 10u, 2, 30, UI_TXT);
-    ft_box(10, TN_BAR_Y + 22u, 40, "-50", &FT_SM, UI_DIM, UI_BG, 1);
-    ft_box(100, TN_BAR_Y + 22u, 40, "0", &FT_SM, UI_DIM, UI_BG, 1);
-    ft_box(190, TN_BAR_Y + 22u, 40, "+50", &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(10, TN_BAR_Y + 18u, 40, "-50", &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(100, TN_BAR_Y + 18u, 40, "0", &FT_SM, UI_DIM, UI_BG, 1);
+    ft_box(190, TN_BAR_Y + 18u, 40, "+50", &FT_SM, UI_DIM, UI_BG, 1);
+    tn_last_raw = ~0u;
     lcd_rect(0, F_Y, 240, 240u - F_Y, UI_PANEL);
     ft_box(0, F_Y + 3u, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_PANEL, 1);
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
@@ -591,6 +624,7 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
 {
     int note = -1, c = 0; float cents = 0.0f;
     tuner_level();
+    tuner_bat_raw();
     if (hz > 20.0f) {
         float st = 12.0f * logf(hz / 440.0f) * 1.44269504f;   /* semitones from A4 = 440 Hz */
         int r = (int)(st + (st >= 0 ? 0.5f : -0.5f));

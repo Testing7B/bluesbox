@@ -4,8 +4,12 @@ An optional build of OpenPocket that turns the pedal's Bluetooth radio on and ma
 **`OpenPocket`**. A Mac, a phone or a Chocolate Plus connects to it, and Program Change and Control Change then do what they do over
 USB ([MIDI.md](MIDI.md)). USB MIDI is not changed.
 
-The normal firmware and the installer's packages in `docs/firmware/` are built exactly as before: `make build` gives the
-same bytes with or without this feature in the tree. The test image is its own build target, `make ble`.
+> **v37: Bluetooth MIDI is now in the normal firmware** ([BLUETOOTH.md](BLUETOOTH.md)), switched on from the MIDI page. The
+> test image (`make ble`) is that same firmware with the radio always on and its state scrolling in the status area. The
+> stack guard is now on in both: the controller's task stacks moved to the cache RAM and the firmware raises the guard's
+> window to them (`OP_GUARD_STACK=0` is no longer needed). What follows is the test image's own history and reference.
+
+The test image is its own build target, `make ble`.
 
 > **Status: runs on a real BlackBox.** A Mac connected, found the service, and a Control Change switched a block and a Program Change
 > loaded a preset, with the state read back over USB. A Chocolate Plus on H paired by itself and its footswitches A to D changed

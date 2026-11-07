@@ -1,8 +1,10 @@
 #!/bin/sh
 # Build OpenPocket -> firmware/openpocket.bin (app), build/loader/ota.bin (update loader),
 #                    docs/firmware/*.fwsc (packages for the web installer)   (in the container: tools/op.mjs build)
-# OP_BLE=1 sh firmware/build.sh builds the Bluetooth MIDI test image instead (docs/BLE-TEST.md): the same
-#   firmware plus the JieLi controller and host (third_party/jieli-ble) -> firmware/openpocket-ble.bin and build/ble/*.fwsc.
+# v37: Bluetooth MIDI (the JieLi controller and host, third_party/jieli-ble; docs/BLUETOOTH.md) is part of the firmware.
+# OP_NOBLE=1 builds it without (the pre-v37 firmware's RAM and flash use).
+# OP_BLE=1 sh firmware/build.sh builds the Bluetooth test image instead (docs/BLE-TEST.md): the same firmware with the test
+#   image's presentation (the radio's state in the status area) -> firmware/openpocket-ble.bin and build/ble/*.fwsc.
 #   Nothing of the normal build's outputs is touched.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -20,10 +22,12 @@ if [ ! -x "$TC/pi32v2/bin/ld" ]; then
   echo "ERROR: linker '$TC/pi32v2/bin/ld' missing (incomplete toolchain)."
   exit 1
 fi
-# the stack guard: on, except in the Bluetooth test image (its task stacks are outside the guard window); app.ld refuses the
-# link if the guard is on and those stacks are outside. OP_GUARD_STACK=1 with OP_BLE=1 is how that check is shown to fire.
-GUARD_STACK=1; [ -n "$OP_BLE" ] && GUARD_STACK="${OP_GUARD_STACK:-0}"
-if [ -n "$OP_BLE" ]; then O="$HERE/build-ble"; APP="$HERE/openpocket-ble.bin"; PKG="$HERE/../build/ble"; BLEDEF="-DOP_BLE_TEST=1 -I$HERE/ble"
+# the stack guard: on in every build (v37: the controller's task stacks are in the cache RAM, and the firmware raises the guard
+# window's top to them before they run; app.ld refuses any other place for them). OP_GUARD_STACK=0 turns it off.
+GUARD_STACK="${OP_GUARD_STACK:-1}"
+WITHBLE=1; [ -n "$OP_NOBLE" ] && WITHBLE=""
+if [ -n "$OP_BLE" ]; then O="$HERE/build-ble"; APP="$HERE/openpocket-ble.bin"; PKG="$HERE/../build/ble"; BLEDEF="-DOP_BLE=1 -DOP_BLE_TEST=1 -I$HERE/ble"; WITHBLE=1
+elif [ -n "$WITHBLE" ]; then O="$HERE/build"; APP="$HERE/openpocket.bin"; PKG="$HERE/../docs/firmware"; BLEDEF="-DOP_BLE=1 -I$HERE/ble"
 else O="$HERE/build"; APP="$HERE/openpocket.bin"; PKG="$HERE/../docs/firmware"; BLEDEF=""; fi
 rm -rf "$O"; mkdir -p "$O"
 CC="$TC/pi32v2/bin/clang -target pi32v2"
@@ -55,9 +59,8 @@ $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF 
     -I"$BSP/chip" -I"$BSP/boards/fm1" -include "$O/channel.h" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
 $CC $FP -O2 -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_dsp.o"
 $CC $FP -O2 -fno-builtin -c "$HERE/px_math.c" -o "$O/px_math.o"
-BLEOBJ=""; MAPOPT=""
-if [ -n "$OP_BLE" ]; then
-  MAPOPT="-Map $O/openpocket.map"
+BLEOBJ=""; MAPOPT="-Map $O/openpocket.map"
+if [ -n "$WITHBLE" ]; then
   # JieLi's LE controller (LLVM bitcode, Apache-2.0, third_party/jieli-ble) -> pi32v2 objects, and our context switch
   mkdir -p "$O/jl"
   for b in "$HERE"/../third_party/jieli-ble/*/*.bc; do
@@ -83,6 +86,9 @@ syms=subprocess.run([f"{tc}/common/bin/objdump","-t",f"{out}/openpocket.elf"],ca
 def sym(n):
     m=re.search(rf"^([0-9a-f]+) .*\s{n}$",syms,re.M); return int(m.group(1),16) if m else None
 load=sym("_data_load"); rt_load=sym("_rt_load"); start=sym("_start")
+be,cl,ch=sym("_bss_end"),sym("_cram_lo"),sym("_cram_hi")
+if be: print(f"RAM       : {be-0x01C08000} of 98304 bytes ({98304-(be-0x01C08000)} free)")
+if cl is not None and ch is not None: print(f"cache RAM : {ch-cl} of 28672 bytes (the rest to the NAM network's vector unit)")
 assert start==0x02000120,hex(start or 0)
 img=bytearray(open(f"{out}/text.bin","rb").read())
 for at,part in sorted([(rt_load,open(f"{out}/rt.bin","rb").read()),(load,open(f"{out}/data.bin","rb").read())]):

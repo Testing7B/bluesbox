@@ -9,6 +9,10 @@
 #include <stdint.h>
 #define AUDIO_PROBE 0      /* 1 = audio test (find IN/OUT on the I2S) instead of the UI */
 #define DSP_CPU1 1         /* 1 = DSP engine on the 2nd core (automatic fallback to CPU0 on trouble) */
+#if AUDIO_PROBE             /* (no Bluetooth in the probe build) */
+#undef OP_BLE
+#define OP_BLE 0
+#endif
 #if DSP_CPU1 && !AUDIO_PROBE
 #define FM1_CPU1 1         /* fm1_irq.h hands 2nd-core faults to fm1_cpu1.h */
 #define FM1_CPU1_FALLBACK 1
@@ -310,8 +314,20 @@ static void fm1_fault(const fm1_crash_t *c)
 #ifndef OP_TAG
 #define OP_TAG ""
 #endif
-#ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). build.sh turns it off for the Bluetooth test image, */
-#define OP_GUARD_STACK 1    /* whose task stacks (ble_os.c) lie outside [_ustack_lo, _sstack_top]; app.ld checks this at link time */
+#ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). Bluetooth's task stacks are in the cache RAM, above */
+#define OP_GUARD_STACK 1    /* [_ustack_lo, _sstack_top]: ble_guard_window raises the top before they run (app.ld checks where they are) */
+#endif
+/* v37: Bluetooth MIDI (the JieLi controller and host, third_party/jieli-ble; docs/BLUETOOTH.md) is in every build: build.sh
+ * passes OP_BLE=1 (OP_NOBLE=1 leaves it out). OP_BLE_TEST (make ble) is the same firmware with the test image's presentation:
+ * the radio's state scrolling in the status area, "BLE TEST" at boot, the radio on whatever the setting. */
+#ifndef OP_BLE
+#define OP_BLE 0
+#endif
+#ifndef OP_BLE_TEST
+#define OP_BLE_TEST 0
+#endif
+#if OP_BLE_TEST && !OP_BLE
+#error "OP_BLE_TEST needs OP_BLE"
 #endif
 #define OP_VERSION "v" OP_VERSION_NUM OP_TAG   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
@@ -408,16 +424,31 @@ static int32_t adc_read2(uint32_t ch)
     return fm1_adc_read(ch);
 }
 
-/* ---- battery (v36): the chip's own VBAT / 4 channel through the PMU test bus, scaled by the 0.8 V bandgap
- * read the same way (JieLi AC79 SDK, cpu/wl82/key/adc_api.c): mV = 4 x 800 x vbat / vbg. P3_ANA_CON4: bit 0
- * PMU_DET_EN, bits 3:1 the PMU channel (0 VBG, 5 VBAT/4, 6 LDO5V/4); WLA_CON0 bits 17:15 = 4: the PMU on the ADC's
- * channel 15, bit 14: the bandgap path. Everything is put back as it was after each reading. */
+/* ---- battery (v36, fixed v37): the chip's own VBAT / 4 channel through the PMU test bus, scaled by the 0.8 V bandgap
+ * read the same way (JieLi AC79 SDK, cpu/wl82/key/adc_api.c, and cpu.a p33.c adc_pmu_detect_en): mV = 4 x 800 x vbat / vbg.
+ * P3_ANA_CON4: bit 0 PMU_DET_EN, bits 3:1 the PMU channel (0 VBG, 5 VBAT/4, 6 LDO5V/4), bit 5 VBG_BUF_EN: the buffer that
+ * drives the test bus, which v36 never turned on (the SDK's adc_pmu_detect_en always does): no reading, so no icon.
+ * WLA_CON0 (the analog block shared with the radio): bits 17:15 = 4 the PMU on the ADC's channel 15, bit 14 the bandgap path;
+ * bits 7:0 the bias, as the SDK's __adc_init sets them (bias on, current select 2, its test output off); PLL_CON1 bit 16
+ * (SYSPLL1_TEST_EN) must be off too, or the PLL's test output shares the bus. The bias stays on (the radio uses the same);
+ * the test-bus selections are put back after each reading. */
 #define P3_ANA_CON4 0x04u
+#define FM1_ANA_PLL_CON1 (*(volatile uint32_t *)0x119A4u)   /* JL_ANA->PLL_CON1 (WL82.h: 40 WLA_CON words, PLL_CON0, PLL_CON1) */
 static int bat_mv, bat_usb_mv;         /* last readings (0: none) */
+/* the bandgap's factory trim (get_vbg_trim in the SDK: the boot loader's parameter block, offset 14, low byte; read in
+ * fm1_cstart before the vector table covers that block): 800 mV + or - 3 mV per step (bits 6:2), bit 7 = minus */
+static uint32_t op_vbg_trim;           /* 0x100 | the byte, 0: not found */
+static int vbg_mv(void)
+{
+    if (!(op_vbg_trim & 0x100u)) return 800;
+    int d = (int)((op_vbg_trim & 0x7Fu) >> 2) * 3;
+    return (op_vbg_trim & 0x80u) ? 800 - d : 800 + d;
+}
+static int32_t bat_raw[5] = {-1, -1, -1, -1, -1};   /* the raw values (tuner page): VBG, VBAT/4, 5V/4, PA7, PA8 */
 static int32_t pmu_conv(uint32_t sel)
 {
     uint32_t t, v = 0;
-    for (int k = 0; k < 3; k++) {                       /* 2 conversions to settle the mux, the 3rd counts */
+    for (int k = 0; k < 4; k++) {                       /* 3 conversions to settle the mux and the buffer, the 4th counts */
         FM1_ADC_CON_R = 0;
         if (sel == 0u) FM1_WLA_CON0 |= 1u << 14; else FM1_WLA_CON0 &= ~(1u << 14);
         FM1_ADC_CON_R = (FM1_ADC_CON_SDK & 0xF00Fu) | 0x40u | (15u << 8);
@@ -429,21 +460,31 @@ static int32_t pmu_conv(uint32_t sel)
     }
     return (int32_t)v;
 }
+static void pmu_sel(uint8_t c4, uint32_t ch)           /* adc_pmu_detect_en(ch): channel, VBG buffer on, detect on */
+{
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xD0u) | 0x20u | 1u | (ch << 1)));
+}
 static void bat_read(void)
 {
     uint8_t c4 = fm1_p33_read(P3_ANA_CON4);
-    uint32_t w = FM1_WLA_CON0;
-    FM1_WLA_CON0 = (w & ~(7u << 15)) | (4u << 15);
-    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (0u << 1)));
+    uint32_t w = FM1_WLA_CON0, pll = FM1_ANA_PLL_CON1;
+    if (!(w & 1u)) w = (w & ~0x1Fu) | 0x05u;           /* bias off: on, IGEN_SEL 2 (kept; when on, the radio set it: left alone) */
+    FM1_WLA_CON0 = (w & ~((7u << 15) | (1u << 14) | 0xE0u)) | (4u << 15);   /* the PMU on channel 15; bias test output off */
+    if (pll & (1u << 16)) FM1_ANA_PLL_CON1 = pll & ~(1u << 16);
+    pmu_sel(c4, 0u);
     int32_t vbg = pmu_conv(0u);
-    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (5u << 1)));
+    pmu_sel(c4, 5u);
     int32_t vb = pmu_conv(5u);
-    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xF0u) | 1u | (6u << 1)));
+    pmu_sel(c4, 6u);
     int32_t v5 = pmu_conv(6u);
-    fm1_p33_write(P3_ANA_CON4, c4);
-    FM1_WLA_CON0 = w;
-    if (vbg < 100 || vbg > 900 || vb < 0) { bat_mv = 0; return; }
-    int mv = (int)(3200 * vb / vbg), mu = v5 < 0 ? 0 : (int)(3200 * v5 / vbg);
+    fm1_p33_write(P3_ANA_CON4, (uint8_t)(c4 | 0x20u));               /* as found, the buffer left on (as the SDK) */
+    FM1_WLA_CON0 = (FM1_WLA_CON0 & ~((7u << 15) | (1u << 14) | 0xE0u)) | (w & ((7u << 15) | (1u << 14) | 0xE0u));
+    if (pll & (1u << 16)) FM1_ANA_PLL_CON1 = pll;
+    bat_raw[0] = vbg; bat_raw[1] = vb; bat_raw[2] = v5;
+    bat_raw[3] = fm1_adc_read(0u); bat_raw[4] = fm1_adc_read(1u);   /* PA7, PA8: spare analog pins (a divider on some unit?) */
+    if (vbg < 100 || vbg > 900 || vb < 0) { bat_mv = 0; bat_usb_mv = 0; return; }
+    int k = 4 * vbg_mv(), mv = (int)(k * vb / vbg), mu = v5 < 0 ? 0 : (int)(k * v5 / vbg);
+    if (mv < 2500 || mv > 4700) { bat_mv = 0; bat_usb_mv = mu; return; }   /* not a cell: no gauge */
     bat_mv = bat_mv ? (bat_mv * 3 + mv) / 4 : mv;      /* a little smoothing */
     bat_usb_mv = mu;
 }
@@ -561,7 +602,7 @@ static void nm_changed(uint32_t s)   /* v37: a user model was written or erased:
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
     audio_apply();
 }
-#if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
+#if OP_BLE                  /* the log channel (firmware/ble/ble_diag.h, node tools/op.mjs log): the firmware with Bluetooth answers DIAG */
 #define ED_DIAG_LINES 5u
 #define ED_DIAG_LEN 224u
 static void ed_diag_line(uint32_t i, char *out);
@@ -576,7 +617,7 @@ static void ed_diag_line(uint32_t i, char *out);
 #endif
 #include "led_probe.h"      /* the LED map (issue #8) */
 #endif
-#if OP_BLE_TEST             /* the Bluetooth MIDI test image (docs/BLE-TEST.md): make ble */
+#if OP_BLE                  /* Bluetooth MIDI (docs/BLUETOOTH.md; the test image: docs/BLE-TEST.md, make ble) */
 #include "ble/ble_os.c"
 #include "ble/ble_libc.c"
 #include "ble/ble_cfg.c"
@@ -592,6 +633,44 @@ static void ed_diag_line(uint32_t i, char *out)
     else if (i == 2u) ble_test_line(out);
     else if (i == 3u) ble_midi_line(out);
     else ble_trace_line(out);
+}
+
+/* v37: the radio in the release. A reset while it was starting (a hang the watchdog ended, a crash) is remembered in .noinit:
+ * the next boots leave it off until the pedal is switched off and on again (the MIDI page says so), so a radio that does not
+ * start on some unit costs one restart, never a loop. */
+#define BLE_BG_MAGIC 0x424C4547u
+static volatile struct { uint32_t magic, starting, skipped; } ble_bg __attribute__((section(".noinit")));
+static int ble_started;
+extern char _ble_stack_hi[];
+static void ble_guard_window(void)      /* the stack guard's window up to the top of the controller's task stacks (cache RAM) */
+{
+#if OP_GUARD_STACK
+    fm1__dbg_unlock();
+    FM1_EMU_CON &= ~(1u << 3);
+    FM1_EMU_SSP_H = (uint32_t)(uintptr_t)_ble_stack_hi;
+    FM1_EMU_USP_H = (uint32_t)(uintptr_t)_ble_stack_hi;
+    FM1_EMU_CON |= 1u << 3;
+    fm1__dbg_lock();
+#endif
+}
+static void ble_go(void)                /* the radio on, once a boot (main loop) */
+{
+    if (ble_started) return;
+    ble_started = 1;
+    if (pxc_status != PXC_READY) { ble_fail(BLE_FAIL_NO_RAM, (int32_t)pxc_status); return; }   /* its tasks live there */
+    ble_guard_window();
+    ble_bg.starting = 1;
+    ble_test_start();
+}
+static void ble_service(void)           /* every loop: the controller's tasks, and the state the MIDI page shows */
+{
+    if (ble_started) {
+        ble_test_poll();
+        if (ble_bg.starting && (ble_state == BLE_ADV || ble_state == BLE_FAILED)) ble_bg.starting = 0;   /* it did not hang */
+    }
+    mid_bt = !ble_started ? (ble_bg.skipped ? PXM_BT_SKIPPED : PXM_BT_OFF)
+           : ble_state == BLE_FAILED ? PXM_BT_FAILED : ble_state != BLE_ADV ? PXM_BT_STARTING
+           : ble_conn ? PXM_BT_LINK : PXM_BT_WAIT;
 }
 #endif
 
@@ -691,9 +770,13 @@ static void app_main(void)
             ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
             ft_box(0, 126, 240, OP_VERSION " SAFE MODE", &FT_SM, UI_DIM, UI_BG, 1);
         }
-#if OP_BLE_TEST
+#if OP_BLE
         ble_last = (ble_boot_t){ st != ST_OK || crashed, crashed, st, op_diag.blocks, op_diag.load, op_diag.peak, op_diag.nans, op_diag.c1,
                                  op_diag.loops, fm1_crash.vec, fm1_crash.pc, fm1_crash.rets, fm1_crash.dbg, fm1_crash.emu, fm1_crash.uptime_ms };
+#endif
+#if OP_BLE
+        if (ble_bg.magic != BLE_BG_MAGIC) { ble_bg.magic = BLE_BG_MAGIC; ble_bg.starting = 0; ble_bg.skipped = 0; }   /* power-on */
+        if (ble_bg.starting) { ble_bg.starting = 0; ble_bg.skipped = 1; }   /* the last boot ended while the radio started */
 #endif
         op_diag.crash_seen = cc; op_diag.safe = (uint32_t)safe;
         op_diag.blocks = op_diag.load = op_diag.peak = op_diag.nans = op_diag.c1 = op_diag.loops = 0;
@@ -721,7 +804,11 @@ static void app_main(void)
 #if DSP_CPU1
     px_nam_helper(a_hrun, a_hwait);      /* v37: CPU1 can take a part of the NAM network */
 #endif
-    if (pxc_status == PXC_READY) px_nam_fast((void *)PXC_BEGIN, PXC_END - PXC_BEGIN);   /* the vector unit's inputs */
+    {   /* the vector unit's inputs: what the cache RAM has left after the CPU-only buffers (app.ld .cram) */
+        extern char _cram_hi[];
+        uint32_t lo = (uint32_t)(uintptr_t)_cram_hi;
+        if (pxc_status == PXC_READY && lo < PXC_END) px_nam_fast((void *)(uintptr_t)lo, PXC_END - lo);
+    }
     px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     leds_init();                         /* the button lights: all off loaded, then on (PC7 low), as stock */
@@ -731,16 +818,19 @@ static void app_main(void)
     ui_render();
     op_stage(ST_RUN, 0);
 #endif
-#if OP_BLE_TEST
-    if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
-        ble_test_start();                /* radio on, controller and host up, advertising (the pedal keeps working) */
+#if OP_BLE
+    if (!safe && !ble_bg.skipped && (OP_BLE_TEST || mid_cfg.ble))   /* after a failed boot it stays off: the pedal runs */
+        ble_go();                        /* radio on, controller and host up, advertising (the pedal keeps working) */
+#else
+    mid_bt = PXM_BT_NONE;
 #endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {
         uint32_t now = ms_now();
         fm1_wdt_feed();
-#if OP_BLE_TEST
-        ble_test_poll();
+#if OP_BLE
+        ble_service();
+        if (!ble_started && !safe && !ble_bg.skipped && mid_cfg.ble && ui_mode != M_MIDI) ble_go();   /* switched on on the MIDI page */
 #endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
@@ -751,13 +841,17 @@ static void app_main(void)
             static uint32_t t_cpu;
             if (now - t_cpu >= 500u) {
                 t_cpu = now;
-                char c[10];
+                char c[16];
                 uint32_t l = a_bypass ? a_peak : a_load; int i = 0;
                 if (l > 999u) l = 999u;
                 if (safe) { c[i++]='S'; c[i++]='A'; c[i++]='F'; c[i++]='E'; c[i++]=' '; }
                 else if (a_bypass) { c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' '; }
                 else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
+                if (mid_bt == PXM_BT_LINK && i <= 5) {   /* a Bluetooth MIDI link: "BT C1 42%" */
+                    for (int k = i; k > 0; k--) c[k + 2] = c[k - 1];
+                    c[0] = 'B'; c[1] = 'T'; c[2] = ' '; i += 3;
+                }
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
@@ -915,7 +1009,12 @@ static void app_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
-    uint32_t vdc0, sys0, dcdc, rst0, pinr0;
+    uint32_t vdc0, sys0, dcdc, rst0, pinr0, trim = 0;
+    {   /* v37: the boot loader's parameter block (crt0 saved its address): the bandgap trim, before fm1_irq_init writes the
+         * vector table over it (0x01C7FE00..) */
+        uint32_t bp = *(volatile uint32_t *)0x01C07F28u;
+        if (bp >= 0x01C7FD50u && bp <= 0x01C7FFE0u && !(bp & 3u)) trim = 0x100u | (*(volatile uint16_t *)(uintptr_t)(bp + 14u) & 0xFFu);
+    }
     fm1_time_init();
     /* v31, issue #1: the stock firmware's first act is P3_PINR_CON = 0, the long-press reset off (BlackBox_020
      * f_0200698a). Left on, a pin held at its active level resets the chip every 4 s (the SDK offers 4 or 8 s):
@@ -946,6 +1045,7 @@ void fm1_cstart(void)
     op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
     op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
     op_pwr.rst = (uint8_t)rst0; op_pwr.pinr = (uint8_t)pinr0;
+    op_vbg_trim = trim;
     fm1_guard_enable((OP_GUARD_STACK ? FM1_GUARD_STACK : 0) | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;

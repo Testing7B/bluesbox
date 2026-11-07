@@ -32,6 +32,7 @@ static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static int a_level_db(int ch) { return ch ? -84 : -62; }
 static volatile uint8_t a_tmute;
 static int bat_mv = 3920, bat_usb_mv = 0;
+static int32_t bat_raw[5] = {612, 287, -1, 3, 1023};   /* bat_read's raw ADC values (the tuner page shows them) */
 
 static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }
 static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }
@@ -88,13 +89,22 @@ int main(int argc, char **argv)
     save_knob(1); save_draw(); shot(d, "save_other_slot");
     save_close(); ui_render(); status();
     tuner_open(); tuner_draw(110.5f); shot(d, "tuner_a_flat");
+    {   /* v37: no battery reading: the icon shows an empty cell and "--" (it was hidden) */
+        int m = bat_mv; bat_mv = 0; tuner_close(); poison(); ui_render(); status(); shot(d, "play_battery_unknown"); bat_mv = m;
+        tuner_open(); tuner_draw(110.5f);
+    }
     tuner_draw(110.0f); shot(d, "tuner_a_ok");
     tuner_close(); poison(); ui_render(); status(); shot(d, "play_after_tuner");
-    px_midi_cfg_unpack(&mid_cfg, 0);
+    px_midi_cfg_unpack(&mid_cfg, PXM_CFG_BLE);   /* Bluetooth on (v37: off by default) */
     midi_open(); midi_draw(); shot(d, "midi_defaults");
     midi_knob(1); midi_knob(1); midi_draw(); shot(d, "midi_channel_2");
     midi_push(); midi_knob(1); mid_usb_up = 1; mid_last[0] = PXM_CC; mid_last[1] = 25; mid_last[2] = 127; midi_draw(); shot(d, "midi_send_off_host_cc");
-    midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; midi_draw(); shot(d, "midi_clock_on_pc");
+    midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; mid_bt = PXM_BT_WAIT; midi_draw(); shot(d, "midi_clock_on_pc");
+    midi_push(); mid_bt = PXM_BT_LINK; midi_draw(); shot(d, "midi_bluetooth_connected");
+    midi_knob(1); midi_draw(); shot(d, "midi_bluetooth_off_after_restart");
+    if (mid_cfg.ble) { printf("midi: the BLUETOOTH row must switch Bluetooth off\n"); return 1; }
+    midi_knob(1); mid_bt = PXM_BT_SKIPPED; midi_draw(); shot(d, "midi_bluetooth_failed");
+    mid_bt = PXM_BT_OFF;
     midi_push(); poison(); uc.screen = -1; ui_invalidate(); ui_render(); status();
     if (midi_saved != 1 || ui_mode != M_CHAIN) { printf("midi: leaving the page after a change must save once and return to the chain\n"); return 1; }
     midi_open(); midi_close();

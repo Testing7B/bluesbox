@@ -56,7 +56,8 @@ static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const 
 { (void)x; (void)y; (void)w; (void)s; (void)f; (void)fg; (void)bg; (void)a; return 0; }
 #define UI_ACC 0
 #define UI_BG 0
-#define OP_BLE_TEST 1
+#define OP_BLE 1          /* Bluetooth built in (v37: every firmware) */
+#define OP_BLE_TEST 0
 static uint32_t ms_now(void) { return 0; }
 #include "px_midi_io.h"
 
@@ -65,7 +66,7 @@ static uint32_t pc(uint32_t ch, uint32_t n) { return 0xCu | (0xC0u | ch) << 8 | 
 static void reset(void)
 {
     mi_w = mi_r = mo_w = mo_r = 0; midi_in_overflow = 0; host_up = 1; ui_mode = M_CHAIN; ui_item = 0; master_vol = 80;
-    memset(&mid_cfg, 0, sizeof mid_cfg); mid_cfg.send = 1;
+    memset(&mid_cfg, 0, sizeof mid_cfg); mid_cfg.send = 1; mid_cfg.ble = 1;
     memset(&mid_tx, 0, sizeof mid_tx); px_midi_clock_reset(&mid_clk);
     cur_preset = 5; load_preset(5);
     px_midi_service();                              /* first look: the pedal learns what it is playing */
@@ -73,6 +74,7 @@ static void reset(void)
 
 int main(void)
 {
+    (void)mid_bt;                                   /* (the MIDI page's Bluetooth state: drawn by ui.h, not used here) */
     reset();
     midi_enqueue(pc(0, 12), 1);
     px_midi_service();
@@ -216,6 +218,12 @@ int main(void)
         px_midi_ble_write(tap0, sizeof tap0);
         px_midi_service();
         ok(PRESET.on[PX_B_DRIVE] == !was, "after a preset change the toggle flips what the new preset has");
+        mid_cfg.ble = 0;                            /* switched off on the MIDI page: the link stays until a restart, unheard */
+        was = PRESET.on[PX_B_DRIVE];
+        px_midi_ble_write(on, sizeof on); px_midi_ble_write(off, sizeof off); px_midi_ble_write(pc, sizeof pc);
+        cur_preset = 9; load_preset(9);
+        px_midi_service();
+        ok(cur_preset == 9 && ble_in_r == ble_in_w, "Bluetooth switched off: what still arrives is dropped, and the ring is emptied");
     }
     printf("\n%s\n", failed ? "MIDI glue tests FAILED" : "all MIDI glue tests passed");
     return failed ? 1 : 0;

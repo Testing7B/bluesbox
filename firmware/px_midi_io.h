@@ -22,7 +22,7 @@ static void midi_persist(void)                  /* the page's HOME: save the set
     if (st_ok) (void)st_commit();
 }
 
-#if OP_BLE_TEST
+#if OP_BLE
 /* what a Bluetooth write leaves here (px_midi_ble_write) goes through the same px_midi_in as USB. The writer is the Bluetooth
  * stack's task, which runs from the main loop (ble_poll), so nothing here races: a full ring only drops what does not fit. */
 #include "px_ble_midi.h"
@@ -80,8 +80,11 @@ static void px_midi_service(void)
         mi_r++;
         px_midi_in(pkt, ms, free_ui, &touched);
     }
-#if OP_BLE_TEST
-    while (ble_in_r != ble_in_w) px_midi_in(ble_in_q[ble_in_r++ % BLE_MQ], ms_now(), free_ui, &touched);
+#if OP_BLE
+    while (ble_in_r != ble_in_w) {              /* (switched off on the MIDI page: the link stays until a restart, unheard) */
+        uint32_t pkt = ble_in_q[ble_in_r++ % BLE_MQ];
+        if (OP_BLE_TEST || mid_cfg.ble) px_midi_in(pkt, ms_now(), free_ui, &touched);
+    }
 #endif
     if (midi_in_overflow && mi_r == mi_w) midi_in_overflow = 0;   /* usb.c stopped queueing on overflow: start over */
     if (touched) px_midi_tx_sync(&mid_tx, &PRESET, cur_preset);   /* what the host sent is not sent back */

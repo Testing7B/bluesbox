@@ -113,6 +113,7 @@ static void st_get(uint32_t k, px_preset_t *p);
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static uint32_t master_vol = 80;
 static int bat_mv = 3920, bat_usb_mv = 0;
+static int32_t bat_raw[5] = {612, 287, -1, 3, 1023};   /* bat_read's raw ADC values (the tuner page shows them) */
 static int a_level_db(int ch) { return ch ? -84 : -62; }
 static volatile uint8_t a_tmute;
 static float tuner_hz;

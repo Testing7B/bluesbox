@@ -27,7 +27,7 @@ static const volatile char OP_PRODUCT[32] __attribute__((used, aligned(4))) = "O
 #define FELUCCA_ID_PTR ((const char *)OP_PRODUCT + 11)
 
 #include "fm1_timer.h"
-#if OP_BLE_TEST
+#if OP_BLE
 static int ble_stall_tick(void);                /* ble/ble_status.h, included after this file */
 #endif
 #include "fm1_flash.h"
@@ -41,7 +41,7 @@ static volatile uint32_t px_t5_sub;
 void fm1_timer5_irq(void)                       /* 10 kHz; USB at 2 kHz */
 {
     fm1_timer5_ack();
-#if OP_BLE_TEST                                 /* a ble_poll that does not return: the crash screen says where (ble_status.h) */
+#if OP_BLE                                      /* a ble_poll that does not return: the crash screen says where (ble_status.h) */
     if (ble_stall_tick())
         FM1_VEC[FM1_IRQ_TIMER5] = (uint32_t)(uintptr_t)(fm1_fatal_stubs + 6u * FM1_IRQ_TIMER5);
 #endif
