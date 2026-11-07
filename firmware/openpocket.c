@@ -253,6 +253,7 @@ static void lcd_text(uint32_t x, uint32_t y, const char *str, uint16_t fg, uint1
 }
 /* ---- preset: the v2 engine's struct (engine/px_dsp.h), edited directly by the UI ---- */
 #include "px_dsp.h"
+#include "px_nam.h"           /* v37: NAM A2-Lite (the engine includes px_nam.c) */
 static px_preset_t PRESET;
 static uint32_t cur_preset = 0;
 static uint32_t master_vol = 80;        /* 0..100, follows the MASTER knob (ADC channel 2) */
@@ -302,7 +303,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_PU   (*(volatile uint32_t *)0x501D0u)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
-#define OP_VERSION_NUM "36"
+#define OP_VERSION_NUM "37"
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -531,6 +532,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #if AUDIO_PROBE
 #include "audio_probe.h"
 #else
+#include "px_cacheram.h"     /* v37: data-cache ways as RAM (melodee's routine): the NAM network's vector-unit buffers */
 #include "px_audio.h"
 #endif
 
@@ -538,9 +540,15 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "ui.h"
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
+#include "px_models.h"      /* v37: the NAM user models in flash */
 #if !AUDIO_PROBE
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
+static void nm_changed(uint32_t s)   /* v37: a user model was written or erased: the engine reloads it if it plays it */
+{
+    if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
+    audio_apply();
+}
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #endif
 #endif
@@ -568,6 +576,12 @@ static void app_main(void)
     uint32_t push_t = 0, clk_t = 0;
     int clk_pend = 0;                    /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
     int32_t master_raw = -100;
+#if !AUDIO_PROBE
+    {   /* before the second core starts: the data-cache ways as RAM (through a pointer: it is RAM code) */
+        void (*volatile f)(void) = pxc_init;
+        f();
+    }
+#endif
 #if DSP_CPU1
     fm1_cpu1_bar_build(27u);             /* a new build gives the 2nd core another chance */
     fm1_cpu1_start();                    /* at boot, before audio and interrupts (Felucca) */
@@ -647,6 +661,12 @@ static void app_main(void)
     a_hold = 1;                          /* DSP bypassed until the UI is up and 1.5 s have passed */
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
+    nm_scan();                           /* v37: the NAM user models (names, levels) */
+#if DSP_CPU1
+    px_nam_helper(a_hrun, a_hwait);      /* v37: CPU1 can take a part of the NAM network */
+#endif
+    if (pxc_status == PXC_READY) px_nam_fast((void *)PXC_BEGIN, PXC_END - PXC_BEGIN);   /* the vector unit's inputs */
+    px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
@@ -661,7 +681,7 @@ static void app_main(void)
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
-        if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "C0" or BYP */
+        if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "2C" (NAM pipelined), "C0" or BYP */
             static uint32_t t_cpu;
             if (now - t_cpu >= 500u) {
                 t_cpu = now;
@@ -670,6 +690,7 @@ static void app_main(void)
                 if (l > 999u) l = 999u;
                 if (safe) { c[i++]='S'; c[i++]='A'; c[i++]='F'; c[i++]='E'; c[i++]=' '; }
                 else if (a_bypass) { c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' '; }
+                else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);

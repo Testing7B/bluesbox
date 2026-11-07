@@ -8,7 +8,14 @@ OpenPocket is GPL-3.0-only (`LICENSE`), except the parts below, which keep their
 | `loader/` (update loader) | felucca-bsp `loader/`, changed for the Pocket X flash layout | MPL-2.0 |
 | `docs/pxota.js`, `docs/pxpkg.js`, `tools/pxpkg.py`, `tools/mkloader.py`, `tools/lz4blk.py` | adapted from [Felucca](https://github.com/hugelton/Felucca)'s web installer and build tools (as used by CLIPPER and SLOOP) | GPL-3.0 |
 | `firmware/sdk/` (I2S and DAC drivers as LLVM bitcode, SPL, cfg files) | JieLi AC79 SDK V1.2.0 (fw-AC79_AIoT_SDK) | Apache-2.0 (`LICENSES/Apache-2.0.txt`) |
+| `firmware/px_cacheram.h` (data-cache ways as RAM, for the NAM network's vector-unit buffers) | [melodee](https://github.com/keremimo/melodee) `firmware/hal/fm1_cache.h`, Kerem Kilic (Ellic Studio), after the AC79 SDK's cache way setup | GPL-3.0 |
 | `firmware/fonts.h` (bitmaps generated from Inter) | [Inter](https://rsms.me/inter/), Rasmus Andersson | SIL OFL 1.1 (`LICENSES/OFL-1.1-Inter.txt`) |
+
+The factory NAM models (`engine/px_nam_factory.h`, v37) are A2-Lite networks trained by OpenPocket from Neural Amp
+Modeler community captures ([pelennor2170/NAM_models](https://github.com/pelennor2170/NAM_models), GPL v3; authors
+in `docs/NAM.md`) played with DI guitar from [Alec-Wright/Automated-GuitarAmpModelling](https://github.com/Alec-Wright/Automated-GuitarAmpModelling)
+(GPL v3). The NAM A2 architecture is from Neural Amp Modeler (Steven Atkinson, MIT); `engine/px_nam.c`,
+`tools/nam_a2.py` and `tools/train_a2.py` are written for OpenPocket from the published architecture.
 
 Sound models: the names refer to the gear that inspired each voicing (circuit analyses published by ElectroSmash,
 Electric Druid, R.G. Keen / GEOFEX, Rob Robinette, Duncan's Tone Stack Calculator; speaker data sheets; manufacturers'

@@ -74,6 +74,29 @@ button{cursor:pointer}
 .row.cur{background:var(--panel);box-shadow:inset 3px 0 0 var(--acc)}
 .row.cur .n{color:var(--acc)}
 .slotbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* v37: TONE3000 (the Select flow) */
+.t3k{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 8px}
+.t3k .logo{font-weight:800;letter-spacing:.04em;font-size:15px;color:#fff}
+.t3kcard{border:1px solid #2a2e2a;border-radius:10px;padding:10px;margin:0 0 10px;display:grid;gap:8px}
+.t3kcard .top{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}
+.t3kcard .img{width:64px;height:64px;border-radius:8px;object-fit:cover;background:#222}
+.t3kcard .ttl{font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.t3kcard .sub{color:var(--dim);font-size:12.5px}
+.t3kcard .by{display:flex;align-items:center;gap:6px;font-size:13px;min-width:0}
+.t3kcard .by img{width:20px;height:20px;border-radius:50%;background:#222}
+.t3kcard .mrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;font-size:13px}
+.t3kcard .mrow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t3kcard .foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--dim)}
+.t3kcard .logo{font-weight:800;letter-spacing:.04em;color:#fff}
+.t3kcard select{background:#1c1f1c;color:var(--txt);border:1px solid #333;border-radius:7px;padding:5px}
+/* v37: NAM models */
+.namlist{max-height:360px}
+.namlist .row{grid-template-columns:34px minmax(0,1fr) auto;cursor:default}
+.namlist .row .acts{display:flex;gap:4px}
+.namlist .row.empty .nm{color:var(--dim);font-weight:500}
+.side .note{margin:0;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.side .note code{font-size:12px}
+.a2{font-size:10px;letter-spacing:.06em;color:var(--acc);border:1px solid var(--acc);border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}
 .slotbar .lbl{font-size:12.5px;color:var(--dim);margin-right:auto}
 
 /* ---- the screen ---- */
@@ -174,6 +197,15 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
         <button class="btn small" id="down" disabled title="Move this preset down one slot">↓</button>
         <button class="btn small" id="factory" disabled title="Put this slot back to its factory preset">Factory</button>
       </div>
+      <h2 id="namh" hidden>NAM models<span class="a2">A2</span></h2>
+      <p class="note" id="namnote" hidden>The AMP block's <b>NAM</b> type plays these neural captures (pick one with its
+        MODEL setting). Load your own: an A2 capture (<code>.nam</code>) into a user slot, or browse TONE3000 and pick one
+        there.</p>
+      <div class="t3k" id="t3k" hidden><span class="logo" aria-label="TONE3000">TONE3000</span>
+        <button class="btn small" id="t3kbrowse" title="Choose an A2 capture on TONE3000 and load it into a user slot">Browse TONE3000…</button></div>
+      <div class="t3kcard" id="t3kcard" hidden></div>
+      <div class="list namlist" id="namlist" hidden aria-label="NAM models"></div>
+      <input type="file" id="namfile" accept=".nam,application/json" hidden>
     </aside>
 
     <main class="device">
@@ -216,6 +248,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
 
 <script type="module">
 import { Editor, presetToJSON, presetFromJSON, filePresets, parsePresetFile, clonePreset } from "./pxedit.js";
+import { parseNam, levelTrim, packModel, readDi } from "./pxnam.js";
+import { t3kReady, t3kRedirect, t3kSelect, t3kSignIn, t3kTone, t3kModels, t3kDownload } from "./pxt3k.js";
 
 const $ = (id) => document.getElementById(id);
 let access = null, ed = null, cat = null, info = null;
@@ -262,6 +296,7 @@ async function connect() {
     st = await ed.state();
     focus = st.focus;
     slots = await ed.list();
+    await loadNam();
     ed.onState = onPush;
     await ed.watch(true);
     $("idle").hidden = true; $("ui").hidden = false; $("actions").hidden = false;
@@ -295,6 +330,156 @@ async function ping() {
   } catch (_) { }
 }
 $("connect").onclick = connect;
+
+// ---- v37: NAM models (factory + user slots) ----
+let nam = null, namDi = null, namSlot = -1;
+async function loadNam() {
+  const on = !!(ed && ed.hasNam);
+  ["namh", "namnote", "namlist", "t3k"].forEach((id) => { $(id).hidden = !on; });
+  if (!on) $("t3kcard").hidden = true;
+  if (!on) return;
+  nam = await ed.namList();
+  renderNam();
+}
+function renderNam() {
+  const box = $("namlist");
+  box.textContent = "";
+  for (const m of nam.models) {
+    const row = document.createElement("div");
+    row.className = "row" + (m.user && !m.used ? " empty" : "");
+    row.innerHTML = `<span class="n">${m.user ? "U" + pad2(m.slot + 1) : "F" + pad2(m.index + 1)}</span><span class="nm"></span>` +
+      (m.user ? `<span class="acts"><button class="btn small">Load…</button>${m.used ? '<button class="btn small">Clear</button>' : ""}</span>`
+              : `<span class="tag">FACTORY</span>`);
+    row.querySelector(".nm").textContent = m.user && !m.used ? "empty" : m.name;
+    if (m.user) {
+      const b = row.querySelectorAll("button");
+      b[0].onclick = () => { namSlot = m.slot; $("namfile").value = ""; $("namfile").click(); };
+      if (b[1]) b[1].onclick = () => namClear(m);
+    }
+    box.appendChild(row);
+  }
+}
+async function namRefresh() {
+  nam = await ed.namList();
+  await ed.namTexts();
+  renderNam();
+  renderAll();
+}
+$("namfile").onchange = async () => {
+  const f = $("namfile").files[0];
+  if (!f || !ed || namSlot < 0) return;
+  if (busy) { say("Wait for the current operation to end.", "err"); return; }
+  busy = true;
+  try { await namInstall(await f.text(), f.name, namSlot); }
+  finally { busy = false; }
+};
+async function namInstall(text, fileName, slot) {   // a .nam file into user slot `slot` (caller holds busy)
+  namSlot = slot;
+  try {
+    const m = parseNam(text, fileName);
+    say(`Measuring the level of ${m.name}…`); progress(0.02);
+    await sleep(30);
+    if (!namDi) namDi = readDi(await (await fetch("nam_di.wav")).arrayBuffer());
+    const lv = levelTrim(m.weights, namDi);
+    say(`Sending ${m.name} to user slot ${namSlot + 1}…`);
+    const rc = await ed.namUpload(namSlot, packModel(m.name, m.weights, lv), (x) => progress(0.05 + 0.95 * x));
+    progress(null);
+    if (rc) throw new Error(rc === 2 ? "the pedal could not write its flash" : "the pedal refused the model");
+    await namRefresh();
+    say(`${m.name} is in user slot ${namSlot + 1} (level ${lv >= 0 ? "+" : ""}${lv.toFixed(1)} dB). Choose it with the AMP ` +
+      `block's NAM type, MODEL "${m.name}".${m.note ? " Note: " + m.note + "." : ""}`, "ok");
+  } catch (e) {
+    progress(null);
+    say(`Model not loaded: ${e.message}`, "err");
+  }
+}
+
+// ---- v37: TONE3000: choose a capture there (their Select flow, in a pop-up), load one of its A2 models ----
+let t3kSel = null;      // { tone, models }
+$("t3kbrowse").onclick = async () => {
+  if (!t3kReady()) {
+    say("TONE3000 browsing is not set up in this editor yet (it needs OpenPocket's TONE3000 app key). Download the A2 " +
+      "capture from tone3000.com and load the .nam file with a user slot's Load… button.", "err");
+    return;
+  }
+  if (busy || !ed) return;
+  try {
+    say("Choose a capture in the TONE3000 window (A2 captures only)…");
+    const sel = await t3kSelect();
+    say("Signing in to TONE3000…");
+    await t3kSignIn(sel);
+    const [tone, models] = await Promise.all([t3kTone(sel.tone_id), t3kModels(sel.tone_id)]);
+    t3kSel = { tone, models };
+    renderT3k();
+    say(models.length ? `${tone.title}: choose a model and a user slot.` :
+      `${tone.title} has no A2 model: the pedal plays A2 captures only. Choose another one.`, models.length ? "" : "err");
+  } catch (e) {
+    say(e.message === "cancelled" ? "TONE3000: nothing chosen." : `TONE3000: ${e.message}`,
+      e.message === "cancelled" ? "" : "err");
+  }
+};
+function renderT3k() {
+  const c = $("t3kcard");
+  c.textContent = "";
+  if (!t3kSel) { c.hidden = true; return; }
+  const { tone, models } = t3kSel, u = tone.user || {};
+  c.innerHTML = `<div class="top"><img class="img" alt=""><div style="min-width:0"><div class="ttl"></div>` +
+    `<div class="sub"></div><a class="by" target="_blank" rel="noopener"><img alt=""><span></span></a></div></div>` +
+    `<div class="ms"></div><div class="foot"><span>Into</span><select aria-label="User slot"></select>` +
+    `<span class="logo">TONE3000</span><a target="_blank" rel="noopener" class="tl">open on TONE3000</a></div>`;
+  const img = c.querySelector(".img");
+  if (tone.images && tone.images[0]) img.src = tone.images[0]; else img.style.visibility = "hidden";
+  c.querySelector(".ttl").textContent = tone.title || "Tone";
+  c.querySelector(".sub").textContent = [tone.gear, tone.format].filter(Boolean).join(" · ").toUpperCase();
+  const by = c.querySelector(".by");
+  if (u.url) by.href = u.url;
+  if (u.avatar_url) by.querySelector("img").src = u.avatar_url; else by.querySelector("img").remove();
+  by.querySelector("span").textContent = u.display_name || u.username || "";
+  if (tone.url) c.querySelector(".tl").href = tone.url; else c.querySelector(".tl").remove();
+  const sel = c.querySelector("select");
+  const users = nam.models.filter((m) => m.user);
+  const first = users.find((m) => !m.used) || users[0];
+  for (const m of users) {
+    const o = document.createElement("option");
+    o.value = m.slot; o.textContent = `U${pad2(m.slot + 1)} ${m.used ? m.name : "(empty)"}`;
+    if (first && m.slot === first.slot) o.selected = true;
+    sel.appendChild(o);
+  }
+  const ms = c.querySelector(".ms");
+  for (const m of models) {
+    const r = document.createElement("div");
+    r.className = "mrow";
+    r.innerHTML = `<span></span><button class="btn small go">Load</button>`;
+    r.querySelector("span").textContent = m.name || `model ${m.id}`;
+    r.querySelector("button").onclick = () => t3kLoad(m, +sel.value);
+    ms.appendChild(r);
+  }
+  c.hidden = false;
+}
+async function t3kLoad(m, slot) {
+  if (busy || !ed) return;
+  const u = nam.models.find((x) => x.user && x.slot === slot);
+  if (u && u.used && !await ask(`Replace ${u.name} in user slot ${slot + 1}?`, "Replace")) return;
+  busy = true;
+  try {
+    say(`Downloading ${m.name} from TONE3000…`);
+    const text = await t3kDownload(m);
+    await namInstall(text, (t3kSel.tone.title || m.name || "MODEL"), slot);
+    renderT3k();
+  } catch (e) { say(`TONE3000: ${e.message}`, "err"); }
+  finally { busy = false; }
+}
+async function namClear(m) {
+  if (busy || !ed) return;
+  if (!await ask(`Clear user slot ${m.slot + 1} (${m.name})? Presets using it play without an amp until you load another model there.`, "Clear")) return;
+  busy = true;
+  try {
+    const rc = await ed.namErase(m.slot);
+    await namRefresh();
+    say(rc ? "The pedal could not erase the slot." : `User slot ${m.slot + 1} is empty.`, rc ? "err" : "ok");
+  } catch (e) { say(`Not cleared: ${e.message}`, "err"); }
+  finally { busy = false; }
+}
 
 // ---- pushes from the pedal ----
 function onPush(s) {

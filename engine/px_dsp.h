@@ -42,6 +42,14 @@ enum { PX_SFX_AUTOWAH, PX_SFX_LFOWAH, PX_SFX_RING, PX_SFX_CRUSH, PX_SFX_SLICER, 
 enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_COUNT };
 enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX_AMP_SHIRLEY, PX_AMP_PROMOD,
        PX_AMP_5150, PX_AMP_COUNT };
+/* v37: Neural Amp Modeler A2-Lite (px_nam.c) as one more AMP type, after the 8 fitted amps. Its 5 settings: MODEL,
+ * GAIN (into the model, +-12 dB), BASS, MID, TREBLE (after it). Models: PX_NAM_NFACT in the firmware, PX_NAM_NUSER
+ * slots the web editor fills with A2 captures (.nam files, e.g. from TONE3000). */
+#define PX_AMP_NAM    PX_AMP_COUNT
+#define PX_AMP_NTYPES (PX_AMP_COUNT + 1)
+#define PX_NAM_NFACT  12
+#define PX_NAM_NUSER  16
+#define PX_NAM_N      (PX_NAM_NFACT + PX_NAM_NUSER)
 enum { PX_CAB_112JN, PX_CAB_212BLUE, PX_CAB_412GB, PX_CAB_412T75, PX_CAB_412V30, PX_CAB_112CREAM, PX_CAB_DI,
        PX_CAB_COUNT };
 enum { PX_SYN_ORGAN, PX_SYN_CHURCH, PX_SYN_STRINGS, PX_SYN_CHOIR, PX_SYN_MONO, PX_SYN_PWM, PX_SYN_BASS,
@@ -79,6 +87,19 @@ int         px_type_v34(int blk, int old);   /* presets saved before v34: old ty
 int         px_dly_time_v35(int type, int v);   /* presets saved before v35: delay TIME (20..1000 ms) -> today's knob */
 int         px_param_text(int blk, int type, int k, int v, char *buf8);
 int         px_preset_count(void);
+/* NAM models: the MODEL knob (0..100) <-> model 0..PX_NAM_N-1 (factory first, then the user slots) */
+int         px_nam_model(int v);
+int         px_nam_knob(int model);
+int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memory as scratch (PXN_TEST_WORDS+) */
+int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines checked, then (ticks given) its
+                                                         fastest way to run chosen (1 = hand routines in use) */
+uint32_t    px_nam_tuned(int mode);                   /* that timing: ticks for 256 frames, by mode (0 = n/a) */
+void        px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));   /* the other core */
+void        px_nam_fast(void *base, unsigned bytes);   /* memory away from the CPUs' RAM, for the vector unit (before px_nam_check) */
+int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
+/* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
+ * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */
+int         px_nam_user(int slot, char *name12, float *level_db, float *w);
 void        px_preset_factory(px_preset_t *p, int idx);
 
 /* ---------------------------------------------------------------- state --- */
@@ -115,6 +136,9 @@ typedef struct {
     /* oversampling (set A: amp, or drive + amp together; set B: a drive that is not right before the amp) */
     px_bq os_up, os_up2, os_dn, os_dn2;
     px_bq osb_up, osb_up2, osb_dn, osb_dn2;
+    px_bq osc_up, osc_up2, osc_dn, osc_dn2;          /* v37: set C, x2 (a drive before a NAM amp) */
+    int drv_os;                                       /* the drive's oversampling: PX_OVERSAMPLE, or 2 before a NAM amp */
+    struct { int32_t x1, x2, y1, y2; } fq_cab[8], fq_os[3][4];   /* v37: the integer filters' state (px_fx_int) */
     uint8_t ord[PX_NBLK];
     /* synth / instrument block (v29) */
     float syn_buf[PX_PS_N]; int syn_w;                 /* shifter source (organ, strings...); sitar: string combs */
@@ -144,6 +168,10 @@ typedef struct {
     px_op amp_hp[4], amp_lp[4];
     px_bq ts_low, ts_mid, ts_high, amp_pres, amp_res, amp_voice;
     float amp_sag, amp_sagk, amp_pw, amp_pwn, amp_out;
+    /* NAM (v37): one model at a time (its network and history: px_dsp.c, outside this struct) */
+    int   amp_nam, nam_idx;                            /* AMP type is NAM; the model loaded (-1: none) */
+    float nam_in_g, nam_out_g;
+    float nam_buf[PX_MAX_BLOCK];
     /* cabinet */
     px_bq cab[8]; float cab_g; int cab_n;
     /* fine structure (v27: same response as v25's 128-tap FIR, ~4x cheaper): sparse taps + breakup resonators */
@@ -183,10 +211,15 @@ typedef struct {
     float sh_buf[PX_PS_N]; int sh_w; float sh_ph, sh_out, sh_lp, sh_k, rv_shim, sh_hp, sh_hk;
     px_bq rv_tone, rv_hp;
 } px_engine;
+int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two cores: process it on the job-giving core */
 
 void px_engine_init(px_engine *e, float sr);
 void px_engine_set(px_engine *e, const px_preset_t *p);
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
+enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engine_part's stages (see px_dsp.c) */
+void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);
+extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (off: slower) */
+extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
 
 #ifdef __cplusplus
 }

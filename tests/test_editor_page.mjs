@@ -80,7 +80,7 @@ startSim(["--dump", join(TMP, "flash.bin")]);
 await sleep(200);
 await page.click("#connect");
 await page.waitForSelector("#ui:not([hidden])", { timeout: 20000 });
-ok(/PocketX · OpenPocket v36/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
+ok(/PocketX · OpenPocket v37/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
 ok(await page.locator("#list .row").count() === 52, "52 presets listed");
 ok(await page.inputValue("#name") === "TWIN CLEAN" && await page.textContent("#num") === "01", "header: 01 TWIN CLEAN");
 ok(await page.locator("#tiles .tile").count() === 12, "12 tiles");
@@ -211,6 +211,77 @@ await page.click("#askno");
 ok((await pedalState()).slot === 8, "Cancel: still on the same slot");
 ok((await pedalState()).writesOk, "the flash was written only inside the preset store");
 await shot("editor_5_imported.png");
+
+// ---- v37: a NAM A2 capture into a user slot ----
+{
+  const KS = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6];
+  const DS = [1, 3, 7, 17, 41, 101, 239, 1, 3, 7, 17, 41, 101, 239, 1, 13, 1, 3, 7, 17, 41, 101, 239];
+  let seed = 3; const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed / 4294967296 - 0.5; };
+  const w = Array.from({ length: 1871 }, () => rnd() * 0.6); w[1870] = 0.02;
+  const nam = { version: "0.7.0", architecture: "WaveNet", sample_rate: 44100, weights: w, config: { head: null, head_scale: 0.02, layers: [{
+    input_size: 1, condition_size: 1, head: { out_channels: 1, kernel_size: 16, bias: true }, channels: 3, bottleneck: 3,
+    kernel_sizes: KS, dilations: DS, activation: KS.map(() => ({ type: "LeakyReLU", negative_slope: 0.01 })),
+    head1x1: { active: false }, layer1x1: { active: true }, gating_mode: KS.map(() => "none") }] } };
+  const fn = join(TMP, "Page Amp.nam");
+  writeFileSync(fn, JSON.stringify(nam));
+  ok(await page.locator("#namlist .row").count() === 28, "NAM models: 12 factory + 16 user slots listed");
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.locator("#namlist .row").nth(12).locator("button").first().click()]);
+  await chooser.setFiles(fn);
+  await page.waitForFunction(() => /is in user slot 1/.test(document.getElementById("msg").textContent), null, { timeout: 20000 });
+  ok((await page.locator("#namlist .row").nth(12).textContent()).includes("PAGE AMP"), "NAM: an A2 file loaded into user slot 1 from the page");
+  ok((await pedalState()).writesOk, "the flash was written only inside the preset store and the model slots");
+  await shot("editor_6_nam.png");
+}
+
+// ---- v37: TONE3000's Select flow (their site simulated: sign-in pop-up, PKCE, tone, A2 models, download) ----
+{
+  const { createHash } = await import("node:crypto");
+  const namText = readFileSync(join(TMP, "Page Amp.nam"), "utf8").replace('"version"', '"metadata":{"name":""},"version"');
+  const T3K = "https://www.tone3000.com";
+  let challenge = "", authOk = false, tokenOk = false, bearerOk = true;
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-methods": "GET, POST, OPTIONS" };
+  const json = (route, o) => route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify(o) });
+  await ctx.route(`${T3K}/**`, async (route) => {
+    const r = route.request(), u = new URL(r.url());
+    if (r.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (u.pathname === "/api/v1/oauth/authorize") {
+      const q = u.searchParams;
+      challenge = q.get("code_challenge");
+      authOk = q.get("client_id") === "page-test" && q.get("prompt") === "select_tone" && q.get("architecture") === "2" &&
+        q.get("format") === "nam" && q.get("code_challenge_method") === "S256" && /\/t3k\.html$/.test(q.get("redirect_uri"));
+      return route.fulfill({ status: 302, headers: { location: `${q.get("redirect_uri")}?code=C0DE&state=${q.get("state")}&tone_id=42` } });
+    }
+    if (u.pathname === "/api/v1/oauth/token") {
+      const f = new URLSearchParams(r.postData() || "");
+      const v = createHash("sha256").update(f.get("code_verifier") || "").digest("base64url");
+      tokenOk = f.get("grant_type") === "authorization_code" && f.get("code") === "C0DE" && v === challenge;
+      return json(route, tokenOk ? { access_token: "AT", refresh_token: "RT", token_type: "bearer", expires_in: 3600 } : { error: "invalid_grant" });
+    }
+    if (r.headers()["authorization"] !== "Bearer AT") bearerOk = false;
+    if (u.pathname === "/api/v1/tones/42")
+      return json(route, { id: 42, title: "Plexi Lead", gear: "amp", format: "nam", images: null, url: `${T3K}/tones/plexi-42`,
+        user: { username: "capturer", display_name: null, avatar_url: null, url: `${T3K}/capturer` } });
+    if (u.pathname === "/api/v1/models")
+      return json(route, { data: [{ id: 7, name: "Plexi Lead A2", size: "standard", architecture_version: "2",
+        model_url: `${T3K}/files/plexi.nam`, tone_id: 42 }], page: 1, page_size: 100, total: 1, total_pages: 1 });
+    if (u.pathname === "/files/plexi.nam") return route.fulfill({ status: 200, headers: cors, body: namText });
+    return route.fulfill({ status: 404, headers: cors });
+  });
+  await page.evaluate(() => { window.__t3kClientId = "page-test"; });
+  ok(await page.isVisible("#t3kbrowse"), "TONE3000: its Browse button in the NAM panel");
+  await page.click("#t3kbrowse");
+  await page.waitForSelector("#t3kcard:not([hidden])", { timeout: 10000 });
+  ok(authOk && tokenOk, "TONE3000: Select pop-up (A2, .nam), sign-in with PKCE, back to the page");
+  ok(/Plexi Lead/.test(await page.textContent("#t3kcard")) && /capturer/.test(await page.textContent("#t3kcard")) &&
+    /AMP · NAM/.test(await page.textContent("#t3kcard")), "TONE3000: the tone's card (title, gear, format, creator)");
+  ok(await page.inputValue("#t3kcard select") === "1", "TONE3000: the first empty user slot proposed (U02)");
+  await page.locator("#t3kcard .mrow button").first().click();
+  await page.waitForFunction(() => /is in user slot 2/.test(document.getElementById("msg").textContent), null, { timeout: 20000 });
+  ok((await page.locator("#namlist .row").nth(13).textContent()).includes("PLEXI LEAD") && bearerOk,
+    "TONE3000: the A2 model downloaded (with the token) into user slot 2");
+  await shot("editor_7_tone3000.png");
+}
 
 // ---- phone width ----
 await page.setViewportSize({ width: 390, height: 844 });

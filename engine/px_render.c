@@ -60,6 +60,7 @@ int main(int argc, char **argv)
 {
     if(argc<3){ fprintf(stderr,"usage: %s in.wav out.wav [preset 1..%d] [amp 1..%d] [gain 0..100]\n",argv[0],px_preset_count(),PX_AMP_COUNT); return 1; }
     int npreset = argc>3 ? atoi(argv[3]) - 1 : 0;
+    if (getenv("PX_FX_INT")) px_fx_int = 1;            /* the cabinet and drive filters in integers (slower on the pedal) */
     int n; float sr;
     float *in = load_wav(argv[1], &n, &sr);
     if(!in){ fprintf(stderr,"unreadable WAV\n"); return 1; }

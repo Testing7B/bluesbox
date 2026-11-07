@@ -3,10 +3,13 @@
 // Request / reply, one at a time; STATE frames the pedal pushes while watched go to onState.
 
 import { PORT_RE } from "./pxota.js";
+import { pack7, SLOT_BYTES } from "./pxnam.js";
 
 const H = [0x7D, 0x4F, 0x50];
 export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 6, ORDER: 7, NAME: 8, PUT: 9, SELECT: 10,
-  FOCUS: 11, LIST: 12, SLOT_GET: 13, SLOT_PUT: 14, COMMIT: 15, SAVE: 16, WATCH: 17, PING: 18 };
+  FOCUS: 11, LIST: 12, SLOT_GET: 13, SLOT_PUT: 14, COMMIT: 15, SAVE: 16, WATCH: 17, PING: 18,
+  NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22 };
+export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fail(code, msg) { const e = new Error(msg); e.code = code; return e; }
@@ -124,7 +127,7 @@ export class Editor {
   // ---- the catalogue: blocks, types, parameter names and value texts (cached per firmware) ----
   async catalog(progress = () => {}) {
     const key = `openpocket-cat-${this.info.identity}-${this.info.version}`;
-    try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && c.blocks && c.blocks.length === this.info.nblk) { this.cat = c; return c; } } catch (_) { }
+    try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && c.blocks && c.blocks.length === this.info.nblk) { this.cat = c; if (this.hasNam) await this.namTexts(); return c; } } catch (_) { }
     const blocks = [];
     for (let b = 0; b < this.info.nblk; b++) {
       const r = new Reader(await this.request(C.CAT_BLOCK, [b]));
@@ -156,7 +159,18 @@ export class Editor {
     }
     this.cat = { blocks };
     try { localStorage.setItem(key, JSON.stringify(this.cat)); } catch (_) { }
+    if (this.hasNam) await this.namTexts();
     return this.cat;
+  }
+  // v37: the AMP NAM type's MODEL texts name the user models, which change: always asked again (not cached)
+  async namTexts() {
+    const b = this.cat.blocks.findIndex((x) => x.label === "AMP");
+    const t = b < 0 ? -1 : this.cat.blocks[b].types.findIndex((x) => x && x.name === "NAM");
+    if (t < 0) return;
+    const q = new Reader(await this.request(C.TEXTS, [b, t, 0]));
+    q.b(); q.b(); q.b();
+    const texts = []; for (let v = 0; v <= 100; v++) texts.push(q.s());
+    this.cat.blocks[b].types[t].params[0].texts = texts;
   }
 
   // ---- the current sound ----
@@ -201,6 +215,32 @@ export class Editor {
   async save(slot) { return (await this.request(C.SAVE, [slot], 4000))[1]; }
   async watch(on) { return (await this.request(C.WATCH, [on ? 1 : 0]))[0]; }
   async ping() { const r = await this.request(C.PING); return { load: r[0], bypass: !!(r[1] & 1), c1: !!(r[1] & 2) }; }
+  // v37 (protocol 2): NAM models. list -> { nfact, nuser, models: [{ index, user, slot, used, name }] }
+  get hasNam() { return !!(this.info && this.info.proto >= 2); }
+  async namList() {
+    const r = new Reader(await this.request(C.NAM_LIST));
+    const nfact = r.b(), nuser = r.b(), models = [];
+    for (let i = 0; i < nfact + nuser; i++) {
+      const used = !!r.b(), name = r.s();
+      models.push({ index: i, user: i >= nfact, slot: i - nfact, used, name });
+    }
+    return { nfact, nuser, models };
+  }
+  // a packed model (pxnam.js packModel) into user slot `slot`: pieces, then the flash write. rc 0 ok, 1 invalid, 2 flash
+  async namUpload(slot, bytes, progress = () => {}) {
+    if (bytes.length !== SLOT_BYTES) throw new Error("model: wrong size");
+    const n = Math.ceil(bytes.length / NAM_CHUNK);
+    for (let i = 0; i < n; i++) {
+      const piece = bytes.slice(i * NAM_CHUNK, (i + 1) * NAM_CHUNK);
+      const r = await this.request(C.NAM_WRITE, [i & 0x7F, i >> 7, ...pack7(piece)]);
+      if (r[2]) throw new Error(`model: piece ${i} refused`);
+      progress((i + 1) / (n + 1));
+    }
+    const rc = (await this.request(C.NAM_COMMIT, [slot], 6000))[1];
+    progress(1);
+    return rc;
+  }
+  async namErase(slot) { return (await this.request(C.NAM_ERASE, [slot], 6000))[1]; }
 }
 
 // ---- preset files (JSON, blocks and types by name) ----

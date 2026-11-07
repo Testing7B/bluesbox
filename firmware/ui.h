@@ -74,7 +74,7 @@ static uint16_t ui_dark(uint16_t c)    /* a colour at ~1/3: the "off" version of
 static struct {
     int full, screen;                  /* screen: 0 PLAY, 1 EDIT */
     uint32_t preset, vol; char name[14];
-    int dirty, amp_t, cab_t, amp_on, cab_on;
+    int dirty, amp_t, cab_t, amp_on, cab_on, amp_m;
     uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK], tile_blk[PX_NBLK], tile_mv[PX_NBLK];
     int info_b, info_t, info_on;
     int blk, type, np, item, mode, on;
@@ -174,9 +174,13 @@ static void draw_play_top(int force)
         uc.preset = cur_preset;
     }
     int at = PRESET.type[PX_B_AMP], ct = PRESET.type[PX_B_CAB], ao = PRESET.on[PX_B_AMP], co = PRESET.on[PX_B_CAB];
-    if (force || at != uc.amp_t || ao != uc.amp_on) {
-        ft_box(94, P_NUM_Y + 4u, 142, ao ? px_type_name(PX_B_AMP, at) : "NO AMP", &FT_MD, ao ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
-        uc.amp_t = at; uc.amp_on = ao;
+    int am = at == PX_AMP_NAM ? px_nam_model(PRESET.p[PX_B_AMP][0]) : -1;   /* v37: a NAM amp shows its model */
+    if (force || at != uc.amp_t || ao != uc.amp_on || am != uc.amp_m) {
+        char nm[12];
+        const char *an = px_type_name(PX_B_AMP, at);
+        if (am >= 0) { px_nam_name(am, nm); an = nm; }
+        ft_box(94, P_NUM_Y + 4u, 142, ao ? an : "NO AMP", &FT_MD, ao ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
+        uc.amp_t = at; uc.amp_on = ao; uc.amp_m = am;
     }
     if (force || ct != uc.cab_t || co != uc.cab_on) {
         ft_box(94, P_NUM_Y + 29u, 88, co ? px_type_name(PX_B_CAB, ct) : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);

@@ -1,7 +1,8 @@
 # OpenPocket editor protocol (SysEx over USB-MIDI)
 
 The web editor (`docs/editor.html`, `docs/pxedit.js`) talks to the pedal with this protocol. The firmware side is
-`firmware/px_editor.h`; `tests/edsim.c` runs the same code on a PC for the tests. Protocol version 1 (OpenPocket v32).
+`firmware/px_editor.h`; `tests/edsim.c` runs the same code on a PC for the tests. Protocol version 2 (OpenPocket v37; version 1: v32 to v36,
+the same without the NAM commands 19..22).
 
 ## Framing
 
@@ -42,8 +43,40 @@ The 12 blocks, by index: 0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 
 | 16 SAVE | slot | slot, rc. Saves the current sound into the slot, writes the flash, the slot becomes the current one (as the pedal's SAVE) |
 | 17 WATCH | on (0/1) | on. While on, the pedal pushes `STATE` (cmd 5) when the sound, the slot or the focused block changes on the pedal; it stops by itself 5 s after the last request |
 | 18 PING | — | DSP load % (0..127), flags (bit 0: bypass, bit 1: second core) |
+| 19 NAM_LIST | — | factory models (12), user slots (16), then per model (factory first, then the user slots): present (0/1), name string (11 characters at most; an empty user slot reads "U5 EMPTY") |
+| 20 NAM_WRITE | piece (2 bytes: bits 0-6, 7-13), 128 packed bytes | the 2 piece bytes, rc (0 ok, 1 invalid). Piece i holds bytes 112 i .. 112 i + 111 of a model (the last piece fewer), packed 7 bit: groups of a byte of high bits (bit j = bit 7 of byte j) then 7 bytes. Stored in RAM only |
+| 21 NAM_COMMIT | slot (0..15) | slot, rc (0 ok, 1 invalid: header, a weight that is not a number, CRC; 2 flash). Checks the pieces received and writes them to the user slot |
+| 22 NAM_ERASE | slot (0..15) | slot, rc (0 ok, 1 invalid, 2 flash). Empties the user slot |
 
-Writing the flash mutes the sound for a moment, as saving on the pedal does. A whole import sends `SLOT_PUT` without
+### NAM models (protocol 2)
+
+The AMP block's ninth type, `NAM`, plays a neural amp model (NAM A2, its 3-channel "Lite" size, 1871 weights:
+`engine/px_nam.h`). Its first parameter, MODEL, picks one of 28 models: 0..11 the factory ones (in the firmware),
+12..27 the 16 user slots in the pedal's flash (`firmware/px_models.h`, 0xC0000..0xE0000, kept by firmware updates).
+`TEXTS` of AMP type 8, parameter 0 gives each value's model name; the editor asks for it again after a change of
+the user slots.
+
+A user model is 7548 bytes, little endian: a 64-byte header, then the 1871 weights as float32 in the `.nam`
+file's order.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | magic `0x4D4E504F` ("OPNM") |
+| 4 | 2 | version, 1 |
+| 6 | 2 | weights, 1871 |
+| 8 | 12 | name, ASCII, 0-ended (11 characters at most) |
+| 20 | 2 | level trim, int16, 0.01 dB (added to the model's output) |
+| 22 | 2 | CRC16 of the weights (polynomial 0x1021, initial value 0) |
+| 24 | 40 | 0 |
+
+The editor (`docs/pxnam.js`) reads a `.nam` file, takes its A2-Lite part (an A2 file is a "SlimmableContainer"
+with several sizes; a plain A2-Lite WaveNet also works), measures its loudness on `docs/nam_di.wav` and sets the
+level trim so that every model plays at -20 LUFS on that clip, then sends 68 `NAM_WRITE` and one `NAM_COMMIT`.
+A1 models (the older "standard" / "lite" / "feather" WaveNets) and other architectures are refused: the pedal's CPU
+runs A2-Lite only.
+
+Writing the flash (`SLOT_PUT` with bit 1, `COMMIT`, `SAVE`, `NAM_COMMIT`, `NAM_ERASE`) mutes the sound for a moment, as
+saving on the pedal does. A whole import sends `SLOT_PUT` without
 bit 1 for every slot, then one `COMMIT`.
 
 ## Preset files

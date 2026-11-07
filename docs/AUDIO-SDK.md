@@ -262,3 +262,30 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
 - Screen: PLAY (number and name large, amp / cab, the chain in colour, the selected block) and EDIT (the block on its
   colour, model, 5 settings with value + bar), new Inter fonts (26 and 58 px). `tests/uisim.c` draws every page on
   the PC and checks that each full page paints every pixel.
+
+## v37: NAM A2-Lite, user models
+- AMP type 8, NAM: a Neural Amp Modeler A2-Lite network (3 channels, 23 dilated layers, LeakyReLU, 16-tap head;
+  1871 weights, about 1,730 multiply-adds a sample) in fixed point, `engine/px_nam.c` ([NAM.md](NAM.md)). Activations
+  Q20, weights Q24, 64-bit sums shifted by a constant. Against the float reference (`tools/nam_a2.py`): 83 to 100 dB
+  signal to error on the factory models (`tests/test_nam.py`).
+- This CPU has no data cache in front of the SRAM, a taken branch costs about 8 cycles, and it issues two
+  instructions together (a 32-bit multiply-add with a 16-bit load). A first version (a loop over taps per frame,
+  16-frame chunks) measured 223 % of real time on the pedal. Now: blocks of 32 frames, layer by layer. Gather: each
+  frame's inputs to the layer into one row of X (`[u, 1.0, taps x 3 channels]`, 3 words a move), from the layer's
+  ring (interleaved [time][channel], (kernel - 1) x dilation + 32 frames). Dot: the layer's 3 weight rows against 4 X
+  rows at a time (`pxn_dot3x4_asm`: a weight read once for 4 frames, 4 multiply-adds paired with 4 loads, 5 issues,
+  in the hardware loop). Post: LeakyReLU (predicated, no branch), the head sum, the residual 1x1 written straight
+  into the next layer's ring. The head is a 50-long row (bias, 16 taps x 3) over the head's ring. The hand routines
+  are in the flash with their callers; `px_nam_check()` compares them with the C ones at boot (pattern with both
+  signs, rows of 20 and 47, with and without the residual) and keeps C on any difference.
+- Memory: the rings (83.4 KB) in the POOL region beside the engine, the model (weights converted, 8 KB) and the
+  block buffers (7 KB) in RAM. A direct call between the flash (0x02xxxxxx) and the RAM code (0x01C0xxxx) is out of
+  the call instruction's +-4 MiB: `tools/check_calls.py`, run by `firmware/build.sh` before linking, refuses any such
+  call and names it (a first v37 build put the audio path in RAM: the linker refused 478 calls, naming only one).
+- User models: 16 slots of 8 KiB at 0xC0000 (`firmware/px_models.h`), written by the editor (protocol 2); the update
+  loader keeps that range (`loader/ldr_core.c`, `LDR_NAM_LO/HI`). The weights are read from the flash (SPI, with the
+  audio held) when a preset picks the model.
+- Level: every model plays at the same loudness: a trim per model (-20 LUFS on `docs/nam_di.wav`, measured by the
+  editor for user models and by `tools/mk_nam_factory.py` for the factory ones), then one constant that puts NAM +
+  1x12 at GAIN noon at the fitted amps' -23 LUFS.
+- 24 factory presets rebuilt on the 12 factory NAM models, levelled by `tools/level_presets.py`; USER slots: NAM TWIN.

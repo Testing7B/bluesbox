@@ -21,11 +21,12 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include "../engine/px_dsp.h"
+#include "../engine/px_nam.h"
 
 static uint8_t nor[0x100000];
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && (uint32_t)(n) <= (hi) - (uint32_t)(off))
-#define OP_VERSION "v36"
-static const char *FELUCCA_ID_PTR = "PocketX_936";
+#define OP_VERSION "v37"
+static const char *FELUCCA_ID_PTR = "PocketX_937";
 
 static uint32_t ms_now(void)
 {
@@ -44,20 +45,21 @@ static uint32_t ota_crc16(const uint8_t *p, uint32_t n, uint32_t c)   /* as ota.
     return c;
 }
 
-/* ---- flash (only the preset store may be written, as FL_RANGE_OK on the pedal) ---- */
+/* ---- flash (only the preset store and, v37, the NAM model slots may be written, as FL_RANGE_OK on the pedal) ---- */
+#define ED_FL_OK(off, n) (FL_IN(off, n, 0xF0000u, 0xF4000u) || FL_IN(off, n, 0xC0000u, 0xE0000u))
 static int writes_ok = 1;
 static int ota_fread(uint32_t off, void *p, uint32_t n) { if (off + n > sizeof nor) return -1; memcpy(p, nor + off, n); return 0; }
 static int fl_erase4k(uint32_t off, uint32_t *took)
 {
     *took = 0;
-    if (!FL_IN(off, 0x1000u, 0xF0000u, 0xF4000u) || (off & 0xFFFu)) { writes_ok = 0; return -1; }
+    if (!ED_FL_OK(off, 0x1000u) || (off & 0xFFFu)) { writes_ok = 0; return -1; }
     memset(nor + off, 0xFF, 0x1000u);
     return 0;
 }
 static int fl_write(uint32_t off, const void *p, uint32_t n)
 {
     const uint8_t *s = p;
-    if (!FL_IN(off, n, 0xF0000u, 0xF4000u)) { writes_ok = 0; return -1; }
+    if (!ED_FL_OK(off, n)) { writes_ok = 0; return -1; }
     for (uint32_t i = 0; i < n; i++) nor[off + i] &= s[i];
     return 0;
 }
@@ -98,6 +100,8 @@ static int ota_wire_send(const uint8_t *p, uint32_t n)
 }
 
 #include "../firmware/px_store.h"
+#include "../firmware/px_models.h"
+static void nm_changed(uint32_t s) { (void)s; }
 #include "../firmware/px_editor.h"
 
 static int hexv(int c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
@@ -164,6 +168,7 @@ int main(int argc, char **argv)
     }
     st_ok = 1;
     st_load();
+    nm_scan();
     cur_preset = st_last;
     load_preset(cur_preset);
     printf("#port OpenPocket\n");
