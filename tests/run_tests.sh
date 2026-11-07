@@ -56,6 +56,10 @@ echo "== rescue tool (tools/uboot_rescue.py on a simulated UBOOT pedal)"
 python3 tests/test_uboot_rescue.py $1
 echo "== hosted simulator (tools/sim.mjs)"
 node tests/test_sim.mjs
+echo "== Bluetooth test image sources (third_party/jieli-ble)"
+node tests/test_ble_sources.mjs
+echo "== Bluetooth test image status codes"
+$CC -O1 -Wall -Wno-unused-function -o build/ble_status tests/test_ble_status.c && build/ble_status
 echo "== editor"
 $CC -O1 -Wall -Wno-unused-function -o build/edsim tests/edsim.c engine/px_dsp.c firmware/px_math.c -lm
 node tests/test_editor.mjs

@@ -310,6 +310,9 @@ static void fm1_fault(const fm1_crash_t *c)
 #ifndef OP_TAG
 #define OP_TAG ""
 #endif
+#ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). build.sh turns it off for the Bluetooth test image, */
+#define OP_GUARD_STACK 1    /* whose task stacks (ble_os.c) lie outside [_ustack_lo, _sstack_top]; app.ld checks this at link time */
+#endif
 #define OP_VERSION "v" OP_VERSION_NUM OP_TAG   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -568,6 +571,14 @@ static void nm_changed(uint32_t s)   /* v37: a user model was written or erased:
 #endif
 #include "led_probe.h"      /* the LED map (issue #8) */
 #endif
+#if OP_BLE_TEST             /* the advertise-only Bluetooth test image (docs/BLE-TEST.md): make ble */
+#include "ble/ble_os.c"
+#include "ble/ble_libc.c"
+#include "ble/ble_cfg.c"
+#include "ble/ble_rf.c"
+#include "ble/ble_stubs.c"
+#include "ble/ble_test.c"
+#endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
 static void rst_names(char *l, uint32_t r)
@@ -606,7 +617,11 @@ static void app_main(void)
     /* boot screen with the version: shows which image is running */
     lcd_rect(0,0,240,240,UI_BG);
     ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
+#if OP_BLE_TEST
+    ft_box(0, 126, 240, OP_VERSION " BLE TEST", &FT_SM, UI_DIM, UI_BG, 1);
+#else
     ft_box(0, 126, 240, OP_VERSION, &FT_SM, UI_DIM, UI_BG, 1);
+#endif
 #if !AUDIO_PROBE
     {   /* the supplies as found -> as set (fm1_cstart): "PWR 3>7 11>15 DCDC" */
         char l[32]; l[0] = 0;
@@ -697,10 +712,17 @@ static void app_main(void)
     ui_render();
     op_stage(ST_RUN, 0);
 #endif
+#if OP_BLE_TEST
+    if (!safe)                           /* after a failed boot Bluetooth stays off: the pedal runs, and can be re-flashed */
+        ble_test_start();                /* radio on, controller up, one advertisement (the pedal keeps working) */
+#endif
     enc_last = (uint8_t)(PC_IN & ENC_MASK);
     for (;;) {
         uint32_t now = ms_now();
         fm1_wdt_feed();
+#if OP_BLE_TEST
+        ble_test_poll();
+#endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         px_midi_service();               /* USB-MIDI: Program / Control Change in, the pedal's own changes out */
@@ -720,7 +742,25 @@ static void app_main(void)
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
+#if OP_BLE_TEST
+                {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
+                    char b[48], full[96]; int k, j;
+                    static uint32_t scroll;
+                    ble_test_state(b);
+                    if (ble_state == BLE_FAILED || ble_state == BLE_ADV) {   /* longer than the status area: scroll it (ble_status.h) */
+                        if (ble_state == BLE_FAILED) ble_status_full(full); else ble_test_adv_line(full);
+                        ble_marquee(full, scroll++, 11, b);
+                    } else {
+                        for (k = 0; b[k]; k++) ;
+                        b[k++] = ' ';
+                        for (j = 0; c[j]; j++) b[k++] = c[j];
+                        b[k] = 0;
+                    }
+                    ui_status(b, a_bypass);
+                }
+#else
                 ui_status(c, a_bypass);
+#endif
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
 #endif
@@ -887,7 +927,7 @@ void fm1_cstart(void)
     op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
     op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
     op_pwr.rst = (uint8_t)rst0; op_pwr.pinr = (uint8_t)pinr0;
-    fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
+    fm1_guard_enable((OP_GUARD_STACK ? FM1_GUARD_STACK : 0) | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;
 }
