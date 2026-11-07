@@ -410,81 +410,29 @@ static int32_t adc_read2(uint32_t ch)
     return fm1_adc_read(ch);
 }
 
-/* ---- battery (v36, fixed v37): the chip's own VBAT / 4 channel through the PMU test bus, scaled by the 0.8 V bandgap
- * read the same way (JieLi AC79 SDK, cpu/wl82/key/adc_api.c, and cpu.a p33.c adc_pmu_detect_en): mV = 4 x 800 x vbat / vbg.
- * P3_ANA_CON4: bit 0 PMU_DET_EN, bits 3:1 the PMU channel (0 VBG, 5 VBAT/4, 6 LDO5V/4), bit 5 VBG_BUF_EN: the buffer that
- * drives the test bus, which v36 never turned on (the SDK's adc_pmu_detect_en always does): no reading, so no icon.
- * WLA_CON0 (the analog block shared with the radio): bits 17:15 = 4 the PMU on the ADC's channel 15, bit 14 the bandgap path;
- * bits 7:0 the bias, as the SDK's __adc_init sets them (bias on, current select 2, its test output off); PLL_CON1 bit 16
- * (SYSPLL1_TEST_EN) must be off too, or the PLL's test output shares the bus. The bias stays on (the radio uses the same);
- * the test-bus selections are put back after each reading. */
-#define P3_ANA_CON4 0x04u
-#define FM1_ANA_PLL_CON1 (*(volatile uint32_t *)0x119A4u)   /* JL_ANA->PLL_CON1 (WL82.h: 40 WLA_CON words, PLL_CON0, PLL_CON1) */
-static int bat_mv, bat_usb_mv;         /* last readings (0: none) */
-/* the bandgap's factory trim (get_vbg_trim in the SDK: the boot loader's parameter block, offset 14, low byte; read in
- * fm1_cstart before the vector table covers that block): 800 mV + or - 3 mV per step (bits 6:2), bit 7 = minus */
-static uint32_t op_vbg_trim;           /* 0x100 | the byte, 0: not found */
-static int vbg_mv(void)
-{
-    if (!(op_vbg_trim & 0x100u)) return 800;
-    int d = (int)((op_vbg_trim & 0x7Fu) >> 2) * 3;
-    return (op_vbg_trim & 0x80u) ? 800 - d : 800 + d;
-}
-static int32_t bat_raw[5] = {-1, -1, -1, -1, -1};   /* the raw values (tuner page): PC9, VBG, VBAT/4, 5V/4, 0x16A10 bit 16 */
-static int bat_pct = -1;               /* the gauge, as the stock firmware computes it (-1: no reading) */
+/* ---- battery (v37): as the stock firmware reads it. On the Pocket X the chip's own VBAT pin is a regulated 3.3 V (it
+ * reads 3.31 V charged or not, on USB or not: v36 read it, so the gauge never moved) and its 5 V input is not the USB's.
+ * The cell is on PC9 (ADC channel 8) through a 1:2 divider: PocketX_016 (f_02026f60, adc_get_value(8) = f_02025682;
+ * BlackBox the same) maps raw 528 and below to 0 %, 636 and above to 100 %, (raw x 100 - 52700) / 109 between, on an
+ * average of 300 readings. PC9 is an analog input (input_init). Only the ADC: nothing analog is switched (the PMU test bus
+ * readings of the first v37 builds are gone). */
+static int bat_mv, bat_usb_mv;         /* last readings (0: none); bat_usb_mv stays 0 (no USB sense found yet) */
+static int32_t bat_raw[5] = {-1, -1, -1, -1, -1};   /* the tuner page's raw line: PC9, 0x16A10 bit 16, overruns, clips, peak */
+static int bat_pct = -1;               /* the gauge (-1: no reading) */
 static int32_t bat_c9q;                /* PC9 smoothed, x4 */
-static int32_t pmu_conv(uint32_t sel)
-{
-    uint32_t t, v = 0;
-    for (int k = 0; k < 4; k++) {                       /* 3 conversions to settle the mux and the buffer, the 4th counts */
-        FM1_ADC_CON_R = 0;
-        if (sel == 0u) FM1_WLA_CON0 |= 1u << 14; else FM1_WLA_CON0 &= ~(1u << 14);
-        FM1_ADC_CON_R = (FM1_ADC_CON_SDK & 0xF00Fu) | 0x40u | (15u << 8);
-        FM1_ADC_CON_R |= 0x10u;
-        FM1_ADC_CON_R |= 0x40u;
-        for (t = 0; t < 20000u && !fm1_adc_done(); t++) ;
-        if (t == 20000u) { fm1_adc_abort(); return -1; }
-        v = fm1_adc_take();
-    }
-    return (int32_t)v;
-}
-static void pmu_sel(uint8_t c4, uint32_t ch)           /* adc_pmu_detect_en(ch): channel, VBG buffer on, detect on */
-{
-    fm1_p33_write(P3_ANA_CON4, (uint8_t)((c4 & 0xD0u) | 0x20u | 1u | (ch << 1)));
-}
 static void bat_read(void)
 {
-    uint8_t c4 = fm1_p33_read(P3_ANA_CON4);
-    uint32_t w = FM1_WLA_CON0, pll = FM1_ANA_PLL_CON1;
-    if (!(w & 1u)) w = (w & ~0x1Fu) | 0x05u;           /* bias off: on, IGEN_SEL 2 (kept; when on, the radio set it: left alone) */
-    FM1_WLA_CON0 = (w & ~((7u << 15) | (1u << 14) | 0xE0u)) | (4u << 15);   /* the PMU on channel 15; bias test output off */
-    if (pll & (1u << 16)) FM1_ANA_PLL_CON1 = pll & ~(1u << 16);
-    pmu_sel(c4, 0u);
-    int32_t vbg = pmu_conv(0u);
-    pmu_sel(c4, 5u);
-    int32_t vb = pmu_conv(5u);
-    pmu_sel(c4, 6u);
-    int32_t v5 = pmu_conv(6u);
-    fm1_p33_write(P3_ANA_CON4, (uint8_t)(c4 | 0x20u));               /* as found, the buffer left on (as the SDK) */
-    FM1_WLA_CON0 = (FM1_WLA_CON0 & ~((7u << 15) | (1u << 14) | 0xE0u)) | (w & ((7u << 15) | (1u << 14) | 0xE0u));
-    if (pll & (1u << 16)) FM1_ANA_PLL_CON1 = pll;
-    /* v37: on the Pocket X the chip's VBAT is a regulated 3.3 V (VB stays at 3.31 V, charged or not, on USB or not) and its
-     * 5 V input is not the USB's. The cell is on PC9 (ADC channel 8) through a 1:2 divider, as the stock firmware reads it
-     * (PocketX_016 f_02026f60: adc_get_value(8), 528 and below = 0 %, 636 and above = 100 %, (raw x 100 - 52700) / 109
-     * between; stock averages 300 readings). PC9 is an analog input (input_init). */
     int32_t c9 = 0, n = 0;
     (void)fm1_adc_read(8u);                             /* (the sampling capacitor still holds the last channel) */
     for (int k = 0; k < 8; k++) { int32_t v = fm1_adc_read(8u); if (v >= 0) { c9 += v; n++; } }
     c9 = n ? c9 / n : -1;
-    bat_raw[0] = c9; bat_raw[1] = vbg; bat_raw[2] = vb; bat_raw[3] = v5;
-    bat_raw[4] = (int32_t)((*(volatile uint32_t *)0x16A10u >> 16) & 1u);   /* (stock reads this beside the gauge: charging?) */
-    int mu = (vbg >= 100 && vbg <= 900 && v5 >= 0) ? (int)(4 * vbg_mv() * v5 / vbg) : 0;
-    bat_usb_mv = mu;
+    bat_raw[0] = c9;
+    bat_raw[1] = (int32_t)((*(volatile uint32_t *)0x16A10u >> 16) & 1u);   /* (stock reads it beside the gauge: charging?) */
     if (c9 < 100) { bat_mv = 0; bat_pct = -1; bat_c9q = 0; return; }   /* no divider there: no gauge */
     bat_c9q = bat_c9q ? (bat_c9q * 3 + c9 * 4) / 4 : c9 * 4;   /* a little smoothing */
     int r = (int)(bat_c9q / 4);
     bat_pct = r > 635 ? 100 : r < 528 ? 0 : (r * 100 - 52700) / 109;
-    bat_mv = (vbg >= 100 && vbg <= 900) ? (int)(2 * (int32_t)vbg_mv() * r / vbg) : r * 6600 / 1023;   /* the cell, for the tuner page */
+    bat_mv = r * 6600 / 1023;                           /* the cell, roughly (3.3 V reference, 1:2): for the tuner page */
 }
 #define KEY_DEBUG 0          /* 1 = shows the raw value of channel 9 at the bottom right (K####) */
 /* identifies the analog keypad button by the nearest value (±42 window),
@@ -803,7 +751,10 @@ static void app_main(void)
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
                 if (l >= 100u) c[i++] = (char)('0' + l / 100u);
                 if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
-                c[i++] = (char)('0' + l % 10u); c[i++] = '%'; c[i] = 0;
+                c[i++] = (char)('0' + l % 10u); c[i++] = '%';
+                if (!a_bypass && a_xrun && a_blocks - a_xrun_at < 700u) c[i++] = '!';   /* a block ran late in the last 2 s: "2C 88%!" */
+                c[i] = 0;
+                bat_raw[2] = (int32_t)a_xrun; bat_raw[3] = (int32_t)a_clip; bat_raw[4] = (int32_t)a_peak_all;   /* tuner page */
 #if OP_BLE_TEST
                 {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
                     char b[48], full[128]; int k, j;
@@ -821,7 +772,7 @@ static void app_main(void)
                     ui_status(b, a_bypass);
                 }
 #else
-                ui_status(c, a_bypass);
+                ui_status(c, a_bypass || (a_xrun && a_blocks - a_xrun_at < 700u));   /* (red: bypassed, or a late block) */
 #endif
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
@@ -958,12 +909,7 @@ static void app_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
-    uint32_t vdc0, sys0, dcdc, rst0, pinr0, trim = 0;
-    {   /* v37: the boot loader's parameter block (crt0 saved its address): the bandgap trim, before fm1_irq_init writes the
-         * vector table over it (0x01C7FE00..) */
-        uint32_t bp = *(volatile uint32_t *)0x01C07F28u;
-        if (bp >= 0x01C7FD50u && bp <= 0x01C7FFE0u && !(bp & 3u)) trim = 0x100u | (*(volatile uint16_t *)(uintptr_t)(bp + 14u) & 0xFFu);
-    }
+    uint32_t vdc0, sys0, dcdc, rst0, pinr0;
     fm1_time_init();
     /* v31, issue #1: the stock firmware's first act is P3_PINR_CON = 0, the long-press reset off (BlackBox_020
      * f_0200698a). Left on, a pin held at its active level resets the chip every 4 s (the SDK offers 4 or 8 s):
@@ -994,7 +940,6 @@ void fm1_cstart(void)
     op_pwr.vdc0 = (uint8_t)vdc0; op_pwr.vdc1 = (uint8_t)fm1_vdc14();
     op_pwr.sys0 = (uint8_t)sys0; op_pwr.sys1 = (uint8_t)fm1_sysvdd(); op_pwr.dcdc = (uint8_t)dcdc;
     op_pwr.rst = (uint8_t)rst0; op_pwr.pinr = (uint8_t)pinr0;
-    op_vbg_trim = trim;
     fm1_guard_enable((OP_GUARD_STACK ? FM1_GUARD_STACK : 0) | FM1_GUARD_WRITE | FM1_GUARD_BUS | FM1_GUARD_PC);
     app_main();
     for (;;) ;

@@ -52,9 +52,16 @@
 - **The gauge reads the cell where the stock firmware does**: on the Pocket X the chip's own battery pin is a regulated
   3.3 V (it never moves, charged or not), so the gauge now reads PC9 (ADC channel 8, the cell through a 1:2 divider) and
   computes the percentage exactly as PocketX_016 and BlackBox do: raw 528 = 0 %, 636 = 100 %, linear between.
-- With no reading the icon shows an empty cell and `--` instead of nothing. The tuner page shows the raw readings on its
-  last line (`C9` the cell's divider, `BG` bandgap, `VB` the chip's supply / 4, `5V` / 4, `CH` a status bit the stock
-  firmware reads beside the gauge).
+- With no reading the icon shows an empty cell and `--` instead of nothing. Only the ADC is read: nothing analog is
+  switched any more (the first v37 builds switched the chip's test bus every 2 s).
+
+## Crackles
+- **The output no longer clips hard**: above 0.8 of full scale a soft knee bends the loudest peaks towards full scale
+  instead of cutting them flat (the corners of a hard clip crackle).
+- **A late block is shown**: when the DSP takes longer than a block's 2.9 ms (what makes a crackle), the load in the
+  status corner turns red with a `!` for 2 s (`2C 88%!`).
+- The tuner page's last line counts them since the start: `C9` the battery's raw reading, `CH` a status bit,
+  `LATE` the late blocks, `CLIP` the blocks that reached the soft knee, `PK` the highest block load (%).
 - In bypass the status corner says which cores were running: `BYP 2C 150%` or `BYP C0 150%`.
 
 ## From the community (merged into v37)

@@ -569,8 +569,9 @@ static void tuner_level(void)
     b[i] = 0;
     ft_box(0, 36, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
-/* v37: the battery's raw readings (openpocket.c bat_read: PC9 the cell's divider, the bandgap, VBAT/4, 5 V/4; -1 = no
- * conversion) and a status bit the stock firmware reads beside them, for a photo when the gauge looks wrong */
+/* v37: for a photo: the battery's raw reading (PC9, the cell's divider; -1 = no conversion), a status bit the stock firmware
+ * reads beside it, the audio blocks that ran late and that reached the output's soft clipper since the start, and the
+ * highest block load seen (%) */
 static uint32_t tn_last_raw = ~0u;
 static int r_str(char *b, int32_t v) { if (v < 0) { b[0] = '-'; b[1] = '-'; return 2; } char t[8]; t[0] = 0; b_num(t, (uint32_t)v); int i = 0; while (t[i]) { b[i] = t[i]; i++; } return i; }
 static void tuner_bat_raw(void)
@@ -579,7 +580,7 @@ static void tuner_bat_raw(void)
     for (int k = 0; k < 5; k++) h = h * 0x9E3779B1u + (uint32_t)bat_raw[k];
     if (h == tn_last_raw) return;
     tn_last_raw = h;
-    static const char *const N[5] = {"C9 ", " BG ", " VB ", " 5V ", " CH "};
+    static const char *const N[5] = {"C9 ", " CH ", " LATE ", " CLIP ", " PK "};
     char b[48]; int i = 0;
     for (int k = 0; k < 5; k++) { for (const char *p = N[k]; *p; p++) b[i++] = *p; i += r_str(b + i, bat_raw[k]); }
     b[i] = 0;
