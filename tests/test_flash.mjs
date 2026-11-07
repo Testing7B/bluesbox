@@ -8,8 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main } from "../tools/flash.mjs";
+import { Updater } from "../docs/pxota.js";
+import { logicalImage } from "../docs/pxpkg.js";
 import { nodeMidiAccess } from "../tools/midi-node.mjs";
-import { simAccess } from "./simpedal.mjs";
+import { loopAccess, simAccess } from "./simpedal.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TMP = mkdtempSync(join(tmpdir(), "opflash-"));
@@ -138,6 +140,77 @@ const say = (lines) => (l) => lines.push(l);
 {
   const r = spawnSync(process.execPath, [join(ROOT, "tools/op.mjs"), "flash"], { encoding: "utf8" });
   ok(r.status === 2 && /--confirm-flash/.test(r.stdout), "node tools/op.mjs flash (no flag): refused with exit 2");
+}
+
+// 10. --rescue against a pedal that restarts in a loop (USB ports there for a moment, gone, there again)
+async function rescueRun(argv, loop) {
+  const dump = join(TMP, `dump${Math.random().toString(36).slice(2)}.bin`);
+  const sim = simAccess([old, "--dump", dump]);
+  await sim.ready;
+  const lp = loopAccess(sim, loop);
+  const lines = [];
+  const t0 = Date.now();
+  const code = await main(argv, { access: lp.access, say: (l) => lines.push(l), timing: FAST });
+  const cycles = lp.cycles();
+  await lp.end();
+  return { code, out: lines.join("\n"), log: sim.log, dump: readFileSync(dump), cycles, secs: (Date.now() - t0) / 1000 };
+}
+const rescueArgs = ["--rescue", "--confirm-flash", "--package", px, "--manifest", man];
+{
+  const lines = [];
+  const code = await main(["--rescue", "--package", px, "--manifest", man], { access: notContacted, say: say(lines), timing: FAST });
+  ok(code === 2 && /--confirm-flash/.test(lines.join("\n")), "rescue without --confirm-flash: refused, MIDI never touched");
+  const bad = await main(["--rescue", "--timeout", "0", "--confirm-flash"], { access: notContacted, say: say(lines), timing: FAST });
+  ok(bad === 2, "rescue with a timeout of 0: refused");
+}
+{
+  const r = await rescueRun([...rescueArgs, "--timeout", "30"], { answerOn: 3 });
+  ok(r.code === 0 && r.cycles === 3 && /done: the pedal reports PocketX_924/.test(r.out), `rescue: the pedal answers on the 3rd restart and is installed (cycles ${r.cycles}, ${r.secs}s) ${r.code ? "\n" + r.out : ""}`);
+  ok(/still waiting|pedal answered/.test(r.out) && /pedal answered: PocketX_923/.test(r.out), "rescue: progress lines say when the pedal answered");
+  const f = join(TMP, "rescued.bin"); writeFileSync(f, r.dump);
+  ok(appIn(f) === "PocketX_924 CRC-OK" && r.log.filter((l) => /step1/.test(l)).length === 1, "rescue: flash holds PocketX_924, every CRC right, one transfer");
+}
+{
+  const r = await rescueRun([...rescueArgs, "--timeout", "2"], { answerOn: 1e9 });
+  ok(r.code === 1 && /no pedal answered in 2 s/.test(r.out) && /WL80UBOOT/.test(r.out) && untouched(r) && r.secs < 15, `rescue: a pedal that never answers times out, exit 1, nothing written (${r.secs}s)`);
+}
+{
+  const r = await rescueRun(["--rescue", "--confirm-flash", "--package", bb, "--manifest", man, "--timeout", "10"], { answerOn: 2 });
+  ok(r.code === 2 && /wrong model/.test(r.out) && untouched(r), "rescue: a BlackBox package on a Pocket X is refused, nothing sent");
+}
+{
+  const r = await rescueRun(["--rescue", "--confirm-flash", "--manifest", man, "--timeout", "30"], { answerOn: 2 });
+  ok(r.code === 0 && /PocketX_924/.test(r.out) && !/BlackBox_924/.test(r.out.split("pedal answered")[1] || ""), "rescue: without --package the pedal's own model's package is picked");
+}
+{
+  const r = await rescueRun(["--rescue", "--dry-run", "--manifest", man, "--timeout", "30"], { answerOn: 2 });
+  ok(r.code === 0 && /dry run ok/.test(r.out) && untouched(r), "rescue --dry-run: waits for the pedal, checks the model, writes nothing");
+}
+{
+  const r = await rescueRun([...rescueArgs, "--timeout", "30"], { answerOn: 1, vanishAfterSends: 3 });
+  ok(r.code === 0 && /went away/.test(r.out) && /done: the pedal reports PocketX_924/.test(r.out), `rescue: the pedal vanishes mid-transfer, returns, and is installed ${r.code ? "\n" + r.out : ""}`);
+}
+
+// 11. a fresh --rescue finds the pedal in the OpenPocket update loader an interrupted install left behind
+async function loaderRun(argv) {
+  const dump = join(TMP, `dump${Math.random().toString(36).slice(2)}.bin`);
+  const sim = simAccess([old, "--dump", dump]);
+  await sim.ready;
+  const up = new Updater(sim.access, null, FAST);
+  try { await up.installOn(await up.find((id) => id.model === "PocketX"), logicalImage(readFileSync(px)), "PocketX_924", (s) => { if (s === "loader") throw new Error("interrupted"); }); } catch (_) { /* left in the loader */ }
+  const lines = [];
+  const code = await main(argv, { access: sim.access, say: (l) => lines.push(l), timing: FAST });
+  await sim.end();
+  return { code, out: lines.join("\n"), log: sim.log, dump: readFileSync(dump) };
+}
+{
+  const r = await loaderRun([...rescueArgs, "--timeout", "30"]);
+  const f = join(TMP, "loader_rescued.bin"); writeFileSync(f, r.dump);
+  ok(r.code === 0 && /done: the pedal reports PocketX_924/.test(r.out) && appIn(f) === "PocketX_924 CRC-OK", `rescue: a pedal left in its update loader is finished with the given package ${r.code ? "\n" + r.out : ""}`);
+}
+{
+  const r = await loaderRun(["--rescue", "--confirm-flash", "--manifest", man, "--timeout", "2"]);
+  ok(r.code === 1 && /no pedal answered in 2 s/.test(r.out) && /--package/.test(r.out) && !r.log.some((l) => /step2/.test(l)), "rescue: a loader without --package is not guessed at, the timeout says to name the package");
 }
 
 console.log(failed ? `\n${failed} FAILED` : "\nall flasher tests passed");
