@@ -79,6 +79,43 @@ static void bq_block(px_bq *q, float *b, int n)
     q->z1 = z1;
     q->z2 = z2;
 }
+/* two filters in series over a buffer, interleaved: the first on sample k while the second does sample k-1, so that
+ * their two feedback loops overlap in the FPU instead of waiting for each other (same operations per filter, same
+ * result as bq_block twice) */
+static void bq_block2(px_bq *p, px_bq *q, float *b, int n)
+{
+    if (n <= 0) return;
+    const float pb0 = p->b0, pb1 = p->b1, pb2 = p->b2, pa1 = p->a1, pa2 = p->a2;
+    const float qb0 = q->b0, qb1 = q->b1, qb2 = q->b2, qa1 = q->a1, qa2 = q->a2;
+    float pz1 = p->z1, pz2 = p->z2, qz1 = q->z1, qz2 = q->z2;
+    float x = b[0], pend = pb0 * x + pz1;
+    pz1 = pb1 * x - pa1 * pend + pz2;
+    pz2 = pb2 * x - pa2 * pend;
+    for (int k = 1; k < n; k++) {
+        const float xp = b[k], yp = pb0 * xp + pz1;
+        pz1 = pb1 * xp - pa1 * yp + pz2;
+        pz2 = pb2 * xp - pa2 * yp;
+        const float u = pend, yq = qb0 * u + qz1;
+        qz1 = qb1 * u - qa1 * yq + qz2;
+        qz2 = qb2 * u - qa2 * yq;
+        b[k - 1] = yq;
+        pend = yp;
+    }
+    {
+        const float u = pend, yq = qb0 * u + qz1;
+        qz1 = qb1 * u - qa1 * yq + qz2;
+        qz2 = qb2 * u - qa2 * yq;
+        b[n - 1] = yq;
+    }
+    p->z1 = pz1; p->z2 = pz2; q->z1 = qz1; q->z2 = qz2;
+}
+/* a chain of filters over a buffer, two at a time */
+static void bq_chain(px_bq *f, int nf, float *b, int n)
+{
+    int c = 0;
+    for (; c + 1 < nf; c += 2) bq_block2(&f[c], &f[c + 1], b, n);
+    if (c < nf) bq_block(&f[c], b, n);
+}
 static void bq_set(px_bq *b, float b0, float b1, float b2, float a0, float a1, float a2)
 {
     float z1 = b->z1, z2 = b->z2;                      /* keep state: no click on change */
@@ -1044,8 +1081,7 @@ PX_HOT static void nam_run(px_engine *e, int n, float trim)
     for (int k = 0; k < n; k++) b[k] *= gi;
     pxn_process(&px_nam_m, b, b, n);
     for (int k = 0; k < n; k++) b[k] *= go;
-    bq_block(&e->ts_low, b, n);
-    bq_block(&e->ts_mid, b, n);
+    bq_block2(&e->ts_low, &e->ts_mid, b, n);
     bq_block(&e->ts_high, b, n);
 }
 
@@ -1715,10 +1751,9 @@ static void drive_block(px_engine *e, float *u, int n, int os)   /* (static buff
         bq_block(&e->drv_t1, t, n);
         bq_block(&e->drv_t2, h, n);
         for (int i = 0; i < n; i++) t[i] = t[i] + (h[i] - t[i]) * e->drv_mix;
-    } else {
-        bq_block(&e->drv_t1, t, n);
-        if (e->drv_np & 2) bq_block(&e->drv_t2, t, n);
-    }
+    } else if (e->drv_np & 2) {
+        bq_block2(&e->drv_t1, &e->drv_t2, t, n);
+    } else bq_block(&e->drv_t1, t, n);
     if (e->drv_np & 4) bq_block(&e->drv_t3, t, n);
     for (int i = 0; i < n; i++) u[i] = t[i] * e->drv_level + u[i] * e->drv_blend;
 }
@@ -2228,7 +2263,7 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
         const float strim = tr[s];
         if (sblk == PX_B_CAB) {                          /* cabinet: its filters one after the other over the block */
             if (p->on[PX_B_CAB] && e->cab_n) {
-                for (int c = 0; c < e->cab_n; c++) bq_block(&e->cab[c], xb, n);
+                bq_chain(e->cab, e->cab_n, xb, n);
                 for (int k = 0; k < n; k++) {
                     float x = xb[k];
                     if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);
@@ -2247,11 +2282,9 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
                     ub[PX_OVERSAMPLE * k] = x * osg;
                     for (int o = 1; o < PX_OVERSAMPLE; o++) ub[PX_OVERSAMPLE * k + o] = 0.0f;
                 }
-                bq_block(dua, ub, PX_OVERSAMPLE * n);
-                bq_block(dub, ub, PX_OVERSAMPLE * n);
+                bq_block2(dua, dub, ub, PX_OVERSAMPLE * n);
                 drive_block(e, ub, PX_OVERSAMPLE * n, PX_OVERSAMPLE);
-                bq_block(dda, ub, PX_OVERSAMPLE * n);
-                bq_block(ddb, ub, PX_OVERSAMPLE * n);
+                bq_block2(dda, ddb, ub, PX_OVERSAMPLE * n);
                 for (int k = 0; k < n; k++) xb[k] = ub[PX_OVERSAMPLE * k + PX_OVERSAMPLE - 1] * strim;
             } else for (int k = 0; k < n; k++) xb[k] *= strim;
             continue;

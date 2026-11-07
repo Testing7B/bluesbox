@@ -337,7 +337,7 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 15: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 16: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
