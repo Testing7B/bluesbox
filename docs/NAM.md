@@ -70,8 +70,11 @@ trained at 44.1 kHz and are not affected.
   pedal these are hand-written (pi32v2 assembly: multiply-adds paired with loads, 3 words moved by one instruction,
   no branch per sample), because this CPU has no data cache in front of its RAM and a taken branch costs about 8
   cycles. At start-up they are run against the C versions on a test pattern, and the C versions are used if they
-  differ by a single bit. The start-up timing also compares this with gathering each frame's inputs into one row
-  first (then the hardware-loop dot routine), and keeps the faster.
+  differ by a single bit. On this CPU a multiply-add paired with the load of the value it needs next waits for it
+  (3.2 cycles, against 2.2 without the wait), so the routines for 6, 15 and 16 taps (`rdq`, written by
+  `tools/gen_rdq.py`) are unrolled with each value loaded 2 to 4 steps before its use. The start-up timing compares
+  them with the first `rdot` and with gathering each frame's inputs into one row first (then the hardware-loop dot
+  routine), and keeps the fastest.
 - The dot products can also run on the chip's vector unit (in its FFT block: one command computes a row of weights
   against many X rows, beside the CPU; each frame's inputs to the layer are then gathered into one X row). The block
   is cut in two halves, and half B of a layer never needs the next layer's half A: so while the unit computes one
