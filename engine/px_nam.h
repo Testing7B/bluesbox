@@ -35,6 +35,7 @@ typedef struct {
     int16_t k, d;                       /* kernel, dilation */
     int32_t off;                        /* this layer's weight rows in pxn_model.wa */
     int32_t rr[12];                     /* its residual 1x1: 3 x {w[o][0..2] Q24, bias[o] Q20} */
+    int32_t rr2[12];                    /* the same for the pedal's post2: w[o][c] by c then o, then the 3 biases */
 } pxn_layer;
 
 typedef struct {
@@ -65,7 +66,14 @@ void pxn_vwait(void);
 /* measurements for the firmware's bench screen (px_audio.h, BENCH_AT_BOOT): ticks, see px_nam.c */
 uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps);
 uint32_t pxn_bench_dot(int32_t *x, int32_t *w, int32_t *z, int vec, uint32_t (*ticks)(void), int reps);
-uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps);
+uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps, int v2);
+uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nloop, int xs, int zs, int reps, int start_only);
+/* how the blocks run: 0 the CPU alone, 1 each dot product on the vector unit in turn, 2 the vector unit and the CPU at
+ * once (half a block on the unit while the CPU prepares or finishes the other half). pxn_tune times them on a loaded
+ * model and keeps the fastest (ticks for 256 frames in t[3], 0 = not available); the model is cleared after. */
+int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[3]);
+int pxn_mode(void);
+int pxn_post2_in_use(void);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */

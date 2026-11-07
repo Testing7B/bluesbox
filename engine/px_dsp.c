@@ -961,15 +961,6 @@ int32_t *px_nam_scratch(void)
     px_nam_m.ready = 0;
     return px_nam_r0;
 }
-/* start-up: the hand-written NAM routine checked, in the ring memory (the model's history cleared after) */
-int px_nam_check(void)
-{
-    typedef char room[sizeof px_nam_r0 >= PXN_TEST_WORDS * 4u ? 1 : -1];
-    (void)sizeof(room);
-    const int ok = pxn_selftest(px_nam_r0);
-    if (px_nam_m.ready) pxn_reset(&px_nam_m);
-    return ok;
-}
 /* model m into the network: factory weights straight from flash, a user slot through the ring memory (free until
  * pxn_load clears it). 0 = loaded. */
 static int nam_load(int m, float *level_db)
@@ -985,6 +976,24 @@ static int nam_load(int m, float *level_db)
     if (!w) { px_nam_m.ready = 0; return -1; }
     return pxn_load(&px_nam_m, w, px_nam_r0, sizeof px_nam_r0, 0, 0);
 }
+/* start-up: the hand-written NAM routines checked (in the ring memory), then, given a clock (ticks), the ways of running
+ * the network timed on the first factory model and the fastest kept (pxn_tune). The model is loaded again by the next
+ * engine set. */
+static uint32_t px_nam_tt[3];
+int px_nam_check(uint32_t (*ticks)(void))
+{
+    typedef char room[sizeof px_nam_r0 >= PXN_TEST_WORDS * 4u ? 1 : -1];
+    (void)sizeof(room);
+    const int ok = pxn_selftest(px_nam_r0);
+    px_nam_m.ready = 0;
+    if (ticks) {
+        float lv;
+        if (!nam_load(0, &lv)) pxn_tune(&px_nam_m, ticks, px_nam_tt);
+        px_nam_m.ready = 0;
+    }
+    return ok;
+}
+uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < 3 ? px_nam_tt[mode] : 0; }
 /* every model is trimmed to -20 LUFS on the DI clip (its level trim); this puts NAM + the 1x12 at GAIN noon at the fitted
  * amps' -23 LUFS (mean over the factory models, measured by tools/level_presets.py's DI) */
 #define PX_NAM_REF_DB (-6.0f)

@@ -655,7 +655,7 @@ static void app_main(void)
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
     nm_scan();                           /* v37: the NAM user models (names, levels) */
-    px_nam_check();                      /* v37: the NAM layer routine by hand (checked against the C one) */
+    px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);

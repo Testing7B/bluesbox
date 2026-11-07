@@ -91,7 +91,9 @@ int         px_preset_count(void);
 int         px_nam_model(int v);
 int         px_nam_knob(int model);
 int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memory as scratch (PXN_TEST_WORDS+) */
-int         px_nam_check(void);                       /* start-up: the hand-written NAM routine checked (1 = in use) */
+int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines checked, then (ticks given) its
+                                                         fastest way to run chosen (1 = hand routines in use) */
+uint32_t    px_nam_tuned(int mode);                   /* that timing: ticks for 256 frames, by mode (0 = n/a) */
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
 /* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
  * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */

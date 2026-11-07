@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # OpenPocket — the NAM engine (engine/px_nam.c, fixed point, the pedal's C path) against the float reference
 # (tools/nam_a2.py), with each factory model's weights (engine/px_nam_factory.h): DI clip (docs/nam_di.wav) at the
-# pedal's input level, several block sizes, the rings in one piece and in two. Wants SNR > 80 dB.
+# pedal's input level, several block sizes, the rings in one piece and in two. Wants SNR > 80 dB. Mode 2 (the vector
+# unit beside the CPU, simulated: tests/engine/nam_test.c) must give exactly the same output as the CPU alone.
 #   python3 tests/test_nam.py build/nam_test
 import os, re, subprocess, sys, wave
 import numpy as np
@@ -31,14 +32,20 @@ for k, (name, wt) in enumerate(zip(names, models)):
     wt.tofile(os.path.join(out, "w.f32"))
     ref = nam_a2.run(nam_a2.unpack(wt.astype(np.float64), 3), x.astype(np.float64))
     worst = 1e9
-    for blk, split in ((64, 0), (37, 1), (1, 0)):
-        env = dict(os.environ, **({"NAM_SPLIT": "1"} if split else {}))
+    outs = {}
+    for blk, split, pipe in ((64, 0, 0), (37, 1, 0), (1, 0, 0), (64, 0, 1), (37, 1, 1)):
+        env = dict(os.environ)
+        if split: env["NAM_SPLIT"] = "1"
+        if pipe: env["NAM_PIPE"] = "1"
         subprocess.run([exe, os.path.join(out, "w.f32"), os.path.join(out, "in.f32"), os.path.join(out, "out.f32"),
                         str(blk)], check=True, env=env)
         y = np.fromfile(os.path.join(out, "out.f32"), np.float32)
+        outs[blk, pipe] = y
         snr = 10 * np.log10(np.sum(ref ** 2) / max(np.sum((y - ref) ** 2), 1e-30))
         worst = min(worst, snr)
-    ok = worst > 80
+    same = all(np.array_equal(outs[b, 0], outs[b, 1]) for b in (64, 37))
+    ok = worst > 80 and same
+    if not same: print("%-10s mode 2 differs from the CPU alone" % name)
     bad += not ok
     print("%-10s fixed point vs float: SNR %.1f dB  %s" % (name, worst, "ok" if ok else "FAIL"))
 print("NAM: %d models, %s" % (len(models), "all ok" if not bad else "%d FAILED" % bad))

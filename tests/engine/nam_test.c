@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket — engine/px_nam.c on the PC: nam_test weights.f32 in.f32 out.f32 [block]   (tests/test_nam.py)
- * weights.f32: the 1871 A2-Lite weights (float32, file order); in/out: float32 samples. */
+ * weights.f32: the 1871 A2-Lite weights (float32, file order); in/out: float32 samples.
+ * NAM_PIPE=1: mode 2 (the vector unit beside the CPU) with a simulated unit (built with -DPXN_EMUVEC). */
 #include <stdio.h>
 #include <stdlib.h>
 #include "px_nam.h"
 static pxn_model m;
+void pxn_emu_on(int mode);
 static int32_t ring[PXN_RING_BYTES / 4 + 4096];   /* + 16 KB: two pieces never pack perfectly (NAM_SPLIT=1) */
 static float *rd(const char *p, long *n)
 {
@@ -26,6 +28,7 @@ int main(int argc, char **argv)
     unsigned n0 = getenv("NAM_SPLIT") ? (PXN_RING_BYTES * 3 / 4 & ~3u) : PXN_RING_BYTES;
     int r = pxn_load(&m, w, ring, n0, ring + n0 / 4, getenv("NAM_SPLIT") ? PXN_RING_BYTES + 16384u - n0 : 0);
     if (r) { fprintf(stderr, "load %d\n", r); return 1; }
+    if (getenv("NAM_PIPE")) pxn_emu_on(2);
     float *y = malloc(n * 4);
     for (long i = 0; i < n; i += blk) pxn_process(&m, x + i, y + i, (int)(n - i < blk ? n - i : blk));
     FILE *o = fopen(argv[3], "wb");
