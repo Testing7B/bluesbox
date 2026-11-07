@@ -664,7 +664,12 @@ static void ble_go(void)                /* the radio on, once a boot (main loop)
 }
 static void ble_service(void)           /* every loop: the controller's tasks, and the state the MIDI page shows */
 {
-    if (ble_started) {
+    static uint32_t t_poll;
+    uint32_t t = fm1_uptime_ms();
+    if (ble_started && t != t_poll) {   /* once a millisecond (its clock is 10 ms): not every pass of the main loop, whose
+                                         * spinning through the scheduler's tables (cache RAM) and the library's code (flash)
+                                         * competes with the DSP for the cache */
+        t_poll = t;
         ble_test_poll();
         if (ble_bg.starting && (ble_state == BLE_ADV || ble_state == BLE_FAILED)) ble_bg.starting = 0;   /* it did not hang */
     }
@@ -850,7 +855,11 @@ static void app_main(void)
                 uint32_t l = a_bypass ? a_peak : a_load; int i = 0;
                 if (l > 999u) l = 999u;
                 if (safe) { c[i++]='S'; c[i++]='A'; c[i++]='F'; c[i++]='E'; c[i++]=' '; }
-                else if (a_bypass) { c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' '; }
+                else if (a_bypass) {     /* "BYP 2C 150%": which cores ran when it gave up (the peak follows) */
+                    c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' ';
+                    if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; } else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); }
+                    c[i++]=' ';
+                }
                 else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
                 else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
                 if (mid_bt == PXM_BT_LINK && i <= 5) {   /* a Bluetooth MIDI link: "BT C1 42%" */
