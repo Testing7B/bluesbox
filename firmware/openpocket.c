@@ -640,7 +640,7 @@ static void ed_diag_line(uint32_t i, char *out)
  * start on some unit costs one restart, never a loop. */
 #define BLE_BG_MAGIC 0x424C4547u
 static volatile struct { uint32_t magic, starting, skipped; } ble_bg __attribute__((section(".noinit")));
-static int ble_started;
+static int ble_started, ble_safe;      /* ble_safe: this boot follows a failed one (the radio waits for the user) */
 extern char _ble_stack_hi[];
 static void ble_guard_window(void)      /* the stack guard's window up to the top of the controller's task stacks (cache RAM) */
 {
@@ -668,7 +668,12 @@ static void ble_service(void)           /* every loop: the controller's tasks, a
         ble_test_poll();
         if (ble_bg.starting && (ble_state == BLE_ADV || ble_state == BLE_FAILED)) ble_bg.starting = 0;   /* it did not hang */
     }
-    mid_bt = !ble_started ? (ble_bg.skipped ? PXM_BT_SKIPPED : PXM_BT_OFF)
+    if (mi_ble_retry) {                 /* BLUETOOTH turned (back) on by hand on the MIDI page: try again, even after a crash */
+        mi_ble_retry = 0;
+        if (!ble_started) { ble_bg.skipped = 0; ble_safe = 0; ble_go(); }
+    }
+    if (!ble_started && mid_cfg.ble && !ble_bg.skipped && !ble_safe && ui_mode != M_MIDI) ble_go();   /* switched on there */
+    mid_bt = !ble_started ? ((ble_bg.skipped || (ble_safe && mid_cfg.ble)) ? PXM_BT_SKIPPED : PXM_BT_OFF)
            : ble_state == BLE_FAILED ? PXM_BT_FAILED : ble_state != BLE_ADV ? PXM_BT_STARTING
            : ble_conn ? PXM_BT_LINK : PXM_BT_WAIT;
 }
@@ -819,6 +824,7 @@ static void app_main(void)
     op_stage(ST_RUN, 0);
 #endif
 #if OP_BLE
+    ble_safe = safe;
     if (!safe && !ble_bg.skipped && (OP_BLE_TEST || mid_cfg.ble))   /* after a failed boot it stays off: the pedal runs */
         ble_go();                        /* radio on, controller and host up, advertising (the pedal keeps working) */
 #else
@@ -830,7 +836,6 @@ static void app_main(void)
         fm1_wdt_feed();
 #if OP_BLE
         ble_service();
-        if (!ble_started && !safe && !ble_bg.skipped && mid_cfg.ble && ui_mode != M_MIDI) ble_go();   /* switched on on the MIDI page */
 #endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */

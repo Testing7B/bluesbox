@@ -146,6 +146,16 @@ static void task_body(void)
 
 static void task_yield(void) { ble_ctx_swap(&cur->sp, sched_sp); }
 
+/* v37: run fn on the main stack, below the main loop's frame, which waits in ble_poll while a task runs. The task stacks are in
+ * the cache RAM, which the radio's start-up must not use: its crystal ramp runs with data on the caller's stack, and the cache
+ * RAM is served by the cache controller, like the flash (the first release crashed there: a return address read back wrong) */
+extern void ble_call_on(uint32_t *top, void (*fn)(void));
+static void ble_on_main_stack(void (*fn)(void))
+{
+    if (!cur || !sched_sp) { fn(); return; }        /* (not in a task: already on the main stack) */
+    ble_call_on((uint32_t *)(((uintptr_t)sched_sp - 256u) & ~(uintptr_t)7u), fn);
+}
+
 int task_create(void (*fn)(void *), void *arg, const char *name)
 {
     int i;

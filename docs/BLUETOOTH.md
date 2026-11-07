@@ -22,7 +22,7 @@ Open the MIDI page again to see what the radio is doing:
 | `BT: ON WHEN YOU LEAVE` | switched on here: it starts when you press HOME |
 | `BT: OFF AFTER A RESTART` | switched off here: the radio stops at the next power-on (until then what it receives is ignored) |
 | `BT: FAILED TO START` | the radio did not start this time (the pedal works as usual; the log channel says why, see below) |
-| `BT: FAILED - SWITCH OFF AND ON` | the pedal restarted while the radio was starting; it stays off until you switch the pedal off and on |
+| `BT: STOPPED - SET OFF, THEN ON` | the pedal restarted while the radio was starting (or after a failed boot): it waits for you. Turn the row OFF then ON again and leave the page to try again (`BT: TRIES AGAIN WHEN YOU LEAVE`) |
 
 The setting is kept with the MIDI settings (the preset store's settings byte, bit 7) and survives firmware updates.
 
@@ -30,6 +30,8 @@ The setting is kept with the MIDI settings (the preset store's settings byte, bi
 
 - **Mac:** *Audio MIDI Setup* → *Window* → *Show MIDI Studio* → the Bluetooth button → `OpenPocket` → *Connect*. It then
   appears as a MIDI device in every app.
+- **The phone's own Bluetooth settings never list it** (that is normal for every Bluetooth MIDI device). To check that the
+  pedal is visible, *nRF Connect* or *LightBlue* (free) show `OpenPocket` in their scan.
 - **iPhone / iPad:** in an app that has a Bluetooth MIDI page (GarageBand: *Settings* → *Advanced* → *Bluetooth MIDI
   Devices*; many MIDI apps have the same page). The system Bluetooth settings do not list MIDI devices.
 - **Android:** an app such as *MIDI BLE Connect*, then any MIDI app.
@@ -68,8 +70,12 @@ connected and without, and say if you hear any crackle. If it does not start, a 
 - **The stack guard** stays on: before the controller's tasks first run, the firmware raises the top of the guard's window to
   the end of their stacks (`ble_guard_window` in `firmware/openpocket.c`).
 - **Start-up safety.** A reset while the radio is starting (a hang the watchdog ends, a crash) is noted in memory that survives
-  a reset: the following boots leave the radio off until a power cycle, so a radio that will not start on some unit costs one
-  restart, never a loop. After any failed boot (the `LAST BOOT FAILED` screen) the next boot runs without it too.
+  a reset: the following boots leave the radio off until a power cycle or until you turn the row off and on again, so a radio
+  that will not start on some unit costs one restart, never a loop. After any failed boot (the `LAST BOOT FAILED` screen) the
+  next boot waits for you the same way.
+- **The radio's start-up runs on the main stack**, in RAM, not on the controller task's stack in the cache RAM: its crystal
+  ramp keeps data on the caller's stack, and the cache RAM is served by the cache controller like the flash. The first build
+  that put it there crashed in that start-up (a return address read back wrong: `fm1_rfc_vga_gain`, PC `00100086`).
 - The log channel (`node tools/op.mjs log`, editor command 23 `DIAG`) answers in every firmware with Bluetooth built in: the
   boot, the last boot, the radio's state, the link and the last events, as described in [BLE-TEST.md](BLE-TEST.md).
 - `OP_NOBLE=1 sh firmware/build.sh` builds the firmware without it. `make ble` builds the test image: the same firmware with the

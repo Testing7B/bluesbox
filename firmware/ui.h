@@ -469,10 +469,11 @@ static void save_confirm(void)
 enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_BLE, MI_ROWS };
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig;
+static uint8_t mi_ble_touched, mi_ble_retry;     /* the BLUETOOTH row was turned; left ON after that: try the radio again */
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
 static void midi_open(void)
 {
-    ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg);
+    ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ble_touched = 0;
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
     ft_box(8, 4, 232, "MIDI", &FT_MD, BLK, UI_ACC, 0);
@@ -505,7 +506,8 @@ static void midi_draw(void)
         const char *t = "BT: OFF";
         uint16_t c = UI_DIM;
         if (mid_bt == PXM_BT_NONE) t = "BT: NOT IN THIS FIRMWARE";
-        else if (mid_bt == PXM_BT_SKIPPED) { t = "BT: FAILED - SWITCH OFF AND ON"; c = RED; }
+        else if (mid_bt == PXM_BT_SKIPPED && mi_ble_touched && mid_cfg.ble) t = "BT: TRIES AGAIN WHEN YOU LEAVE";
+        else if (mid_bt == PXM_BT_SKIPPED) { t = "BT: STOPPED - SET OFF, THEN ON"; c = RED; }
         else if (mid_bt == PXM_BT_FAILED) { t = "BT: FAILED TO START"; c = RED; }
         else if (!mid_cfg.ble && mid_bt != PXM_BT_OFF) t = "BT: OFF AFTER A RESTART";
         else if (mid_bt == PXM_BT_STARTING) t = "BT: STARTING";
@@ -523,6 +525,7 @@ static void midi_draw(void)
 static void midi_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
+    if (mi_ble_touched && mid_cfg.ble) mi_ble_retry = 1;
     if (px_midi_cfg_pack(&mid_cfg) != mi_orig) midi_persist();
     lcd_rect(0, 0, 240, 240, UI_BG);
     uc.screen = -1;
@@ -533,7 +536,7 @@ static void midi_knob(int dd)
     if (mi_row == MI_CHAN) mid_cfg.chan = (uint8_t)((mid_cfg.chan + 17u + (uint32_t)(dd > 0 ? 1 : 16)) % 17u);
     else if (mi_row == MI_SEND) mid_cfg.send ^= 1u;
     else if (mi_row == MI_CLOCK) mid_cfg.clock ^= 1u;
-    else mid_cfg.ble ^= 1u;
+    else { mid_cfg.ble ^= 1u; mi_ble_touched = 1; }
 }
 static void midi_push(void) { if (++mi_row >= MI_ROWS) midi_close(); }
 
