@@ -349,6 +349,34 @@ static int pxn_vdot(const int32_t *w, const int32_t *x, int T, int sb, int32_t *
     PXN_FFT_CON |= 0x40u;
     return 0;
 }
+/* the same, without waiting (the bench: what runs beside it); pxn_vwait waits for it */
+void pxn_vstart(const int32_t *w, const int32_t *x, int T, int sb, int zb, int32_t *z, int n)
+{
+    pxn_vctx[0] = 0xAA1u;
+    pxn_vctx[1] = (uint32_t)(uintptr_t)x;
+    pxn_vctx[2] = (uint32_t)(uintptr_t)w;
+    pxn_vctx[3] = (uint32_t)(uintptr_t)z;
+    pxn_vctx[4] = (24u << 24) | ((uint32_t)n << 12) | (uint32_t)T;
+    pxn_vctx[5] = ((uint32_t)zb << 20) | (uint32_t)sb;
+    pxn_vctx[6] = 0;
+    pxn_vctx[7] = 0;
+    __asm__ volatile("csync" ::: "memory");
+    PXN_FFT_CONST = 0;
+    PXN_FFT_CADR = (uint32_t)(uintptr_t)pxn_vctx;
+    PXN_FFT_CON = 0x149u;
+}
+void pxn_vwait(void)
+{
+    for (uint32_t k = 0; !(PXN_FFT_CON & 0x80u); k++)
+        if (k > 4000000u) { PXN_FFT_CON = 0; return; }
+    PXN_FFT_CON |= 0x40u;
+}
+#else
+void pxn_vstart(const int32_t *w, const int32_t *x, int T, int sb, int zb, int32_t *z, int n)
+{
+    (void)w; (void)x; (void)T; (void)sb; (void)zb; (void)z; (void)n;
+}
+void pxn_vwait(void) { }
 #endif
 int pxn_vec_check(void) { return pxn_vec_ok ? (int)pxn_vec_diff : -1 - (pxn_vec_diff >= 0 ? (int)pxn_vec_diff : 0); }
 

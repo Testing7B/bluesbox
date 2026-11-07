@@ -307,6 +307,13 @@ static void b_fix2(char *d, uint32_t v100)           /* 123 -> "1.23" */
     b_num(d, v100 % 100u);
 }
 static uint32_t b_ticks(void) { return fm1_ticks(); }
+static int32_t *volatile b_c1_x, *volatile b_c1_w, *volatile b_c1_z;
+static volatile uint32_t b_c1_t;
+static void b_c1_job(uint32_t arg)                     /* on CPU1: the same dot, on its own data */
+{
+    (void)arg;
+    b_c1_t = pxn_bench_dot(b_c1_x, b_c1_w, b_c1_z, 0, b_ticks, 16);
+}
 #if BENCH_AT_BOOT
 static int32_t b_ram[PXN_TEST_WORDS > 1024 ? PXN_TEST_WORDS : 1024];   /* test data in the ordinary RAM */
 #endif
@@ -335,35 +342,40 @@ static void audio_bench(void)
     /* cycles at 360 MHz (x 100) for one loop of each instruction kind, then the parts of a NAM layer */
     int32_t *pool = px_nam_scratch();
     for (int i = 0; i < 1024; i++) b_ram[i] = i * 3 - 1500;
-    /* v37 diagnostic 4: the same work with its data in the cache RAM (0x01F28000) and in the ordinary RAM */
+    /* v37 diagnostic 5: does the work scale when the other core, or the vector unit, runs beside CPU0? (cycles a
+     * multiply-add of CPU0's dot, alone / with CPU1 running the same dot on its own data / with a long vector
+     * command running; in brackets the other one's own cost) */
     {
-        static const char *S[6] = {"OFF", "READY", "EXT MEM", "TIMEOUT", "WAY FAIL", "MEM FAIL"};
-        const int cr = pxc_status == PXC_READY;
-        int32_t *c = (int32_t *)PXC_BEGIN, *xr = pool + 8192, *wr = pool + 8192 + 1700, *zr = pool + 8192 + 1800;
-        l[0] = 0; b_str(l, "CACHE RAM: "); b_str(l, S[pxc_status < 6u ? pxc_status : 0]);
-        lcd_text(4, y, l, cr ? GRN : RED, UI_BG, 1); y += 12;
-        if (cr) {
-            int n = 1;
-            l[0] = 0; b_str(l, "CR LD ");
-            b_fix2(l, pxn_bench_ops(0, c, 32, &n, b_ticks) * 15u * 100u / (32u * (uint32_t)n));
-            b_str(l, " FMAC "); b_fix2(l, pxn_bench_ops(6, c, 32, &n, b_ticks) * 15u * 100u / (32u * (uint32_t)n));
-            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-        }
-        l[0] = 0; b_str(l, "DOT CPU ");
-        b_fix2(l, pxn_bench_dot(xr, wr, zr, 0, b_ticks, 16) * 15u * 100u / (16u * 1920u));
-        if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_dot(c, c + 1700, c + 1800, 0, b_ticks, 16) * 15u * 100u / (16u * 1920u)); }
+        int32_t *xa = pool + 8192, *wa = xa + 1700, *za = xa + 1800;
+        int32_t *xb = pool + 12288, *wb = xb + 1700, *zb = xb + 1800;
+        int32_t *xc = pool + 16384, *zc = xc + 1800;
+        const uint32_t mac = 16u * 1920u;
+        uint32_t alone = pxn_bench_dot(xa, wa, za, 0, b_ticks, 16);
+        l[0] = 0; b_str(l, "CPU0 ALONE "); b_fix2(l, alone * 1500u / mac);
+        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
+        if (fm1_cpu1_on) {
+            b_c1_x = xb; b_c1_w = wb; b_c1_z = zb; b_c1_t = 0;
+            pxn_bench_dot(xb, wb, zb, 0, b_ticks, 1);           /* (its data ready) */
+            fm1_cpu1_run(b_c1_job, 0);
+            uint32_t both = pxn_bench_dot(xa, wa, za, 0, b_ticks, 16);
+            fm1_cpu1_wait();
+            l[0] = 0; b_str(l, "+CPU1 "); b_fix2(l, both * 1500u / mac);
+            b_str(l, " (C1 "); b_fix2(l, b_c1_t * 1500u / mac); b_str(l, ")");
+        } else { l[0] = 0; b_str(l, "+CPU1: NO SECOND CORE"); }
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         if (pxn_vec_check() >= 0) {
-            l[0] = 0; b_str(l, "DOT VEC ");
-            b_fix2(l, pxn_bench_dot(xr, wr, zr, 1, b_ticks, 16) * 15u * 100u / (16u * 1920u));
-            if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_dot(c, c + 1700, c + 1800, 1, b_ticks, 16) * 15u * 100u / (16u * 1920u)); }
+            for (int i = 0; i < 64; i++) xc[i] = i * 1000;
+            uint32_t v0 = b_ticks();
+            pxn_vstart(xc, xc, 20, 0, 0, zc, 3000);            /* 60,000 multiply-adds, all on its own data */
+            pxn_vwait();
+            uint32_t vt = b_ticks() - v0;
+            pxn_vstart(xc, xc, 20, 0, 0, zc, 3000);
+            uint32_t withv = pxn_bench_dot(xa, wa, za, 0, b_ticks, 16);
+            pxn_vwait();
+            l[0] = 0; b_str(l, "+VEC "); b_fix2(l, withv * 1500u / mac);
+            b_str(l, " (V "); b_fix2(l, vt * 1500u / 60000u); b_str(l, ")");
             lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         }
-        l[0] = 0; b_str(l, "POST/F ");
-        b_fix2(l, pxn_bench_post(pool, b_ticks, 16) * 15u * 100u / (16u * 32u));
-        if (cr) { b_str(l, " CR "); b_fix2(l, pxn_bench_post(c, b_ticks, 16) * 15u * 100u / (16u * 32u)); }
-        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-        if (cr) for (uint32_t *p = (uint32_t *)PXC_BEGIN; p < (uint32_t *)PXC_END; p++) *p = 0;
     }
     fm1_wdt_feed();
     l[0] = 0; b_str(l, "DOT/MAC ");
