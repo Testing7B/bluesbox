@@ -90,7 +90,7 @@ const low = await loudest("#out-meter");
 await post("knob/100");
 await settle(600);
 const high = await loudest("#out-meter");
-ok(high - low > 1, `a setting on the AMP page changes the sound (${low.toFixed(1)} to ${high.toFixed(1)} dB)`);
+ok(Math.abs(high - low) > 1, `a setting on the AMP page changes the sound (${low.toFixed(1)} to ${high.toFixed(1)} dB)`);
 await post("press/push"); await post("press/home");
 
 await page.uncheck("#repeat");

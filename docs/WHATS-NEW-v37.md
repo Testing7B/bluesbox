@@ -45,8 +45,24 @@
   69–90% (most 75–83%). The status corner shows `2C` and the load while both cores run a NAM preset. Above 93% for
   8 blocks in a row the pedal bypasses the effects (`BYP`) until the next change, as before (85% on one core).
 
+## From the community (merged into v37)
+- **MIDI over USB-C** (VinSpee, #10): Program Change picks a preset, Control Change switches blocks and sets their
+  models and settings (CC 8–19 toggle a block on value 0), the pedal sends its own changes, MIDI clock sets the delay
+  time; a MIDI page on the pedal sets the channel. Reference: [MIDI.md](MIDI.md).
+- **Button lights on the BlackBox** (steponme82, #17): AMP, MOD, DLY, REV and CAB light while their block is on, FX
+  while any block of its group is on, HOME blinks in the tuner. Checked on a BlackBox; on a Pocket X the order of the
+  lights still has to be checked.
+- **Bluetooth test image** (VinSpee, #13, #16): `make ble` builds a test firmware where the pedal is a Bluetooth MIDI
+  device named `OpenPocket` (a Chocolate Plus controller paired and switched effects with it). It is a separate test
+  image, not this release: [BLE-TEST.md](BLE-TEST.md).
+- **Tools** (VinSpee, #11, #12, #14, #15): a command-line flasher with a rescue mode (`node tools/op.mjs flash`), a
+  Mac-side UBOOT rescue for a BlackBox that restarts in a loop ([RESCUE.md](RESCUE.md)), a simulated pedal in the
+  browser with its front panel and its sound ([SIMULATOR.md](SIMULATOR.md)), and a reader of the pedal's state
+  (`node tools/op.mjs log`).
+
 ## For developers
-- Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).
+- Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` (19–22), and `DIAG` (23, the Bluetooth test
+  image's log channel) ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).
 - `tools/train_a2.py` (JAX) trains an A2-Lite network from a capture; `tools/mk_nam_factory.py` builds the factory
   set; `tests/test_nam.py` checks the fixed-point engine against a float reference.
 - Memory: the NAM history buffers (83 KB) sit in the POOL region beside the engine, so that the ordinary RAM keeps
@@ -55,5 +71,5 @@
   which is out of the CPU's call range, and names it.
 
 ## Please report
-The CPU load cannot be measured off the pedal. Please send the `C1 nn%` shown at the bottom right on a few factory
-presets (for example 14 HAIR METAL, 16 SPACE LEAD and 06 AMBIENT SWELL), and say if you hear crackles.
+The CPU load cannot be measured off the pedal. Please send the `2C nn%` shown at the bottom right on a few factory
+presets (for example 02 CHORUS CLEAN, 06 AMBIENT SWELL and 23 ORGAN), and say if you hear crackles.
