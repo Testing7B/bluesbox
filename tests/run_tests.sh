@@ -11,6 +11,7 @@
 #  - button lights (px_lights.h): each block lights its button, FX for its group, HOME blinks in the tuner
 #  - packages: tools/pxpkg.py rebuilds the official PocketX_016 app area byte for byte (needs the official file)
 #  - installer: docs/pxota.js + docs/pxpkg.js against a simulated pedal running the real update code (ota.c, ldr_core.c)
+#  - flasher: tools/flash.mjs (node tools/op.mjs flash) against the same simulated pedal: update, dry run, wrong model, damaged package
 #  - page: docs/index.html in headless Chromium (needs Playwright: npm i playwright && npx playwright install chromium)
 set -e
 cd "$(dirname "$0")/.."
@@ -45,6 +46,8 @@ $CC -O1 -Wall -Wno-unused-function -o build/devsim tests/devsim.c
 if [ -n "$1" ]; then echo "== packages"; python3 tests/test_pxpkg.py "$1"; fi
 echo "== installer"
 node tests/test_installer.mjs "$1"
+echo "== flasher (tools/flash.mjs)"
+node tests/test_flash.mjs
 echo "== build entry point (tools/op.mjs)"
 node tests/test_op.mjs
 echo "== editor"
