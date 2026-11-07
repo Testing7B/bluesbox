@@ -1419,7 +1419,7 @@ static int32_t pxn_vec_diff = -1;                       /* the start-up check's 
 static int pxn_mode_v;                                  /* see pxn_mode() */
 int pxn_mode(void) { return pxn_mode_v; }
 /* a command: nloop n dot products of nlen T: the weight row against x rows xs bytes apart, into z (zs bytes apart) */
-static void pxn_vfill(volatile uint32_t *c, const int32_t *w32, const int32_t *x, int T, int xs, int zs, int32_t *z, int n)
+static __attribute__((unused)) void pxn_vfill(volatile uint32_t *c, const int32_t *w32, const int32_t *x, int T, int xs, int zs, int32_t *z, int n)
 {
     c[0] = 0xAA1u;                                       /* dot product, x y z 32 bits */
     c[1] = (uint32_t)(uintptr_t)x;
@@ -2038,7 +2038,7 @@ void pxn_reset(pxn_model *m)
 }
 
 /* the vector unit's copy of a weight row: in the fast memory if in use (pxn_set_fast), else the row itself */
-static const int32_t *pxn_uw(const pxn_model *m, const int32_t *w)
+static __attribute__((unused)) const int32_t *pxn_uw(const pxn_model *m, const int32_t *w)
 {
     if (!pxn_wf) return w;
     if (w >= m->head && w < m->head + PXN_S + 4) return pxn_wf + PXN_WF_HEAD + (w - m->head);

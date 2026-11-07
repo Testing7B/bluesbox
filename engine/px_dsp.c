@@ -64,6 +64,21 @@ static inline float bq_run(px_bq *b, float x)
     b->z2 = b->b2 * x - b->a2 * y;
     return y;
 }
+/* the same over a buffer, in place: the coefficients and state in registers through the loop (same operations, same
+ * result as bq_run sample by sample) */
+static void bq_block(px_bq *q, float *b, int n)
+{
+    const float b0 = q->b0, b1 = q->b1, b2 = q->b2, a1 = q->a1, a2 = q->a2;
+    float z1 = q->z1, z2 = q->z2;
+    for (int k = 0; k < n; k++) {
+        const float x = b[k], y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        b[k] = y;
+    }
+    q->z1 = z1;
+    q->z2 = z2;
+}
 static void bq_set(px_bq *b, float b0, float b1, float b2, float a0, float a1, float a2)
 {
     float z1 = b->z1, z2 = b->z2;                      /* keep state: no click on change */
@@ -1028,12 +1043,10 @@ PX_HOT static void nam_run(px_engine *e, int n, float trim)
     const float gi = e->nam_in_g, go = e->nam_out_g * trim;
     for (int k = 0; k < n; k++) b[k] *= gi;
     pxn_process(&px_nam_m, b, b, n);
-    for (int k = 0; k < n; k++) {
-        float x = b[k] * go;
-        x = bq_run(&e->ts_low, x);
-        x = bq_run(&e->ts_mid, x);
-        b[k] = bq_run(&e->ts_high, x);
-    }
+    for (int k = 0; k < n; k++) b[k] *= go;
+    bq_block(&e->ts_low, b, n);
+    bq_block(&e->ts_mid, b, n);
+    bq_block(&e->ts_high, b, n);
 }
 
 static void rc_amp(px_engine *e)
@@ -1685,6 +1698,30 @@ PX_INL static inline float drive_run(px_engine *e, float x)   /* oversampled */
     if (e->drv_np & 4) d = bq_run(&e->drv_t3, d);
     return d * e->drv_level + x * e->drv_blend;
 }
+/* drive_run over n oversampled samples in place, stage by stage (the same operations as drive_run sample by sample);
+ * the anti-denormal offset follows the base-rate sample (os samples each) */
+static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_h[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK];
+static void drive_block(px_engine *e, float *u, int n, int os)   /* (static buffers: off the interrupt's stack) */
+{
+    float *t = px_os_t, *h = px_os_h;
+    for (int i = 0; i < n; i++) {
+        const float dn = ((i / os) & 1) ? 1e-15f : -1e-15f;
+        float d = clip_run(e, u[i] * e->drv_gain) + dn;
+        if (e->drv_dcb) { e->drv_dcs += (d - e->drv_dcs) * e->drv_dck; d -= e->drv_dcs; }
+        t[i] = d;
+    }
+    if (e->drv_tm == TM_MUFF) {
+        memcpy(h, t, (unsigned)n * sizeof(float));
+        bq_block(&e->drv_t1, t, n);
+        bq_block(&e->drv_t2, h, n);
+        for (int i = 0; i < n; i++) t[i] = t[i] + (h[i] - t[i]) * e->drv_mix;
+    } else {
+        bq_block(&e->drv_t1, t, n);
+        if (e->drv_np & 2) bq_block(&e->drv_t2, t, n);
+    }
+    if (e->drv_np & 4) bq_block(&e->drv_t3, t, n);
+    for (int i = 0; i < n; i++) u[i] = t[i] * e->drv_level + u[i] * e->drv_blend;
+}
 PX_INL static inline float amp_stage(px_engine *e, int i, float x, int upd)
 {
     x = op_run(&e->amp_hp[i], x);
@@ -2174,6 +2211,9 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
         s_lo = ip_amp + 1;
         s_hi = ns;
     }
+    /* v37: block by block over the n samples (each block's state stays in registers through its loop; the order of
+     * each sample's operations is unchanged, so the output is the same as sample by sample) */
+    float xb[PX_MAX_BLOCK];
     for (int k = 0; k < n; k++) {
         e->dn = (k & 1) ? 1e-15f : -1e-15f;            /* anti-denormal (-300 dB): digital silence never decays */
         float x;
@@ -2181,8 +2221,45 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
             x = in[k] + e->dn;
             { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
         } else x = e->nam_buf[k];
-
-        for (int s = s_lo; s < s_hi; s++) { switch (st[s]) {
+        xb[k] = x;
+    }
+    for (int s = s_lo; s < s_hi; s++) {
+        const int sblk = st[s];
+        const float strim = tr[s];
+        if (sblk == PX_B_CAB) {                          /* cabinet: its filters one after the other over the block */
+            if (p->on[PX_B_CAB] && e->cab_n) {
+                for (int c = 0; c < e->cab_n; c++) bq_block(&e->cab[c], xb, n);
+                for (int k = 0; k < n; k++) {
+                    float x = xb[k];
+                    if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);
+                    xb[k] = x * e->cab_g * strim;
+                }
+            } else for (int k = 0; k < n; k++) xb[k] *= strim;
+            continue;
+        }
+        if (sblk == PX_B_DRIVE && (!pair || !amp_os)) {  /* drive without the fitted amp's stages, oversampled: stage by
+                                                            stage over the block (set A or B, as the sample path picks) */
+            if (drv_on) {
+                float *ub = px_os_u;
+                for (int k = 0; k < n; k++) {
+                    e->dn = (k & 1) ? 1e-15f : -1e-15f;
+                    const float x = drive_pre(e, xb[k]);
+                    ub[PX_OVERSAMPLE * k] = x * osg;
+                    for (int o = 1; o < PX_OVERSAMPLE; o++) ub[PX_OVERSAMPLE * k + o] = 0.0f;
+                }
+                bq_block(dua, ub, PX_OVERSAMPLE * n);
+                bq_block(dub, ub, PX_OVERSAMPLE * n);
+                drive_block(e, ub, PX_OVERSAMPLE * n, PX_OVERSAMPLE);
+                bq_block(dda, ub, PX_OVERSAMPLE * n);
+                bq_block(ddb, ub, PX_OVERSAMPLE * n);
+                for (int k = 0; k < n; k++) xb[k] = ub[PX_OVERSAMPLE * k + PX_OVERSAMPLE - 1] * strim;
+            } else for (int k = 0; k < n; k++) xb[k] *= strim;
+            continue;
+        }
+        for (int k = 0; k < n; k++) {
+        e->dn = (k & 1) ? 1e-15f : -1e-15f;
+        float x = xb[k];
+        switch (sblk) {
         case PX_B_GATE:
             /* ---- gate ---- */
             if (p->on[PX_B_GATE]) {
@@ -2557,9 +2634,13 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
             }
         break;
         default: break;
-        } x *= tr[s]; }
-        if (nam && pass == 0) { e->nam_buf[k] = x; continue; }
-
+        }
+        xb[k] = x * strim;
+        }
+    }
+    if (nam && pass == 0) { for (int k = 0; k < n; k++) e->nam_buf[k] = xb[k]; continue; }
+    for (int k = 0; k < n; k++) {
+        float x = xb[k];
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
         x *= pg;
         {   /* v36: soft limiter instead of a hard clip: transparent up to 0.8, then rounds off smoothly to 1.2 */
