@@ -1193,9 +1193,8 @@ static void rc_nam(px_engine *e)
     bq_highshelf(&e->ts_high, sr, 2500.0f, (f01(q[4]) - 0.5f) * 20.0f);
 }
 /* the NAM block on n samples of e->nam_buf, in place */
-PX_HOT static void nam_run(px_engine *e, int n, float trim)
+PX_HOT static void nam_run(px_engine *e, float *b, int n, float trim)
 {
-    float *b = e->nam_buf;
     const float gi = e->nam_in_g, go = e->nam_out_g * trim;
     for (int k = 0; k < n; k++) b[k] *= gi;
     pxn_process(&px_nam_m, b, b, n);
@@ -2329,7 +2328,10 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
     }
 }
 
-PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
+/* part: PX_PART_ALL, or (with a NAM amp: px_nam_dual) one stage of the two-core pipeline: PRE the blocks before the
+ * amp (in -> out, the network's input), NAM the network and its tone stack (out in place), POST the blocks after it
+ * (in: the network's output -> out). PRE and POST touch different blocks: they may run at once on the two cores. */
+PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int part)
 {
     const px_preset_t *p = &e->cur;
     const float osg = (float)PX_OVERSAMPLE, sr = e->sr;
@@ -2364,10 +2366,16 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
     /* v37: a NAM amp works on whole blocks: the blocks before it run first over the n samples (pass 0), the network
      * on them, then the blocks after it (pass 1). Without NAM: one pass, sample by sample, as before. */
     const int nam = amp_on && e->amp_nam && px_nam_m.ready && ip_amp >= 0 && n <= PX_MAX_BLOCK;
+    if (part != PX_PART_ALL && !nam) {                 /* (the caller checks px_nam_dual: not reached) */
+        if (out != in) for (int k = 0; k < n; k++) out[k] = part == PX_PART_PRE ? in[k] : 0.0f;
+        return;
+    }
+    if (part == PX_PART_NAM) { nam_run(e, out, n, tr[ip_amp]); return; }
     int s_lo = 0, s_hi = nam ? ip_amp : ns;
-    for (int pass = 0; pass < (nam ? 2 : 1); pass++) {
+    const int p0 = part == PX_PART_POST, p1 = part == PX_PART_PRE ? 1 : nam ? 2 : 1;
+    for (int pass = p0; pass < p1; pass++) {
     if (pass == 1) {
-        nam_run(e, n, tr[ip_amp]);
+        if (part == PX_PART_ALL) nam_run(e, e->nam_buf, n, tr[ip_amp]);
         s_lo = ip_amp + 1;
         s_hi = ns;
     }
@@ -2380,7 +2388,7 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
         if (pass == 0) {
             x = in[k] + e->dn;
             { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
-        } else x = e->nam_buf[k];
+        } else x = part == PX_PART_POST ? in[k] : e->nam_buf[k];
         xb[k] = x;
     }
     for (int s = s_lo; s < s_hi; s++) {
@@ -2816,7 +2824,11 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
         xb[k] = x * strim;
         }
     }
-    if (nam && pass == 0) { for (int k = 0; k < n; k++) e->nam_buf[k] = xb[k]; continue; }
+    if (nam && pass == 0) {
+        float *d = part == PX_PART_PRE ? out : e->nam_buf;
+        for (int k = 0; k < n; k++) d[k] = xb[k];
+        continue;
+    }
     for (int k = 0; k < n; k++) {
         float x = xb[k];
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
@@ -2829,3 +2841,4 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
     }
     }
 }
+void px_engine_process(px_engine *e, const float *in, float *out, int n) { px_engine_part(e, in, out, n, PX_PART_ALL); }

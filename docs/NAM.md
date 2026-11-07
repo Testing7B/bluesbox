@@ -85,9 +85,13 @@ trained at 44.1 kHz and are not affected.
   check runs the unit there too, and the ordinary RAM is used if it differs.
 - Two cores: frame t of a layer needs only frames t and earlier of the layer before. So CPU1 takes the first 12 or 16
   frames of each 32-frame block through all 23 layers without ever waiting, and CPU0 the rest, waiting before each
-  layer until CPU1 has posted the one before (one counter). With a NAM amp in two-core mode the whole audio block runs
-  on CPU0 (in the audio interrupt) and CPU1 only helps the network (`px_nam_dual`); otherwise the block runs on CPU1
-  as before.
+  layer until CPU1 has posted the one before (one counter). With a NAM amp in two-core mode the audio block runs on
+  CPU0 (in the audio interrupt) as a pipeline (`dsp_pipe` in `firmware/px_audio.h`, `px_engine_part`): CPU1 first runs
+  the effects after the amp on the previous block's network output while CPU0 runs the effects before the amp on this
+  block, then both run the network (one block, 2.9 ms, more latency; `tests/engine/pipe_test.c` checks it gives the
+  one-core output one block later). Without a NAM amp the whole block runs on CPU1 as before.
+- Each layer's history ring has its first 3 frames mirrored after its end, so 4 frames can be read straight from any
+  position: the tap pointers just move on by 4 frames per group.
 - At start-up the pedal times the ways to run it (CPU alone; the unit one command after the other; the unit and the
   CPU at once, the CPU taking 0, 4 or 8 frames; two cores, with or without the unit) on the first factory model and
   keeps the fastest (`pxn_tune`). The PC test runs every mode with a simulated unit that finishes its commands late,

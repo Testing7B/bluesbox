@@ -47,7 +47,6 @@ uint32_t pxn_prof_ticks(int k) { return k >= 0 && k < 9 ? pxn_prof[k] : 0; }
 static int32_t pxn_z[PXN_N * PXN_C + 4], pxn_hs[PXN_N * PXN_C];
 static int32_t pxn_u[PXN_N + 4];                        /* the block's input (Q20), for rdot */
 static const int32_t *pxn_tpt[2][PXN_HK];               /* rdot's tap tables, one per core */
-static int32_t pxn_tmp[2][PXN_HK][12];                  /* a tap's 4 frames copied where they wrap round the ring */
 
 /* dot: z[3f] = (w . x_f) >> 24 for ng frames (dot4: ng groups of 4 frames), x_f the X rows sb bytes apart.
  * The hand routines read w[T] and x_f[T] (one word past): the buffers have slack. Offsets read by the hand code. */
@@ -2039,8 +2038,8 @@ static int32_t pxn_toq(float x, int32_t q)
 static int pxn_rings(pxn_model *m, int32_t *r0, unsigned n0, int32_t *r1, unsigned n1)
 {
     unsigned need[PXN_NL + 1];
-    for (int i = 0; i < PXN_NL; i++) need[i] = (unsigned)m->L[i].len * PXN_C * 4u;
-    need[PXN_NL] = (unsigned)m->hlen * PXN_C * 4u;
+    for (int i = 0; i < PXN_NL; i++) need[i] = (unsigned)(m->L[i].len + PXN_MIR) * PXN_C * 4u;
+    need[PXN_NL] = (unsigned)(m->hlen + PXN_MIR) * PXN_C * 4u;
     uint32_t done = 0;
     for (int t = 0; t <= PXN_NL; t++) {
         int b = -1;
@@ -2110,10 +2109,10 @@ void pxn_reset(pxn_model *m)
 {
     for (int i = 0; i < PXN_NL; i++) {
         pxn_layer *L = &m->L[i];
-        memset(L->ring, 0, (unsigned)L->len * PXN_C * 4u);
+        memset(L->ring, 0, (unsigned)(L->len + PXN_MIR) * PXN_C * 4u);
         L->w = 0;
     }
-    memset(m->hring, 0, (unsigned)m->hlen * PXN_C * 4u);
+    memset(m->hring, 0, (unsigned)(m->hlen + PXN_MIR) * PXN_C * 4u);
     m->hw = 0;
 }
 
@@ -2173,6 +2172,16 @@ static void pxn_rows(const pxn_model *m, const int32_t *w, int T, int rows, int 
 #endif
     pxn_rows_cpu(w, T, rows, 0, n);
 }
+/* a ring's first PXN_MIR frames are mirrored after its end, so that 4 frames from any position read straight on: the
+ * frames p .. p+c-1 just written, those of them below PXN_MIR copied (only those: the other core may be writing the
+ * others) */
+static inline void pxn_mir(int32_t *ring, int32_t len, int32_t p, int c)
+{
+    for (; c > 0 && p < PXN_MIR; c--, p++) {
+        int32_t *a = ring + 3 * p, *b = ring + 3 * (len + p);
+        b[0] = a[0]; b[1] = a[1]; b[2] = a[2];
+    }
+}
 /* layer i's post for frames f0 .. f0+n-1: LeakyReLU, head sum, residual into the next layer's ring (its block starts
  * at its write position, still the one before this block); in pieces of 4 frames, the vector unit kicked between */
 static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring)
@@ -2197,9 +2206,11 @@ static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring
             r += c;
             if (r == L->len) r = 0;
         }
+        const int32_t wc = w;
         if (N) { w += c; if (w == N->len) w = 0; }
         p.n = c;
         pxn_post_f(&p);
+        if (N && wc < PXN_MIR) pxn_mir(N->ring, N->len, wc, c);
         if (kick) pxn_kick();
         p.z += 3 * c; p.x += c * (p.sb / 4); p.hs += 3 * c;
         n -= c;
@@ -2222,26 +2233,27 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
     const int32_t **tp = pxn_tpt[core];
     const int n4 = pxn_rd ? n & ~3 : 0;
     uint32_t t0 = PXN_T();
-    for (int g = 0; g < n4; g += 4) {
-        const int f = f0 + g;
+    if (n4) {
+        /* each tap's first 4 frames, then 4 frames on per group: read straight on past the end (the mirrored frames),
+         * the pointer brought back by the ring's length once past it (diagnostic 19: no position arithmetic per tap) */
+        const int32_t *const end = ring + 3 * len;
         for (int k = 0; k < K; k++) {
-            int32_t s = w + f - (K - 1 - k) * d;
-            if (s < 0) s += len;
-            if (s >= len) s -= len;
-            if (s + 4 <= len) tp[k] = ring + 3 * s;
-            else {                                       /* the 4 frames wrap round the ring: copied */
-                int32_t *t = pxn_tmp[core][k];
-                for (int q = 0; q < 4; q++, s = s + 1 == len ? 0 : s + 1)
-                    for (int c = 0; c < PXN_C; c++) t[3 * q + c] = ring[3 * s + c];
-                tp[k] = t;
-            }
+            int32_t s = w + f0 - (K - 1 - k) * d;
+            while (s < 0) s += len;
+            while (s >= len) s -= len;
+            tp[k] = ring + 3 * s;
         }
-        pxn_rdot j = {wr, tp, K, pxn_u + f, pxn_z + 3 * f, rows};
-        if (pxn_pskip) ;
-        else if (pxn_rdq_on && pxn_rdq_f[K]) pxn_rdq_f[K](&j);
-        else if (K == 6) pxn_rdot6_f(&j);
-        else pxn_rdot_f(&j);
-        if (kick) pxn_kick();
+        void (*const q)(const pxn_rdot *) = pxn_rdq_on && pxn_rdq_f[K] ? pxn_rdq_f[K] : K == 6 ? pxn_rdot6_f : pxn_rdot_f;
+        pxn_rdot j = {wr, tp, K, pxn_u + f0, pxn_z + 3 * f0, rows};
+        for (int g = 0; g < n4; g += 4) {
+            if (!pxn_pskip) q(&j);
+            if (kick) pxn_kick();
+            j.u += 4; j.z += 12;
+#define PXN_ADV(k) do { const int32_t *p_ = tp[k] + 12; if (p_ >= end) p_ -= 3 * len; tp[k] = p_; } while (0)
+            if (K == 6) { PXN_ADV(0); PXN_ADV(1); PXN_ADV(2); PXN_ADV(3); PXN_ADV(4); PXN_ADV(5); }   /* (no loop branch) */
+            else for (int k = 0; k < K; k++) PXN_ADV(k);
+#undef PXN_ADV
+        }
     }
     uint32_t t1 = PXN_T();
     if (n4 < n) {
@@ -2389,6 +2401,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
         x[1] = PXN_ONE;
         pxn_u[f] = u;
         for (int c = 0; c < PXN_C; c++) r[c] = (int32_t)(((int64_t)m->rech[c] * u) >> PXN_QW);
+        if (w0 < PXN_MIR) pxn_mir(L0->ring, L0->len, w0, 1);
         if (++w0 == L0->len) w0 = 0;
     }
     memset(pxn_hs, 0, (unsigned)n * PXN_C * 4u);
@@ -2426,6 +2439,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     if (n1 > n) n1 = n;
     memcpy(m->hring + 3 * m->hw, pxn_hs, (unsigned)n1 * PXN_C * 4u);
     if (n1 < n) memcpy(m->hring, pxn_hs + 3 * n1, (unsigned)(n - n1) * PXN_C * 4u);
+    if (n1 < n || m->hw < PXN_MIR) pxn_mir(m->hring, m->hlen, 0, PXN_MIR);   /* (this core alone writes it) */
     int32_t hw = m->hw;
     m->hw += n;
     if (m->hw >= m->hlen) m->hw -= m->hlen;

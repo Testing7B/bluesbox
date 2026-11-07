@@ -26,7 +26,8 @@
 #define PXN_QA     20                   /* activations: fraction bits */
 #define PXN_QW     24                   /* weights: fraction bits */
 #define PXN_LOOK   6331                 /* sum of (kernel - 1) x dilation */
-#define PXN_RING   (PXN_LOOK + (PXN_HK - 1) + (PXN_NL + 1) * PXN_N)   /* frames in all rings (head included) */
+#define PXN_MIR    3                    /* each ring's first frames mirrored after its end (4-frame reads) */
+#define PXN_RING   (PXN_LOOK + (PXN_HK - 1) + (PXN_NL + 1) * (PXN_N + PXN_MIR))   /* frames in all rings (head included) */
 
 
 typedef struct {

@@ -98,6 +98,8 @@ static int a_running;
 
 /* DSP work for one block: a_in -> a_res (gain, clipping) + load measurement. Runs on the 2nd core (CPU1)
  * when available, otherwise on CPU0 in the interrupt. */
+static void dsp_out(void);
+static void dsp_load(uint32_t t0, uint32_t lim);
 static void dsp_block(void)
 {
     uint32_t t0 = fm1_ticks();
@@ -107,6 +109,11 @@ static void dsp_block(void)
     } else {
         for (uint32_t i = 0; i < A_FR; i++) a_out[i] = a_in[i];
     }
+    dsp_out();
+    dsp_load(t0, 85u);
+}
+static void dsp_out(void)                              /* a_out -> a_res: safety net, mutes, volume */
+{
     /* safety net: a NaN/Inf would poison the filters forever (silence). Output silence and
      * the main loop resets the engine (audio_poll). */
     for (uint32_t i = 0; i < A_FR; i++) {
@@ -128,11 +135,14 @@ static void dsp_block(void)
         if (v > 8388607.0f) v = 8388607.0f; else if (v < -8388608.0f) v = -8388608.0f;
         a_res[i] = (int32_t)v;
     }
+}
+static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the safety bypass (over lim % 8 blocks running) */
+{
     uint32_t pct = (fm1_ticks() - t0) * 100u / A_BUDGET;
     a_load = (a_load * 7u + pct) / 8u;
     if (pct > a_peak) a_peak = pct;
     if (!a_bypass && !a_hold) {
-        if (pct > 85u) { if (++a_over >= 8u) a_bypass = 1; } else a_over = 0;
+        if (pct > lim) { if (++a_over >= 8u) a_bypass = 1; } else a_over = 0;
     }
     a_blocks++;
 }
@@ -150,6 +160,42 @@ static void dsp_job(uint32_t arg) { (void)arg; dsp_block(); }
 /* the NAM network's helper core (CPU1), for its two-core modes: the job functions (px_nam_helper) */
 static int a_hrun(void (*fn)(uint32_t), uint32_t arg) { return fm1_cpu1_run(fn, arg); }
 static int a_hwait(void) { return fm1_cpu1_wait(); }
+/* v37: a NAM amp on two cores, pipelined (one block more latency: 2.9 ms). In each block's interrupt CPU1 first runs
+ * the blocks after the amp on the previous block's network output (and makes its output), while CPU0 runs the blocks
+ * before the amp on this block; then both run the network on this block (CPU1 as its helper). PRE and POST never touch
+ * the same block's state (tests/engine/pipe_test.c: the same output as one core, one block later). */
+static float a_nb[2][A_FR];                            /* the network's output: being made / the previous block's */
+static uint8_t a_nbi, a_nbv, a_prun;                  /* a_nb[a_nbi] is this block's; a_nbv: the other one holds one */
+static void post_job(uint32_t prev)
+{
+    if (a_prun && a_nbv) {
+        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+            px_engine_part(&g_eng, a_nb[prev] + o, a_out + o, PX_MAX_BLOCK, PX_PART_POST);
+    } else if (!a_prun) {
+        for (uint32_t i = 0; i < A_FR; i++) a_out[i] = a_in[i];
+    } else for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;   /* the pipeline's first block */
+    dsp_out();
+}
+static void dsp_pipe_run(int run)                      /* run: the engine on (else bypassed) */
+{
+    const uint32_t prev = a_nbi ^ 1u;
+    a_prun = (uint8_t)run;
+    const int job = fm1_cpu1_run(post_job, prev);
+    if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+        px_engine_part(&g_eng, a_in + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_PRE);
+    if (!job) post_job(prev);                          /* (CPU1 off: here) */
+    else if (fm1_cpu1_wait() < 0) { a_c1 = 0; post_job(prev); }   /* (dropped: here, and one core from now on) */
+    if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+        px_engine_part(&g_eng, a_nb[a_nbi] + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_NAM);
+    a_nbv = (uint8_t)run;
+    a_nbi = (uint8_t)prev;
+}
+static void dsp_pipe(void)
+{
+    uint32_t t0 = fm1_ticks();
+    dsp_pipe_run(!a_bypass && !a_hold);
+    dsp_load(t0, 93u);                                 /* (CPU0's whole block here, the UI gets the rest) */
+}
 #endif
 static void a_collect(void)                            /* collects the block in progress on CPU1 */
 {
@@ -228,11 +274,14 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
     }
     tn_capture(a_in, A_FR);
 #if DSP_CPU1
-    /* a NAM amp on two cores (px_nam_dual): the block runs here, CPU1 takes a part of each network block */
+    /* a NAM amp on two cores (px_nam_dual): pipelined here (dsp_pipe), CPU1 its helper */
     if (a_c1 && !px_nam_dual(&g_eng)) {
+        a_nbv = 0;
         if (fm1_cpu1_run(dsp_job, 0)) { a_job = 1; return; }
         a_c1 = 0;
     }
+    if (a_c1) { dsp_pipe(); return; }
+    a_nbv = 0;
 #endif
     dsp_block();
 }
@@ -337,7 +386,7 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 18: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 19: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -393,6 +442,29 @@ static void audio_bench(void)
         l[0] = 0; b_str(l, N[c]); b_num(l, pct); b_str(l, " %");
         lcd_text(4, y, l, pct <= 85u ? GRN : RED, UI_BG, 1); y += 12;
     }
+#if DSP_CPU1
+    {   /* diagnostic 19: the same two presets pipelined on the two cores (as the audio interrupt runs them) */
+        l[0] = 0; b_str(l, "PIPE 01 ");
+        for (int c = 0; c < 2; c++) {
+            px_preset_factory(&pp, c ? 17 : 0);
+            px_engine_set(&g_eng, &pp);
+            for (uint32_t i = 0; i < A_FR; i++) a_in[i] = 0.3f * sinf((float)i * 0.0157f) + 0.05f * sinf((float)i * 0.11f);
+            a_nbv = 0;
+            uint32_t dt = 0;
+            for (int r = 0; r < 12; r++) {
+                uint32_t t0 = fm1_ticks();
+                dsp_pipe_run(1);
+                if (r >= 4) dt += fm1_ticks() - t0;
+            }
+            fm1_wdt_feed();
+            if (c) b_str(l, "% 18 ");
+            b_num(l, dt / 8u * 100u / A_BUDGET);
+        }
+        b_str(l, "%");
+        lcd_text(4, y, l, GRN, UI_BG, 1); y += 12;
+        a_nbv = 0;
+    }
+#endif
     {   /* diagnostic 14: each block of 18 5150 RHYTHM and 01 TWIN CLEAN alone (AMP off), % of real time */
         static const char *BN[PX_NBLK] = {"GT", "CP", "PI", "SF", "DR", "AM", "CB", "EQ", "MO", "DL", "RV", "SY"};
         for (int c = 0; c < 2; c++) {               /* (diagnostic 18: the float filters, faster than integer ones) */
@@ -407,11 +479,6 @@ static void audio_bench(void)
             }
             lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         }
-        px_preset_t q;
-        px_preset_factory(&q, 17);
-        for (int k = 0; k < PX_NBLK; k++) q.on[k] = 0;
-        l[0] = 0; b_str(l, "ALL OFF "); b_num(l, b_engine(&q)); b_str(l, "%");
-        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     }
     lcd_text(4, y + 4, "100% = REAL TIME. PLEASE TAKE A PHOTO", UI_ACC, UI_BG, 1);
     for (int i = 0; i < 120; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }

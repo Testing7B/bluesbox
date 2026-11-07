@@ -32,6 +32,10 @@
 - A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
 - Effects run over a whole block, one after another, instead of sample by sample (same output, about 20% cheaper).
   In front of a NAM amp the drive runs at ×2 oversampling instead of ×4.
+- With a NAM amp the two cores work as a pipeline: CPU1 runs the effects after the amp on the previous block while
+  CPU0 runs the effects before it, then both run the network. This adds one block of latency (2.9 ms).
+- The network reads each layer's history without any per-tap position arithmetic: every ring's first frames are
+  mirrored after its end.
 
 ## For developers
 - Editor protocol 2: `NAM_LIST`, `NAM_WRITE`, `NAM_COMMIT`, `NAM_ERASE` ([EDITOR-PROTOCOL.md](EDITOR-PROTOCOL.md)).

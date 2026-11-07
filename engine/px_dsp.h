@@ -216,7 +216,9 @@ int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two
 void px_engine_init(px_engine *e, float sr);
 void px_engine_set(px_engine *e, const px_preset_t *p);
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
-extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (default) */
+enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engine_part's stages (see px_dsp.c) */
+void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);
+extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (off: slower) */
 extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
 
 #ifdef __cplusplus
