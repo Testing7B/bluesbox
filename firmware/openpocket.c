@@ -298,6 +298,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PC_DIR  (*(volatile uint32_t *)0x50088u)
 #define PC_DIE  (*(volatile uint32_t *)0x5008Cu)
 #define PC_PU   (*(volatile uint32_t *)0x50090u)
+#define PC_PD   (*(volatile uint32_t *)0x50094u)
 /* port H (index 7): declared by Felucca and read by the stock firmware. NO port D on this chip. */
 #define PH_IN   (*(volatile uint32_t *)0x501C4u)
 #define PH_DIE  (*(volatile uint32_t *)0x501CCu)
@@ -347,6 +348,7 @@ static void input_init(void)
     PB_DIE |= 0xFF1Du; PB_PU |= 0xFF1Du;                       /* except PB1/5/6/7 (screen) */
 #endif
     PC_DIR &= ~PC7; PC_OUT |= PC7;      /* PC7, the button lights' enable: high = off until px_leds.h turns them on */
+    PC_DIR |= 1u << 9; PC_DIE &= ~(1u << 9); PC_PU &= ~(1u << 9); PC_PD &= ~(1u << 9);   /* PC9: the battery divider (analog) */
 }
 static void input_baseline(void)
 {
@@ -428,7 +430,9 @@ static int vbg_mv(void)
     int d = (int)((op_vbg_trim & 0x7Fu) >> 2) * 3;
     return (op_vbg_trim & 0x80u) ? 800 - d : 800 + d;
 }
-static int32_t bat_raw[5] = {-1, -1, -1, -1, -1};   /* the raw values (tuner page): VBG, VBAT/4, 5V/4, PA7, PA8 */
+static int32_t bat_raw[5] = {-1, -1, -1, -1, -1};   /* the raw values (tuner page): PC9, VBG, VBAT/4, 5V/4, 0x16A10 bit 16 */
+static int bat_pct = -1;               /* the gauge, as the stock firmware computes it (-1: no reading) */
+static int32_t bat_c9q;                /* PC9 smoothed, x4 */
 static int32_t pmu_conv(uint32_t sel)
 {
     uint32_t t, v = 0;
@@ -464,13 +468,23 @@ static void bat_read(void)
     fm1_p33_write(P3_ANA_CON4, (uint8_t)(c4 | 0x20u));               /* as found, the buffer left on (as the SDK) */
     FM1_WLA_CON0 = (FM1_WLA_CON0 & ~((7u << 15) | (1u << 14) | 0xE0u)) | (w & ((7u << 15) | (1u << 14) | 0xE0u));
     if (pll & (1u << 16)) FM1_ANA_PLL_CON1 = pll;
-    bat_raw[0] = vbg; bat_raw[1] = vb; bat_raw[2] = v5;
-    bat_raw[3] = fm1_adc_read(0u); bat_raw[4] = fm1_adc_read(1u);   /* PA7, PA8: spare analog pins (a divider on some unit?) */
-    if (vbg < 100 || vbg > 900 || vb < 0) { bat_mv = 0; bat_usb_mv = 0; return; }
-    int k = 4 * vbg_mv(), mv = (int)(k * vb / vbg), mu = v5 < 0 ? 0 : (int)(k * v5 / vbg);
-    if (mv < 2500 || mv > 4700) { bat_mv = 0; bat_usb_mv = mu; return; }   /* not a cell: no gauge */
-    bat_mv = bat_mv ? (bat_mv * 3 + mv) / 4 : mv;      /* a little smoothing */
+    /* v37: on the Pocket X the chip's VBAT is a regulated 3.3 V (VB stays at 3.31 V, charged or not, on USB or not) and its
+     * 5 V input is not the USB's. The cell is on PC9 (ADC channel 8) through a 1:2 divider, as the stock firmware reads it
+     * (PocketX_016 f_02026f60: adc_get_value(8), 528 and below = 0 %, 636 and above = 100 %, (raw x 100 - 52700) / 109
+     * between; stock averages 300 readings). PC9 is an analog input (input_init). */
+    int32_t c9 = 0, n = 0;
+    (void)fm1_adc_read(8u);                             /* (the sampling capacitor still holds the last channel) */
+    for (int k = 0; k < 8; k++) { int32_t v = fm1_adc_read(8u); if (v >= 0) { c9 += v; n++; } }
+    c9 = n ? c9 / n : -1;
+    bat_raw[0] = c9; bat_raw[1] = vbg; bat_raw[2] = vb; bat_raw[3] = v5;
+    bat_raw[4] = (int32_t)((*(volatile uint32_t *)0x16A10u >> 16) & 1u);   /* (stock reads this beside the gauge: charging?) */
+    int mu = (vbg >= 100 && vbg <= 900 && v5 >= 0) ? (int)(4 * vbg_mv() * v5 / vbg) : 0;
     bat_usb_mv = mu;
+    if (c9 < 100) { bat_mv = 0; bat_pct = -1; bat_c9q = 0; return; }   /* no divider there: no gauge */
+    bat_c9q = bat_c9q ? (bat_c9q * 3 + c9 * 4) / 4 : c9 * 4;   /* a little smoothing */
+    int r = (int)(bat_c9q / 4);
+    bat_pct = r > 635 ? 100 : r < 528 ? 0 : (r * 100 - 52700) / 109;
+    bat_mv = (vbg >= 100 && vbg <= 900) ? (int)(2 * (int32_t)vbg_mv() * r / vbg) : r * 6600 / 1023;   /* the cell, for the tuner page */
 }
 #define KEY_DEBUG 0          /* 1 = shows the raw value of channel 9 at the bottom right (K####) */
 /* identifies the analog keypad button by the nearest value (±42 window),

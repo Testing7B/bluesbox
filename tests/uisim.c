@@ -32,7 +32,8 @@ static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static int a_level_db(int ch) { return ch ? -84 : -62; }
 static volatile uint8_t a_tmute;
 static int bat_mv = 3920, bat_usb_mv = 0;
-static int32_t bat_raw[5] = {612, 287, -1, 3, 1023};   /* bat_read's raw ADC values (the tuner page shows them) */
+static int32_t bat_raw[5] = {612, 249, 258, -1, 1};   /* bat_read's raw values (the tuner page shows them) */
+static int bat_pct = -1;                /* (-1: the gauge from bat_mv) */
 
 static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }
 static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }

@@ -102,7 +102,7 @@ static int bat_percent(int mv)         /* a Li-ion cell at rest: 4.15 V full, 3.
 static void draw_battery(int force)
 {
     static int last = -100;
-    int usb = bat_usb_mv > 4300, pct = bat_mv ? bat_percent(bat_mv) : -1, key = usb ? 1000 + (pct < 0 ? 0 : pct) : pct;
+    int usb = bat_usb_mv > 4300, pct = bat_pct >= 0 ? bat_pct : bat_mv ? bat_percent(bat_mv) : -1, key = usb ? 1000 + (pct < 0 ? 0 : pct) : pct;
     if (!force && key == last) return;
     last = key;
     const uint32_t x = 84u, y = 4u;                    /* icon 22 x 12 + tip, then the text */
@@ -569,8 +569,8 @@ static void tuner_level(void)
     b[i] = 0;
     ft_box(0, 36, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
-/* v37: the battery's raw ADC readings (openpocket.c bat_read: bandgap, VBAT/4, 5 V/4; -1 = no conversion) and the two spare
- * analog pins PA7 / PA8, for a photo when the gauge does not work */
+/* v37: the battery's raw readings (openpocket.c bat_read: PC9 the cell's divider, the bandgap, VBAT/4, 5 V/4; -1 = no
+ * conversion) and a status bit the stock firmware reads beside them, for a photo when the gauge looks wrong */
 static uint32_t tn_last_raw = ~0u;
 static int r_str(char *b, int32_t v) { if (v < 0) { b[0] = '-'; b[1] = '-'; return 2; } char t[8]; t[0] = 0; b_num(t, (uint32_t)v); int i = 0; while (t[i]) { b[i] = t[i]; i++; } return i; }
 static void tuner_bat_raw(void)
@@ -579,7 +579,7 @@ static void tuner_bat_raw(void)
     for (int k = 0; k < 5; k++) h = h * 0x9E3779B1u + (uint32_t)bat_raw[k];
     if (h == tn_last_raw) return;
     tn_last_raw = h;
-    static const char *const N[5] = {"BG ", " VB ", " 5V ", " A7 ", " A8 "};
+    static const char *const N[5] = {"C9 ", " BG ", " VB ", " 5V ", " CH "};
     char b[48]; int i = 0;
     for (int k = 0; k < 5; k++) { for (const char *p = N[k]; *p; p++) b[i++] = *p; i += r_str(b + i, bat_raw[k]); }
     b[i] = 0;

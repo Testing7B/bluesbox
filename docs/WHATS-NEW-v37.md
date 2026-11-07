@@ -49,9 +49,12 @@
 - **The battery icon now works**: v36 read the chip's battery channel without switching on the buffer that drives it (the
   SDK's `adc_pmu_detect_en` does), so there was never a reading and the icon stayed hidden. The bias and the test-bus
   settings are now set as the SDK sets them, with the chip's bandgap trim from the boot loader.
+- **The gauge reads the cell where the stock firmware does**: on the Pocket X the chip's own battery pin is a regulated
+  3.3 V (it never moves, charged or not), so the gauge now reads PC9 (ADC channel 8, the cell through a 1:2 divider) and
+  computes the percentage exactly as PocketX_016 and BlackBox do: raw 528 = 0 %, 636 = 100 %, linear between.
 - With no reading the icon shows an empty cell and `--` instead of nothing. The tuner page shows the raw readings on its
-  last line (`BG` bandgap, `VB` battery / 4, `5V` USB supply / 4, `A7`/`A8` the spare analog pins). 0 % is 3.30 V, as the
-  SDK's `LOW_POWER_OFF_VAL`.
+  last line (`C9` the cell's divider, `BG` bandgap, `VB` the chip's supply / 4, `5V` / 4, `CH` a status bit the stock
+  firmware reads beside the gauge).
 - In bypass the status corner says which cores were running: `BYP 2C 150%` or `BYP C0 150%`.
 
 ## From the community (merged into v37)
