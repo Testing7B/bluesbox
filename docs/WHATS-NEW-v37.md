@@ -15,6 +15,9 @@
 - The editor checks the file, refuses A1 captures with the reason, and sets the model's level so it plays as loud as
   the others.
 - On the pedal, MODEL shows the model's name; the PLAY page shows it as the amp.
+- **Browse TONE3000 from the editor:** the button opens TONE3000's own tone browser (sign in there, A2 captures only),
+  then the editor shows the chosen tone (title, gear, creator) and its A2 models, and loads one into a user slot. It
+  uses TONE3000's public API (its "Select" flow, OAuth with PKCE); nothing is stored by the editor.
 
 ## New factory presets
 - **All 24 factory presets are rebuilt around the NAM models**, levelled to the same loudness as before. The 28 USER
