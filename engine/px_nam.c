@@ -1088,10 +1088,19 @@ __asm__("\t.text\n"
         PXN_UB("pxn_ub_rmac", "\tr5_r4 += r3 * r10 (s)\n")
         PXN_UB("pxn_ub_pair", "\tr5_r4 += r3 * r10 (s)  #  r3 = [r2++=4]\n")
         PXN_UB("pxn_ub_fmac", "\tr5_r4 += [r2 ++= r12]*r10 (s)\n")
-        PXN_UB("pxn_ub_rmac2", "\tr5_r4 += r3 * r10 (s)\n\tr7_r6 += r3 * r10 (s)\n"));
+        PXN_UB("pxn_ub_rmac2", "\tr5_r4 += r3 * r10 (s)\n\tr7_r6 += r3 * r10 (s)\n")
+        /* diagnostic 12: a multiply-add paired with a load whose value it does not use (nd), 2 or 4 accumulators, with
+         * and without each multiply using the value the pair before loaded (the hand routines do) */
+        PXN_UB("pxn_ub_pnd", "\tr5_r4 += r3 * r10 (s)  #  r6 = [r2++=4]\n")
+        PXN_UB("pxn_ub_p2nd", "\tr5_r4 += r3 * r10 (s)  #  r6 = [r2++=4]\n\tr9_r8 += r3 * r10 (s)  #  r7 = [r2++=4]\n")
+        PXN_UB("pxn_ub_p4dep", "\tr5_r4 += r3 * r10 (s)  #  r3 = [r2++=4]\n\tr9_r8 += r3 * r10 (s)  #  r3 = [r2++=4]\n"
+               "\tr15_r14 += r3 * r10 (s)  #  r3 = [r2++=4]\n\tr7_r6 += r3 * r10 (s)  #  r3 = [r2++=4]\n")
+        PXN_UB("pxn_ub_p4nd", "\tr5_r4 += r3 * r10 (s)  #  r1 = [r2++=4]\n\tr9_r8 += r3 * r10 (s)  #  r1 = [r2++=4]\n"
+               "\tr15_r14 += r3 * r10 (s)  #  r1 = [r2++=4]\n\tr7_r6 += r3 * r10 (s)  #  r1 = [r2++=4]\n"));
 void pxn_ub_ld(const int32_t *, int), pxn_ub_ldd(const int32_t *, int), pxn_ub_ldm3(const int32_t *, int),
     pxn_ub_st(const int32_t *, int), pxn_ub_rmac(const int32_t *, int), pxn_ub_pair(const int32_t *, int),
-    pxn_ub_fmac(const int32_t *, int), pxn_ub_rmac2(const int32_t *, int);
+    pxn_ub_fmac(const int32_t *, int), pxn_ub_rmac2(const int32_t *, int), pxn_ub_pnd(const int32_t *, int),
+    pxn_ub_p2nd(const int32_t *, int), pxn_ub_p4dep(const int32_t *, int), pxn_ub_p4nd(const int32_t *, int);
 #endif
 /* ticks for reps x n loops of `kind`: 0 load, 1 64-bit load, 2 3-word load, 3 store, 4 multiply-add (registers),
  * 5 multiply-add paired with a load, 6 multiply-add with its load, 7 two multiply-adds; buf: 1024 words. n: the
@@ -1099,12 +1108,15 @@ void pxn_ub_ld(const int32_t *, int), pxn_ub_ldd(const int32_t *, int), pxn_ub_l
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void))
 {
 #if PXN_ASM
-    static void (*const F[8])(const int32_t *, int) = {pxn_ub_ld, pxn_ub_ldd, pxn_ub_ldm3, pxn_ub_st,
-                                                        pxn_ub_rmac, pxn_ub_pair, pxn_ub_fmac, pxn_ub_rmac2};
-    static const int N[8] = {1024, 512, 340, 1024, 1024, 1024, 1024, 1024};
-    *n = N[kind & 7];
+    static void (*const F[12])(const int32_t *, int) = {pxn_ub_ld, pxn_ub_ldd, pxn_ub_ldm3, pxn_ub_st,
+                                                         pxn_ub_rmac, pxn_ub_pair, pxn_ub_fmac, pxn_ub_rmac2,
+                                                         pxn_ub_pnd, pxn_ub_p2nd, pxn_ub_p4dep, pxn_ub_p4nd};
+    static const int N[12] = {1024, 512, 340, 1024, 1024, 1024, 1024, 1024, 1024, 512, 256, 256};
+    static const int P[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4};   /* loads (pairs) a loop */
+    if (kind < 0 || kind > 11) kind = 0;
+    *n = N[kind] * P[kind];
     uint32_t t0 = ticks();
-    for (int r = 0; r < reps; r++) F[kind & 7](buf, *n);
+    for (int r = 0; r < reps; r++) F[kind](buf, N[kind]);
     return ticks() - t0;
 #else
     (void)kind; (void)buf; (void)reps; (void)ticks;
