@@ -24,10 +24,11 @@
 ## Faster engine
 - The NAM network has hand-written routines for the pedal's CPU (blocks of 32 frames, a weight read once for 4
   frames, multiply-adds paired with loads), checked against the C versions at every start-up.
-- It also uses the chip's **vector unit** (in its FFT block) for the dot products. The block is cut in two halves: while
-  the unit computes one half, the CPU prepares or finishes the other, and can take a few frames of the dot products
-  itself. At start-up the pedal times the ways it can run the network (CPU alone, the unit in turn, both at once with
-  the CPU taking 0, 4 or 8 frames of 16) and keeps the fastest.
+- It can also use the chip's **vector unit** (in its FFT block) for the dot products, beside the CPU (the block cut in
+  two halves: while the unit computes one, the CPU prepares or finishes the other), with the weights on 16 bits when
+  the unit reads them (fewer reads; the error this adds is far below each model's own), and the **second core**: with a
+  NAM amp, CPU0 runs the block and CPU1 takes the first frames of each network block (earlier frames never need later
+  ones, so CPU1 never waits). At start-up the pedal times the ways it can run the network and keeps the fastest.
 - A NAM amp replaces the fitted amp's ×4-oversampled stages, so it adds less than its own cost.
 
 ## For developers

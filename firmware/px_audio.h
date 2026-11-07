@@ -146,6 +146,11 @@ static uint8_t a_job;                                  /* a block is in progress
 #if DSP_CPU1
 static void dsp_job(uint32_t arg) { (void)arg; dsp_block(); }
 #endif
+#if DSP_CPU1
+/* the NAM network's helper core (CPU1), for its two-core modes: the job functions (px_nam_helper) */
+static int a_hrun(void (*fn)(uint32_t), uint32_t arg) { return fm1_cpu1_run(fn, arg); }
+static int a_hwait(void) { return fm1_cpu1_wait(); }
+#endif
 static void a_collect(void)                            /* collects the block in progress on CPU1 */
 {
 #if DSP_CPU1
@@ -223,8 +228,11 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
     }
     tn_capture(a_in, A_FR);
 #if DSP_CPU1
-    if (a_c1 && fm1_cpu1_run(dsp_job, 0)) { a_job = 1; return; }
-    a_c1 = 0;
+    /* a NAM amp on two cores (px_nam_dual): the block runs here, CPU1 takes a part of each network block */
+    if (a_c1 && !px_nam_dual(&g_eng)) {
+        if (fm1_cpu1_run(dsp_job, 0)) { a_job = 1; return; }
+        a_c1 = 0;
+    }
 #endif
     dsp_block();
 }
@@ -307,9 +315,6 @@ static void b_fix2(char *d, uint32_t v100)           /* 123 -> "1.23" */
     b_num(d, v100 % 100u);
 }
 static uint32_t b_ticks(void) { return fm1_ticks(); }
-#if BENCH_AT_BOOT
-static int32_t b_ram[1024];                            /* bench data in the ordinary RAM */
-#endif
 /* v37: what the NAM network costs on the pedal, piece by piece (cycles at 360 MHz: ticks x 15). Off by default:
  * BENCH_AT_BOOT=1 (build.sh: OP_BENCH=1) shows it for 12 s at boot. */
 static void audio_bench(void)
@@ -334,23 +339,19 @@ static void audio_bench(void)
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
     /* cycles at 360 MHz (x 100) for one loop of each instruction kind, then the parts of a NAM layer */
     int32_t *pool = px_nam_scratch();
-    /* v37 diagnostic 7: the vector unit's cost a multiply-add (cycles at 360 MHz x 100; 32 dot products of 20 words a
-     * command, waited for) by where x and the weights sit: P the POOL region, R the ordinary RAM; SAME: x and the
-     * weights at one address; X0: x not moving. Then the ways of running the network as timed at start-up (% of real
-     * time, NAM alone): the CPU, the unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16 */
+    /* v37 diagnostic 8: the vector unit's cost a multiply-add (cycles at 360 MHz x 100; 32 dot products of 20 words a
+     * command) with 32-bit and 16-bit weights; then the ways of running the network as timed at start-up (% of real
+     * time, NAM alone): the CPU, the unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores
+     * (CPU1 taking 16 or 12 frames of 32), with the unit beside CPU0 or not */
     {
-        int32_t *xp = pool, *wp = pool + 30000, *zp = pool + 31000, *xr = b_ram, *wr = b_ram + 700;
+        int32_t *xp = pool, *wp = pool + 30000, *zp = pool + 31000;
         for (int i = 0; i < 1000; i++) { pool[i] = pool[30000 + i] = 3000 - i * 7; }
-        for (int i = 0; i < 1024; i++) b_ram[i] = i * 13 - 6000;
         if (pxn_vec_check() >= 0) {
-            static const char *N[6] = {"VP/P ", " P/R ", " R/P ", "VR/R ", " SAME ", " X0 "};
-            for (int v = 0; v < 6; v++) {
-                if (v == 0 || v == 3) l[0] = 0;
-                const int32_t *x = v == 2 || v == 3 ? xr : xp, *w = v == 1 || v == 3 ? wr : v == 4 ? xp : wp;
-                uint32_t t = pxn_bench_vplace(x, w, zp, v >= 4 ? 0 : 80, b_ticks, 64);
-                b_str(l, N[v]); b_fix2(l, t * 1500u / (64u * 640u));
-                if (v == 2 || v == 5) { lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12; }
-            }
+            l[0] = 0; b_str(l, "VEC W32 ");
+            b_fix2(l, pxn_bench_vplace(xp, wp, zp, 80, b_ticks, 64, 0) * 1500u / (64u * 640u));
+            b_str(l, " W16 "); b_fix2(l, pxn_bench_vplace(xp, wp, zp, 80, b_ticks, 64, 1) * 1500u / (64u * 640u));
+            b_str(l, pxn_y16_in_use() ? " ON" : " OFF");
+            lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
             fm1_wdt_feed();
         } else { lcd_text(4, y, "VECTOR UNIT: OFF", RED, UI_BG, 1); y += 12; }
         l[0] = 0; b_str(l, "POST/F "); b_fix2(l, pxn_bench_post(pool, b_ticks, 64, 0) * 15u * 100u / (64u * 32u));
@@ -358,12 +359,13 @@ static void audio_bench(void)
         b_str(l, pxn_post2_in_use() ? " ON" : " OFF");
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
         fm1_wdt_feed();
-        l[0] = 0;
-        static const char *M[PXN_MODES] = {"CPU", " VEC", " B0 ", " B4 ", " B8 "};
+        static const char *M[PXN_MODES] = {"CPU", " VEC", " B0 ", " B4 ", " B8 ", "2C ", " 2CV12 ", " 2CV16 ", " 2CV12C4 "};
         for (int m = 0; m < PXN_MODES; m++) {
+            if (m == 0 || m == 5) l[0] = 0;
             uint32_t t = px_nam_tuned(m);
             b_str(l, M[m]);
             if (t) b_num(l, t * 100u / (A_BUDGET * 2u)); else b_str(l, "-");
+            if (m == 4) { lcd_text(4, y, l, GRN, UI_BG, 1); y += 12; }
         }
         b_str(l, " >"); b_num(l, (uint32_t)pxn_mode());
         lcd_text(4, y, l, GRN, UI_BG, 1); y += 14;

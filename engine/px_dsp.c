@@ -994,6 +994,10 @@ int px_nam_check(uint32_t (*ticks)(void))
     return ok;
 }
 uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < PXN_MODES ? px_nam_tt[mode] : 0; }
+/* the network will run on two cores in this engine's next blocks: the caller must run px_engine_process on the core
+ * that hands jobs to the other one (pxn_set_helper) */
+int px_nam_dual(const px_engine *e) { return pxn_dual() && e->amp_nam && e->cur.on[PX_B_AMP] && px_nam_m.ready; }
+void px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void)) { pxn_set_helper(run, wait); }
 /* every model is trimmed to -20 LUFS on the DI clip (its level trim); this puts NAM + the 1x12 at GAIN noon at the fitted
  * amps' -23 LUFS (mean over the factory models, measured by tools/level_presets.py's DI) */
 #define PX_NAM_REF_DB (-6.0f)

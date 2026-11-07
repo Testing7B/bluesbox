@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # OpenPocket — the NAM engine (engine/px_nam.c, fixed point, the pedal's C path) against the float reference
 # (tools/nam_a2.py), with each factory model's weights (engine/px_nam_factory.h): DI clip (docs/nam_di.wav) at the
-# pedal's input level, several block sizes, the rings in one piece and in two. Wants SNR > 80 dB. Modes 2..4 (the
-# vector unit beside the CPU, simulated: tests/engine/nam_test.c) must give exactly the same output as the CPU alone.
+# pedal's input level, several block sizes, the rings in one piece and in two. Wants SNR > 80 dB. Modes 2..8 (the
+# vector unit beside the CPU, a second core, simulated: tests/engine/nam_test.c) must give exactly the same output as the CPU alone.
+# With the weight rows on 16 bits (what the pedal's vector unit reads, if it can): SNR > 60 dB (each model's own error
+# against the amp is far larger: ESR 0.006 .. 0.12, -22 .. -9 dB).
 #   python3 tests/test_nam.py build/nam_test
 import os, re, subprocess, sys, wave
 import numpy as np
@@ -33,20 +35,25 @@ for k, (name, wt) in enumerate(zip(names, models)):
     ref = nam_a2.run(nam_a2.unpack(wt.astype(np.float64), 3), x.astype(np.float64))
     worst = 1e9
     outs = {}
-    for blk, split, pipe in ((64, 0, 0), (37, 1, 0), (1, 0, 0), (64, 0, 2), (37, 1, 4), (64, 0, 3)):
+    worst16 = 1e9
+    runs = [(64, 0, 0, 0), (37, 1, 0, 0), (1, 0, 0, 0), (64, 0, 0, 1)] + \
+           [(64, 0, md, 0) for md in range(2, 9)] + [(37, 1, 4, 0), (37, 1, 6, 0), (64, 0, 8, 1)]
+    for blk, split, pipe, y16 in runs:
         env = dict(os.environ)
         if split: env["NAM_SPLIT"] = "1"
         if pipe: env["NAM_PIPE"] = str(pipe)
+        if y16: env["NAM_Y16"] = "1"
         subprocess.run([exe, os.path.join(out, "w.f32"), os.path.join(out, "in.f32"), os.path.join(out, "out.f32"),
                         str(blk)], check=True, env=env)
         y = np.fromfile(os.path.join(out, "out.f32"), np.float32)
-        outs[blk, pipe] = y
+        outs[blk, pipe, y16] = y
         snr = 10 * np.log10(np.sum(ref ** 2) / max(np.sum((y - ref) ** 2), 1e-30))
-        worst = min(worst, snr)
-    same = all(np.array_equal(outs[b, 0], outs[b, p]) for b, p in ((64, 2), (37, 4), (64, 3)))
-    ok = worst > 80 and same
-    if not same: print("%-10s modes 2..4 differ from the CPU alone" % name)
+        if y16: worst16 = min(worst16, snr)
+        else: worst = min(worst, snr)
+    same = all(np.array_equal(outs[b, 0, q], outs[b, p, q]) for b, _, p, q in runs if p)
+    ok = worst > 80 and worst16 > 60 and same
+    if not same: print("%-10s modes 2..8 differ from the CPU alone" % name)
     bad += not ok
-    print("%-10s fixed point vs float: SNR %.1f dB  %s" % (name, worst, "ok" if ok else "FAIL"))
+    print("%-10s fixed point vs float: SNR %.1f dB (16-bit rows %.1f dB)  %s" % (name, worst, worst16, "ok" if ok else "FAIL"))
 print("NAM: %d models, %s" % (len(models), "all ok" if not bad else "%d FAILED" % bad))
 sys.exit(1 if bad else 0)

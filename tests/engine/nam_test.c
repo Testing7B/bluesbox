@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket — engine/px_nam.c on the PC: nam_test weights.f32 in.f32 out.f32 [block]   (tests/test_nam.py)
  * weights.f32: the 1871 A2-Lite weights (float32, file order); in/out: float32 samples.
- * NAM_PIPE=m: mode m (2..4: the vector unit beside the CPU) with a simulated unit (built with -DPXN_EMUVEC). */
+ * NAM_Y16=1: weights loaded as rows of 16 bits (as when the pedal's vector unit reads them).
+ * NAM_PIPE=m: mode m (2..8: the vector unit beside the CPU, a second core) with a simulated unit and core (built with
+ * -DPXN_EMUVEC). */
 #include <stdio.h>
 #include <stdlib.h>
 #include "px_nam.h"
 static pxn_model m;
 void pxn_emu_on(int mode);
+void pxn_emu_y16(void);
+void pxn_emu_helper(void);
 static int32_t ring[PXN_RING_BYTES / 4 + 4096];   /* + 16 KB: two pieces never pack perfectly (NAM_SPLIT=1) */
 static float *rd(const char *p, long *n)
 {
@@ -25,10 +29,11 @@ int main(int argc, char **argv)
     int blk = argc > 4 ? atoi(argv[4]) : 64;
     if (nw != PXN_NW) { fprintf(stderr, "%ld weights, want %d\n", nw, PXN_NW); return 1; }
     /* the rings in one piece of exactly PXN_RING_BYTES, as on the pedal; NAM_SPLIT=1: two pieces (3/4 + the rest) */
+    if (getenv("NAM_Y16")) pxn_emu_y16();
     unsigned n0 = getenv("NAM_SPLIT") ? (PXN_RING_BYTES * 3 / 4 & ~3u) : PXN_RING_BYTES;
     int r = pxn_load(&m, w, ring, n0, ring + n0 / 4, getenv("NAM_SPLIT") ? PXN_RING_BYTES + 16384u - n0 : 0);
     if (r) { fprintf(stderr, "load %d\n", r); return 1; }
-    if (getenv("NAM_PIPE")) pxn_emu_on(atoi(getenv("NAM_PIPE")));
+    if (getenv("NAM_PIPE")) { pxn_emu_on(atoi(getenv("NAM_PIPE"))); pxn_emu_helper(); }
     float *y = malloc(n * 4);
     for (long i = 0; i < n; i += blk) pxn_process(&m, x + i, y + i, (int)(n - i < blk ? n - i : blk));
     FILE *o = fopen(argv[3], "wb");

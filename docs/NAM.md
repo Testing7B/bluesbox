@@ -72,12 +72,23 @@ trained at 44.1 kHz and are not affected.
 - The dot products can also run on the chip's vector unit (in its FFT block: one command computes a row of weights
   against many X rows, beside the CPU). In that mode the block is cut in two halves, and half B of a layer never needs
   the next layer's half A: so while the unit computes one half, the CPU gathers or posts the other, and may compute
-  the last 4 or 8 frames of a half itself (the unit costs about 4.7 cycles a multiply-add, about as much as the CPU, so
-  the two share the work). At start-up the pedal times the five ways (CPU alone, the unit one command after the other,
-  both at once with the CPU taking 0, 4 or 8 frames) on the first factory model and keeps the fastest (`pxn_tune`). The PC test runs that mode with a simulated unit that finishes its
-  commands late, at random, and checks the output is exactly the CPU's.
+  the last 4 or 8 frames of a half itself. The unit costs about 4.8 cycles a multiply-add with 32-bit weights (about as
+  much as the CPU: it is limited by its reads); if its start-up check passes with 16-bit weights, the models are
+  loaded with each weight row on 16 bits (the row's largest weight sets a shift, so that the CPU's 32-bit row is
+  exactly the 16-bit one shifted: both give the same result). That adds an error 65 to 85 dB below the signal, far
+  below each model's own error against its amp.
+- Two cores: frame t of a layer needs only frames t and earlier of the layer before. So CPU1 takes the first 12 or 16
+  frames of each 32-frame block through all 23 layers without ever waiting, and CPU0 the rest, waiting before each
+  layer until CPU1 has posted the one before (one counter). With a NAM amp in two-core mode the whole audio block runs
+  on CPU0 (in the audio interrupt) and CPU1 only helps the network (`px_nam_dual`); otherwise the block runs on CPU1
+  as before.
+- At start-up the pedal times the ways to run it (CPU alone; the unit one command after the other; the unit and the
+  CPU at once, the CPU taking 0, 4 or 8 frames; two cores, with or without the unit) on the first factory model and
+  keeps the fastest (`pxn_tune`). The PC test runs every mode with a simulated unit that finishes its commands late,
+  at random, and a simulated second core that moves on only while the first waits for it: the output must be exactly
+  the CPU's.
 - 1,730 multiply-adds per sample in 23 layers; the history buffers take 83 KB of RAM, a model 7.5 KB.
-- The second core runs it with the rest of the chain. The load shows at the bottom right of the screen (`C1 nn%`).
+- The load shows at the bottom right of the screen (`C1 nn%`).
 
 ## Training (`tools/train_a2.py`)
 
