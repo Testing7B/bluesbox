@@ -91,6 +91,7 @@ int pxn_fast_in_use(void);
 int pxn_rdot_chosen(void);              /* the CPU's layers: 1 rdot, 0 gathered X rows (timed by pxn_tune) */
 uint32_t pxn_rdot_ticks(int rd);        /* that timing, mode 0: 0 gathered, 1 rdot, 2 rdq (load-ahead rdot) */
 uint32_t pxn_prof_ticks(int k);
+int pxn_rdl_state(void);              /* rdl (a layer's groups in one call): 0 failed its check, 1 slower, 2 in use */
 uint32_t pxn_post_ticks(int v);        /* mode 0 timed with post2 (0) and post3 (1) */
 int pxn_post3_state(void);             /* 0 post3 failed its check, 1 slower than post2, 2 in use */        /* where mode 0's time goes (pxn_tune): see px_nam.c */
 int pxn_rdq_in_use(void);
