@@ -337,7 +337,7 @@ static void audio_bench(void)
     lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 10: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 11: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -346,10 +346,18 @@ static void audio_bench(void)
         b_num(l, pxn_rdot_ticks(1) * 100u / (A_BUDGET * 2u)); b_str(l, "% GATH ");
         b_num(l, pxn_rdot_ticks(0) * 100u / (A_BUDGET * 2u)); b_str(l, pxn_rdot_chosen() ? "% >R" : "% >G");
         lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-        l[0] = 0; b_str(l, "FAST RAM "); b_str(l, pxn_fast_in_use() ? "IN USE" : pxc_status == PXC_READY ? "NO (UNIT)" : "OFF");
-        b_str(l, "  POST2 "); b_str(l, pxn_post2_in_use() ? "ON" : "OFF");
-        lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12;
-        fm1_wdt_feed();
+        /* diagnostic 11: the vector unit's cycles a multiply-add by shape (pxn_bench_vfast) */
+        if (pxn_vec_check() >= 0) {
+            int32_t *buf = px_nam_scratch();
+            for (int v = 0; v < 8; v++) {
+                if (v == 0 || v == 4) { l[0] = 0; b_str(l, "U"); }
+                uint32_t t = pxn_bench_vfast(buf, b_ticks, v);
+                b_str(l, v ? " " : ""); b_num(l, (uint32_t)v); b_str(l, ":");
+                b_fix2(l, t * 1500u / (uint32_t)pxn_vfast_macs(v));
+                if (v == 3 || v == 7) { lcd_text(4, y, l, UI_TXT, UI_BG, 1); y += 12; }
+                fm1_wdt_feed();
+            }
+        }
         static const char *M[PXN_MODES] = {"C", " V", " B0 ", " B4 ", " B8 ", "2C ", " V12 ", " V16 ", " V12C4 "};
         for (int m = 0; m < PXN_MODES; m++) {
             if (m == 0 || m == 5) l[0] = 0;

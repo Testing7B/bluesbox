@@ -90,6 +90,8 @@ int pxn_fast_in_use(void);
 int pxn_rdot_chosen(void);              /* the CPU's layers: 1 rdot, 0 gathered X rows (timed by pxn_tune) */
 uint32_t pxn_rdot_ticks(int rd);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
+uint32_t pxn_bench_vfast(int32_t *buf, uint32_t (*ticks)(void), int v);   /* v 0..7, see px_nam.c */
+int pxn_vfast_macs(int v);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */
 void pxn_reset(pxn_model *m);

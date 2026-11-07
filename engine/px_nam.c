@@ -1028,6 +1028,51 @@ uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nlo
 #endif
 }
 
+/* the vector unit's speed by shape (v37 diagnostic 11): one command of nloop dot products of 20 words, waited for;
+ * ticks. v: 0 1000 loops, x step 0, z step 0, x and weights at one address, small values (an earlier measurement gave
+ * 1.5 cycles a multiply-add like this); 1 the same with 32 loops; 2 z step 12; 3 x and weights apart; 4 large values;
+ * 5 the network's shape (500 loops, x step 80, z step 12, apart, large values); 6 the same, the CPU not reading the
+ * unit's register for the first half (a loop on registers only); 7 as 5 with the engine's X row stride (200 bytes).
+ * buf: 21,000 words */
+#if PXN_ASM
+static void __attribute__((noinline)) pxn_spin(uint32_t n) { for (uint32_t i = 0; i < n; i++) __asm__ volatile(""); }
+#endif
+uint32_t pxn_bench_vfast(int32_t *buf, uint32_t (*ticks)(void), int v)
+{
+#if PXN_ASM
+    int32_t *x = buf, *w = v == 3 || v >= 5 ? buf + 12000 : buf, *z = buf + 13000;
+    const int big = v >= 4, nloop = v == 1 ? 32 : v == 7 ? 200 : v >= 5 ? 500 : 1000;
+    const int xs = v == 7 ? 200 : v >= 5 ? 80 : 0, zs = v == 2 || v >= 5 ? 12 : 0;
+    uint32_t r = 2468u;
+    for (int i = 0; i < 12100; i++) {
+        r = r * 1103515245u + 12345u;
+        buf[i] = big ? (int32_t)r >> 6 : 3000 - (i % 1000) * 7;
+    }
+    if (v == 6) {
+        uint32_t t0 = ticks();
+        pxn_spin(100000u);
+        const uint32_t per = ticks() - t0;              /* ticks for 100,000 turns of the register loop */
+        t0 = ticks();
+        pxn_vstart(w, x, 20, xs, zs, z, nloop);
+        pxn_vwait();
+        const uint32_t whole = ticks() - t0;
+        t0 = ticks();
+        pxn_vstart(w, x, 20, xs, zs, z, nloop);
+        pxn_spin(per ? (uint32_t)((uint64_t)whole * 100000u / per / 2u) : 0u);
+        pxn_vwait();
+        return ticks() - t0;
+    }
+    uint32_t t0 = ticks();
+    pxn_vstart(w, x, 20, xs, zs, z, nloop);
+    pxn_vwait();
+    return ticks() - t0;
+#else
+    (void)buf; (void)ticks; (void)v;
+    return 0;
+#endif
+}
+int pxn_vfast_macs(int v) { return 20 * (v == 1 ? 32 : v == 7 ? 200 : v >= 5 ? 500 : 1000); }
+
 #if PXN_ASM
 /* one instruction (or pair) n times in the hardware loop: what each kind costs on this CPU */
 #define PXN_UB(name, body)                                                                                        \
