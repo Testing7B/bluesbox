@@ -82,6 +82,13 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES]);
 int pxn_mode(void);
 int pxn_post2_in_use(void);
 int pxn_rdot_in_use(void);
+/* fast memory for the vector unit's inputs (X rows, a copy of the weights: PXN_FAST_BYTES), away from the RAM the CPUs
+ * work in: offered before pxn_selftest, which checks the unit there and then uses it */
+void pxn_set_fast(int32_t *base, unsigned bytes);
+#define PXN_FAST_BYTES (((PXN_N + 1) * PXN_S + 1550 + PXN_S + 4) * 4u)
+int pxn_fast_in_use(void);
+int pxn_rdot_chosen(void);              /* the CPU's layers: 1 rdot, 0 gathered X rows (timed by pxn_tune) */
+uint32_t pxn_rdot_ticks(int rd);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
 /* clears the histories (silence in) */

@@ -44,7 +44,13 @@ for k, (name, wt) in enumerate(zip(names, models)):
         outs[blk, pipe] = y
         snr = 10 * np.log10(np.sum(ref ** 2) / max(np.sum((y - ref) ** 2), 1e-30))
         worst = min(worst, snr)
-    same = all(np.array_equal(outs[b, 0], outs[b, p]) for b, _, p in runs if p)
+    for pipe in (0, 5):                                # the CPU's layers through gathered X rows instead of rdot
+        env = dict(os.environ, NAM_GATHER="1", **({"NAM_PIPE": str(pipe)} if pipe else {}))
+        subprocess.run([exe, os.path.join(out, "w.f32"), os.path.join(out, "in.f32"), os.path.join(out, "out.f32"),
+                        "64"], check=True, env=env)
+        outs[64, "g%d" % pipe] = np.fromfile(os.path.join(out, "out.f32"), np.float32)
+    same = all(np.array_equal(outs[b, 0], outs[b, p]) for b, _, p in runs if p) and \
+        np.array_equal(outs[64, 0], outs[64, "g0"]) and np.array_equal(outs[64, 0], outs[64, "g5"])
     ok = worst > 80 and same
     if not same: print("%-10s modes 2..8 differ from the CPU alone" % name)
     bad += not ok

@@ -70,12 +70,16 @@ trained at 44.1 kHz and are not affected.
   pedal these are hand-written (pi32v2 assembly: multiply-adds paired with loads, 3 words moved by one instruction,
   no branch per sample), because this CPU has no data cache in front of its RAM and a taken branch costs about 8
   cycles. At start-up they are run against the C versions on a test pattern, and the C versions are used if they
-  differ by a single bit.
+  differ by a single bit. The start-up timing also compares this with gathering each frame's inputs into one row
+  first (then the hardware-loop dot routine), and keeps the faster.
 - The dot products can also run on the chip's vector unit (in its FFT block: one command computes a row of weights
   against many X rows, beside the CPU; each frame's inputs to the layer are then gathered into one X row). The block
   is cut in two halves, and half B of a layer never needs the next layer's half A: so while the unit computes one
   half, the CPU gathers or posts the other, and may compute the last 4 or 8 frames of a half itself. The unit costs
-  about 4.8 cycles a multiply-add on the pedal, about as much as the CPU, wherever its data sits.
+  about 4.8 cycles a multiply-add on the pedal, about as much as the CPU. Its inputs (the X rows and a copy of the
+  weights, 13 KB) sit in seven of the data-cache ways turned into RAM at boot (`firmware/px_cacheram.h`, melodee's
+  routine; the data cache only serves the flash), so that it does not read the RAM the CPUs work in; the start-up
+  check runs the unit there too, and the ordinary RAM is used if it differs.
 - Two cores: frame t of a layer needs only frames t and earlier of the layer before. So CPU1 takes the first 12 or 16
   frames of each 32-frame block through all 23 layers without ever waiting, and CPU0 the rest, waiting before each
   layer until CPU1 has posted the one before (one counter). With a NAM amp in two-core mode the whole audio block runs

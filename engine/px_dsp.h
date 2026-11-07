@@ -95,6 +95,7 @@ int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines 
                                                          fastest way to run chosen (1 = hand routines in use) */
 uint32_t    px_nam_tuned(int mode);                   /* that timing: ticks for 256 frames, by mode (0 = n/a) */
 void        px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));   /* the other core */
+void        px_nam_fast(void *base, unsigned bytes);   /* memory away from the CPUs' RAM, for the vector unit (before px_nam_check) */
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
 /* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
  * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */

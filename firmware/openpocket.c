@@ -532,6 +532,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #if AUDIO_PROBE
 #include "audio_probe.h"
 #else
+#include "px_cacheram.h"     /* v37: data-cache ways as RAM (melodee's routine): the NAM network's vector-unit buffers */
 #include "px_audio.h"
 #endif
 
@@ -575,6 +576,12 @@ static void app_main(void)
     uint32_t push_t = 0, clk_t = 0;
     int clk_pend = 0;                    /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
     int32_t master_raw = -100;
+#if !AUDIO_PROBE
+    {   /* before the second core starts: the data-cache ways as RAM (through a pointer: it is RAM code) */
+        void (*volatile f)(void) = pxc_init;
+        f();
+    }
+#endif
 #if DSP_CPU1
     fm1_cpu1_bar_build(27u);             /* a new build gives the 2nd core another chance */
     fm1_cpu1_start();                    /* at boot, before audio and interrupts (Felucca) */
@@ -658,6 +665,7 @@ static void app_main(void)
 #if DSP_CPU1
     px_nam_helper(a_hrun, a_hwait);      /* v37: CPU1 can take a part of the NAM network */
 #endif
+    if (pxc_status == PXC_READY) px_nam_fast((void *)PXC_BEGIN, PXC_END - PXC_BEGIN);   /* the vector unit's inputs */
     px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     op_stage(ST_UI, "SCREEN...");
