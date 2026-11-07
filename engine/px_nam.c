@@ -3572,6 +3572,103 @@ static void pxn_layers_pipe(pxn_model *m, int fa, int fb, int c)
         }
 }
 #endif
+
+/* v37 diagnostic 22: the helper as a server for the whole audio block, the roles the other way round. In the two-core
+ * pipeline CPU1 first runs the effects after the amp (POST), which often take longer than CPU0's effects before it
+ * (PRE): CPU1 comes late to the network. So for each 32-frame block CPU0 takes the first hs frames and never waits, and
+ * CPU1 the last n-hs frames, waiting before layer i until CPU0 has posted layer i-1 (frame t needs only frames t and
+ * earlier). The lateness the firmware measured (ticks) gives CPU0 more frames (hs up to 28) in the first blocks:
+ * frames moved = lateness / 2 per-frame costs. pxn_serve runs on CPU1 (after POST) until pxn_srv_end. */
+static struct {
+    pxn_model *m;
+    volatile int32_t seq, hs, n, mdone, hlay, hdone, stop;   /* mdone: layers CPU0 has posted; hlay: layers CPU1 has */
+} pxn_sv;
+static uint8_t pxn_sv_on, pxn_sv_dead;
+static int32_t pxn_sv_late, pxn_sv_c;                    /* CPU1's lateness left (ticks); one frame's cost, one core */
+uint32_t pxn_frame_ticks(void) { return (uint32_t)pxn_sv_c; }
+#ifdef PXN_EMUVEC
+static uint8_t pxn_emu_eager;                            /* PC: CPU1 runs each layer as soon as allowed, or only when waited for */
+static void pxn_emu_sstep(int waited)
+{
+    if (pxn_sv.hdone == pxn_sv.seq || (!waited && !pxn_emu_eager)) return;
+    while (pxn_sv.hlay < PXN_NL && pxn_sv.hlay <= pxn_sv.mdone) {
+        pxn_range_cpu(pxn_sv.m, pxn_sv.hlay, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1);
+        pxn_sv.hlay++;
+    }
+    if (pxn_sv.hlay == PXN_NL) pxn_sv.hdone = pxn_sv.seq;
+}
+void pxn_emu_srv(int eager) { pxn_emu_eager = (uint8_t)eager; pxn_sv_c = 1; }   /* (lateness then in frames x 2) */
+#define PXN_SSTEP(w) pxn_emu_sstep(w)
+#else
+#define PXN_SSTEP(w) ((void)0)
+#endif
+void pxn_srv_begin(int32_t late)                         /* CPU0, before starting CPU1's job */
+{
+    pxn_sv.seq = pxn_sv.hdone = pxn_sv.stop = pxn_sv.hlay = 0;
+    pxn_sv.mdone = 0;
+    pxn_sv_late = late;
+    PXN_SYNC();
+    pxn_sv_on = (uint8_t)(!pxn_sv_dead && PXN_MC[pxn_mode_v].h && !PXN_MC[pxn_mode_v].pipe);
+}
+void pxn_srv_end(void)                                   /* CPU0: CPU1 leaves pxn_serve (then wait for its job) */
+{
+    PXN_SYNC();
+    pxn_sv.stop = 1;
+    PXN_SYNC();
+    pxn_sv_on = 0;
+}
+int pxn_srv_active(void) { return pxn_sv_on; }
+void pxn_serve(void)                                     /* CPU1 */
+{
+    int32_t done = 0;
+    for (;;) {
+        while (pxn_sv.seq == done && !pxn_sv.stop) PXN_SYNC();
+        if (pxn_sv.seq == done) return;
+        const int32_t q = pxn_sv.seq;
+        PXN_SYNC();
+        for (int i = 0; i < PXN_NL; i++) {
+            while (pxn_sv.mdone < i) PXN_SYNC();
+            pxn_range_cpu(pxn_sv.m, i, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1);
+            PXN_SYNC();
+            pxn_sv.hlay = i + 1;
+        }
+        PXN_SYNC();
+        pxn_sv.hdone = done = q;
+    }
+}
+static void pxn_srv_block(pxn_model *m, int n)           /* CPU0: the layers of one block with CPU1 serving */
+{
+    int x = 0;
+    if (pxn_sv_late > 0 && pxn_sv_c > 0) {
+        x = (int)(pxn_sv_late / (2 * pxn_sv_c) + 2) & ~3;
+        if (x > 12) x = 12;
+        pxn_sv_late -= x * 2 * pxn_sv_c;
+    }
+    const int hs = 16 + x;
+    pxn_sv.m = m; pxn_sv.hs = hs; pxn_sv.n = n;
+    pxn_sv.mdone = 0; pxn_sv.hlay = 0;
+    PXN_SYNC();
+    const int32_t q = pxn_sv.seq + 1;
+    pxn_sv.seq = q;
+    PXN_SYNC();
+    PXN_SSTEP(0);
+    for (int i = 0; i < PXN_NL; i++) {
+        pxn_range_cpu(m, i, 0, hs, 1, 0);
+        PXN_SYNC();
+        pxn_sv.mdone = i + 1;
+        PXN_SSTEP(0);
+    }
+    for (uint32_t k = 0; pxn_sv.hdone != q; ) {
+        PXN_SYNC();
+        PXN_SSTEP(1);
+        if (++k > 8000000u) {                            /* (CPU1 gone for ~0.1 s: its layers here, from where it was) */
+            pxn_sv_dead = 1;
+            for (int i = pxn_sv.hlay; i < PXN_NL; i++) pxn_range_cpu(m, i, hs, n - hs, 1, 0);
+            pxn_sv.hdone = q;
+            pxn_sv_on = 0;
+        }
+    }
+}
 static void pxn_block(pxn_model *m, const float *in, float *out, int n)
 {
     pxn_layer *L0 = &m->L[0];
@@ -3597,7 +3694,8 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
         pxn_x = xb;
     }
     if (pxn_pt) pxn_prof[0] += PXN_T() - tb;
-    if (h && n == PXN_N) {                               /* two cores */
+    if (h && n == PXN_N && pxn_sv_on && !pipe) pxn_srv_block(m, n);   /* two cores, CPU1 serving (the pipeline) */
+    else if (h && n == PXN_N) {                          /* two cores */
         pxn_hstart(m, h);
 #if PXN_VQON
         if (pipe) pxn_layers_pipe(m, h, n, c);
@@ -3676,6 +3774,7 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
         pxn_rd = (uint8_t)(b > 0);
         pxn_rdq_on = (uint8_t)(b >= 2);
         pxn_rdl_on = (uint8_t)(b == 3);
+        pxn_sv_c = (int32_t)(pxn_rdt[b] / (8u * PXN_N));  /* one frame through every layer, one core (ticks) */
     }
 #if PXN_ASM
     if (pxn_p3ok) for (int v = 0; v < 2; v++) {          /* post2 or post3: the faster */

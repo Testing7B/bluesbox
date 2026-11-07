@@ -78,6 +78,14 @@ uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nlo
 /* the other core, for modes 5..8: run(fn, arg) hands it fn(arg) (1 = taken, 0 = do it yourself), wait() waits for it
  * (0 = done, -1 = dropped). Without it those modes are not used. */
 void pxn_set_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));
+/* the two-core pipeline (v37): CPU1 serves the network's blocks after its own work, the roles the other way round
+ * (see px_nam.c): pxn_srv_begin(lateness in ticks) on CPU0 before starting CPU1's job, pxn_serve() at the end of that
+ * job, pxn_srv_end() on CPU0 after the network, then wait for the job */
+void pxn_srv_begin(int32_t late);
+void pxn_serve(void);
+void pxn_srv_end(void);
+int pxn_srv_active(void);
+uint32_t pxn_frame_ticks(void);        /* one frame through every layer on one core (ticks, timed by pxn_tune) */
 int pxn_dual(void);                     /* 1 = the mode in use wants the other core (the caller must not be it) */
 int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES]);
 int pxn_mode(void);

@@ -176,17 +176,35 @@ static void post_job(uint32_t prev)
     } else for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;   /* the pipeline's first block */
     dsp_out();
 }
+/* diagnostic 22: CPU1 then goes straight on to the network (pxn_serve), taking the last frames of each 32-frame block
+ * while CPU0 takes the first ones and never waits; CPU0 takes more frames in the first blocks by how late CPU1 came
+ * to the network in the blocks before (a_late, ticks: POST's end against PRE's) */
+static volatile uint32_t a_tpost;                      /* (CPU1) when POST was done */
+static int32_t a_late;
+static void pipe_job(uint32_t prev)
+{
+    post_job(prev);
+    a_tpost = fm1_ticks();
+    pxn_serve();
+}
 static void dsp_pipe_run(int run)                      /* run: the engine on (else bypassed) */
 {
     const uint32_t prev = a_nbi ^ 1u;
     a_prun = (uint8_t)run;
-    const int job = fm1_cpu1_run(post_job, prev);
+    if (run) pxn_srv_begin(a_late > 0 ? a_late : 0);
+    const int job = fm1_cpu1_run(run ? pipe_job : post_job, prev);
+    if (run && !job) pxn_srv_end();
     if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
         px_engine_part(&g_eng, a_in + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_PRE);
+    const uint32_t tpre = fm1_ticks();
     if (!job) post_job(prev);                          /* (CPU1 off: here) */
-    else if (fm1_cpu1_wait() < 0) { a_c1 = 0; post_job(prev); }   /* (dropped: here, and one core from now on) */
     if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
         px_engine_part(&g_eng, a_nb[a_nbi] + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_NAM);
+    if (job) {
+        if (run) pxn_srv_end();
+        if (fm1_cpu1_wait() < 0) { a_c1 = 0; post_job(prev); }   /* (dropped: here, and one core from now on) */
+        else if (run) a_late += ((int32_t)(a_tpost - tpre) - a_late) / 4;
+    }
     a_nbv = (uint8_t)run;
     a_nbi = (uint8_t)prev;
 }
@@ -385,7 +403,7 @@ static void audio_bench(void)
     (void)ti; (void)tf;
     l[0] = 0; b_str(l, "NAM ROUTINE: "); b_str(l, pxn_asm_in_use() ? "HAND (OK)" : "C (CHECK FAILED)");
     lcd_text(4, y, l, pxn_asm_in_use() ? GRN : RED, UI_BG, 1); y += 14;
-    /* v37 diagnostic 21: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
+    /* v37 diagnostic 22: the ways of running the network as timed at start-up (% of real time, NAM alone): the CPU, the
      * unit in turn, both at once with the CPU taking 0, 4 or 8 frames of 16; two cores (CPU1 taking 16 or 12 frames of
      * 32), with the unit beside CPU0 or not. RDOT: the layer read straight from its ring (no gather), against the gathered
      * X rows (the CPU alone); FAST RAM: the vector unit's inputs in the data-cache ways (px_cacheram.h) */
@@ -450,10 +468,11 @@ static void audio_bench(void)
         if (px_nam_dual(&g_eng)) {
             a_nbv = 0;
             uint32_t dt = 0;
-            for (int r = 0; r < 12; r++) {
+            a_late = 0;
+            for (int r = 0; r < 16; r++) {
                 uint32_t t0 = fm1_ticks();
                 dsp_pipe_run(1);
-                if (r >= 4) dt += fm1_ticks() - t0;
+                if (r >= 8) dt += fm1_ticks() - t0;
             }
             a_nbv = 0;
             fm1_wdt_feed();
