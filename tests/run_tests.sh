@@ -5,6 +5,7 @@
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
 #  - the two-core pipeline (PRE / NAM / POST stages) gives the plain engine's output one block later
 #  - NAM: engine/px_nam.c against tools/nam_a2.py with every factory model (needs numpy)
+#  - MIDI: the musical-MIDI code (firmware/px_midi.h) on a PC: decoder, CC map, messages sent, settings byte, clock
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
 #  - LED map + lights driver (led_probe.h, px_leds.h): PC7 enable after the first byte, the 595 timing, the table
 #  - button lights (px_lights.h): each block lights its button, FX for its group, HOME blinks in the tuner
@@ -25,7 +26,15 @@ if python3 -c "import numpy" 2>/dev/null; then mkdir -p build/nam; python3 tests
 echo "== preset store"
 $CC -O1 -Iengine tests/test_store.c engine/px_dsp.c firmware/px_math.c -lm -o build/test_store && build/test_store | tail -2
 echo "== screen (every page fully drawn)"
-mkdir -p build/ui && $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/uisim tests/uisim.c engine/px_dsp.c firmware/px_math.c -lm && build/uisim build/ui > build/ui/log.txt && if grep -q "never drawn" build/ui/log.txt; then grep "never drawn" build/ui/log.txt; echo "screen: FAIL"; else echo "screen: $(wc -l < build/ui/log.txt) pages ok (build/ui/*.ppm)"; fi
+mkdir -p build/ui && $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/uisim tests/uisim.c engine/px_dsp.c firmware/px_math.c -lm
+build/uisim build/ui > build/ui/log.txt
+if grep -q "never drawn" build/ui/log.txt; then grep "never drawn" build/ui/log.txt; echo "screen: FAIL"; exit 1; else echo "screen: $(wc -l < build/ui/log.txt) pages ok (build/ui/*.ppm)"; fi
+echo "== MIDI (firmware/px_midi.h: decoder, Control Change map, what the pedal sends, settings, clock)"
+for t in midisim midiio; do
+  $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/$t tests/$t.c engine/px_dsp.c firmware/px_math.c -lm
+  build/$t > build/$t.log || { grep FAIL build/$t.log; exit 1; }
+  tail -1 build/$t.log
+done
 echo "== LED map and the lights driver (LED_PROBE build, issue #8)"
 mkdir -p build/lp && $CC -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
 echo "== button lights in the normal firmware (px_lights.h, issue #8)"
