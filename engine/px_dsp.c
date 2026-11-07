@@ -979,7 +979,7 @@ static int nam_load(int m, float *level_db)
 /* start-up: the hand-written NAM routines checked (in the ring memory), then, given a clock (ticks), the ways of running
  * the network timed on the first factory model and the fastest kept (pxn_tune). The model is loaded again by the next
  * engine set. */
-static uint32_t px_nam_tt[3];
+static uint32_t px_nam_tt[PXN_MODES];
 int px_nam_check(uint32_t (*ticks)(void))
 {
     typedef char room[sizeof px_nam_r0 >= PXN_TEST_WORDS * 4u ? 1 : -1];
@@ -993,7 +993,7 @@ int px_nam_check(uint32_t (*ticks)(void))
     }
     return ok;
 }
-uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < 3 ? px_nam_tt[mode] : 0; }
+uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < PXN_MODES ? px_nam_tt[mode] : 0; }
 /* every model is trimmed to -20 LUFS on the DI clip (its level trim); this puts NAM + the 1x12 at GAIN noon at the fitted
  * amps' -23 LUFS (mean over the factory models, measured by tools/level_presets.py's DI) */
 #define PX_NAM_REF_DB (-6.0f)

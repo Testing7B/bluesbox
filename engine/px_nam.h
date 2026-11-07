@@ -68,10 +68,13 @@ uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, in
 uint32_t pxn_bench_dot(int32_t *x, int32_t *w, int32_t *z, int vec, uint32_t (*ticks)(void), int reps);
 uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps, int v2);
 uint32_t pxn_bench_vcmd(int32_t *buf, uint32_t (*ticks)(void), int nlen, int nloop, int xs, int zs, int reps, int start_only);
-/* how the blocks run: 0 the CPU alone, 1 each dot product on the vector unit in turn, 2 the vector unit and the CPU at
- * once (half a block on the unit while the CPU prepares or finishes the other half). pxn_tune times them on a loaded
- * model and keeps the fastest (ticks for 256 frames in t[3], 0 = not available); the model is cleared after. */
-int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[3]);
+uint32_t pxn_bench_vplace(const int32_t *x, const int32_t *w, int32_t *z, int xs, uint32_t (*ticks)(void), int reps);
+/* how the blocks run: 0 the CPU alone, 1 each dot product on the vector unit in turn, 2..4 the vector unit and the
+ * CPU at once (half a block on the unit while the CPU prepares or finishes the other half; the CPU also takes 0, 4 or
+ * 8 frames of each half's dot products itself). pxn_tune times them on a loaded model and keeps the fastest (ticks for
+ * 256 frames in t[], 0 = not available); the model is cleared after. */
+#define PXN_MODES 5
+int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES]);
 int pxn_mode(void);
 int pxn_post2_in_use(void);
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);

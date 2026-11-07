@@ -71,9 +71,10 @@ trained at 44.1 kHz and are not affected.
   pattern, and the C versions are used if they differ by a single bit.
 - The dot products can also run on the chip's vector unit (in its FFT block: one command computes a row of weights
   against many X rows, beside the CPU). In that mode the block is cut in two halves, and half B of a layer never needs
-  the next layer's half A: so while the unit computes one half, the CPU gathers or posts the other. At start-up the
-  pedal times the three ways (CPU alone, the unit one command after the other, both at once) on the first factory
-  model and keeps the fastest (`pxn_tune`). The PC test runs that mode with a simulated unit that finishes its
+  the next layer's half A: so while the unit computes one half, the CPU gathers or posts the other, and may compute
+  the last 4 or 8 frames of a half itself (the unit costs about 4.7 cycles a multiply-add, about as much as the CPU, so
+  the two share the work). At start-up the pedal times the five ways (CPU alone, the unit one command after the other,
+  both at once with the CPU taking 0, 4 or 8 frames) on the first factory model and keeps the fastest (`pxn_tune`). The PC test runs that mode with a simulated unit that finishes its
   commands late, at random, and checks the output is exactly the CPU's.
 - 1,730 multiply-adds per sample in 23 layers; the history buffers take 83 KB of RAM, a model 7.5 KB.
 - The second core runs it with the rest of the chain. The load shows at the bottom right of the screen (`C1 nn%`).

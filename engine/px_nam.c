@@ -390,7 +390,7 @@ static void (*pxn_gcopy)(int32_t *, const int32_t *, int, int) = pxn_gcopy_c;
  * control 0xAA1 = dot product, x y z 32 bits; config0 = q << 24 | nloop << 12 | nlen; config1 = z step << 20 |
  * y step << 10 | x step; start 0x149, done = bit 7, cleared by setting bit 6. It runs beside the CPU. Used only if
  * the start-up check finds it there and within 1 of the C result on every value. */
-static uint8_t pxn_vec_ok, pxn_vfail;
+static uint8_t pxn_vec_ok, pxn_vfail __attribute__((unused));
 static int32_t pxn_vec_diff = -1;
 static int pxn_mode_v;                                  /* see pxn_mode() */
 int pxn_mode(void) { return pxn_mode_v; }                       /* the start-up check's largest difference (-1: not run) */
@@ -569,15 +569,16 @@ int pxn_selftest(int32_t *scratch)
         pxn_post_asm(&p);
         if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4) || memcmp(PXN_T_O(s, 2), PXN_T_O(s, 3), 64 * 4) ||
             memcmp(PXN_T_O(s, 4), PXN_T_O(s, 6), 64 * 4) || memcmp(PXN_T_O(s, 5), PXN_T_O(s, 7), 64 * 4)) ok = 0;
-        {   /* post2 against the C post (same z, x, residual; hs and out from the same start) */
+        {   /* post2 against the C post (same z, x, residual; hs and out from the same start): z is O0, still
+             * the C dot's; hs and out in O2 and O3, whose check is done */
             int32_t *r2 = PXN_T_O(s, 8);
             pxn_rr2(PXN_T_RR(s), r2);
-            for (int i = 0; i < 64; i++) PXN_T_O(s, 1)[i] = PXN_T_O(s, 3)[i] = i * 77 - 1000;
+            for (int i = 0; i < 64; i++) PXN_T_O(s, 2)[i] = PXN_T_O(s, 3)[i] = i * 77 - 1000;
             pxn_post q = p;
-            q.hs = PXN_T_O(s, 1); if (q.out) q.out = PXN_T_O(s, 3);
+            q.hs = PXN_T_O(s, 2); if (q.out) q.out = PXN_T_O(s, 3);
             q.rr2 = r2;
             pxn_post2_asm(&q);
-            if (memcmp(PXN_T_O(s, 1), PXN_T_O(s, 4), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 5), 64 * 4)) p2ok = 0;
+            if (memcmp(PXN_T_O(s, 2), PXN_T_O(s, 4), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 5), 64 * 4)) p2ok = 0;
         }
         pxn_gcopy_c(PXN_T_O(s, 0), PXN_T_W(s) + pass, 5, 40);
         pxn_gcopy_asm(PXN_T_O(s, 1), PXN_T_W(s) + pass, 5, 40);
@@ -722,6 +723,19 @@ uint32_t pxn_bench_post(int32_t *b, uint32_t (*ticks)(void), int reps, int v2)
 #endif
     }
     return ticks() - t0;
+}
+/* ticks for `reps` vector commands of 32 dot products of 20 words, x rows 80 bytes apart, from the x and w given
+ * (where they sit in the RAM may change the cost), waited for */
+uint32_t pxn_bench_vplace(const int32_t *x, const int32_t *w, int32_t *z, int xs, uint32_t (*ticks)(void), int reps)
+{
+#if PXN_ASM
+    uint32_t t0 = ticks();
+    for (int k = 0; k < reps; k++) { pxn_vstart(w, x, 20, xs, 12, z, 32); pxn_vwait(); }
+    return ticks() - t0;
+#else
+    (void)x; (void)w; (void)z; (void)xs; (void)ticks; (void)reps;
+    return 0;
+#endif
 }
 /* ticks for `reps` vector commands of nloop dot products of nlen words (x moving xs bytes and z zs bytes a loop),
  * each waited for; start_only: only the CPU's part of starting one (it is waited for outside the timing).
@@ -968,15 +982,20 @@ static uint32_t pxn_issue(pxn_model *m, int i, int f0, int n)   /* the 3 dot pro
     const pxn_layer *L = &m->L[i];
     const int T = 3 * L->k + 2;
     if (!pxn_vec_ok) { pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0, n); return 0; }
-    for (int o = 0; o < PXN_C; o++) pxn_venq(m->wa + L->off + o * T, pxn_x + f0 * PXN_S, T, pxn_z + 3 * f0 + o, n);
-    return pxn_vq_in;
+    const int c = 4 * (pxn_mode_v - 2), nv = n - c;      /* the CPU takes the last c frames itself, meanwhile */
+    for (int o = 0; o < PXN_C && nv > 0; o++)
+        pxn_venq(m->wa + L->off + o * T, pxn_x + f0 * PXN_S, T, pxn_z + 3 * f0 + o, nv);
+    const uint32_t seq = nv > 0 ? pxn_vq_in : 0;
+    if (c > 0) pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0 + (nv > 0 ? nv : 0), nv > 0 ? c : n);
+    return seq;
 }
 static void pxn_need(pxn_model *m, uint32_t seq, int i, int f0, int n)
 {
     if (!seq) return;
     if (!pxn_vfail && !pxn_vupto(seq)) return;
-    const pxn_layer *L = &m->L[i];                       /* the unit died: the CPU does it (its X rows are intact) */
-    pxn_rows_cpu(m->wa + L->off, 3 * L->k + 2, PXN_C, f0, n);
+    const pxn_layer *L = &m->L[i];                       /* the unit died: the CPU does its part (X rows intact) */
+    const int c = 4 * (pxn_mode_v - 2);
+    pxn_rows_cpu(m->wa + L->off, 3 * L->k + 2, PXN_C, f0, n - c);
 }
 static void pxn_layers_pipe(pxn_model *m, int n)
 {
@@ -1014,7 +1033,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     }
     memset(pxn_hs, 0, (unsigned)n * PXN_C * 4u);
 #if PXN_VQON
-    if (pxn_mode_v == 2 && pxn_vec_ok && n >= 16) pxn_layers_pipe(m, n);
+    if (pxn_mode_v >= 2 && pxn_vec_ok && n >= 16) pxn_layers_pipe(m, n);
     else
 #endif
     for (int i = 0; i < PXN_NL; i++) pxn_layer_block(m, i, n);
@@ -1038,13 +1057,13 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
 }
 
 /* times the modes on the loaded model (8 blocks of 32 frames of a test signal each), keeps the fastest */
-int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[3])
+int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
 {
     static float in[PXN_N], out[PXN_N];
     int best = 0;
-    t[0] = t[1] = t[2] = 0;
+    for (int k = 0; k < PXN_MODES; k++) t[k] = 0;
     if (!m->ready) return pxn_mode_v;
-    for (int mode = 0; mode < 3; mode++) {
+    for (int mode = 0; mode < PXN_MODES; mode++) {
         if (mode && !pxn_vec_ok) break;
         pxn_mode_v = mode;
         pxn_reset(m);
