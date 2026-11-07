@@ -136,6 +136,9 @@ typedef struct {
     /* oversampling (set A: amp, or drive + amp together; set B: a drive that is not right before the amp) */
     px_bq os_up, os_up2, os_dn, os_dn2;
     px_bq osb_up, osb_up2, osb_dn, osb_dn2;
+    px_bq osc_up, osc_up2, osc_dn, osc_dn2;          /* v37: set C, x2 (a drive before a NAM amp) */
+    int drv_os;                                       /* the drive's oversampling: PX_OVERSAMPLE, or 2 before a NAM amp */
+    struct { int32_t x1, x2, y1, y2; } fq_cab[8], fq_os[3][4];   /* v37: the integer filters' state (px_fx_int) */
     uint8_t ord[PX_NBLK];
     /* synth / instrument block (v29) */
     float syn_buf[PX_PS_N]; int syn_w;                 /* shifter source (organ, strings...); sitar: string combs */
@@ -213,6 +216,8 @@ int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two
 void px_engine_init(px_engine *e, float sr);
 void px_engine_set(px_engine *e, const px_preset_t *p);
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
+extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (default) */
+extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
 
 #ifdef __cplusplus
 }

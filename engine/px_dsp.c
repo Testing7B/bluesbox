@@ -109,6 +109,124 @@ static void bq_block2(px_bq *p, px_bq *q, float *b, int n)
     }
     p->z1 = pz1; p->z2 = pz2; q->z1 = qz1; q->z2 = qz2;
 }
+/* v37: the same filter in integer arithmetic (the pedal's FPU is slow; its integer multiply-adds are not): the signal in
+ * Q26 (+-32), the coefficients in Q29 (+-4), direct form I with a 64-bit sum. The float filter's coefficients
+ * are converted each call (they may change between calls); 0 = a coefficient out of range: not run (use bq_block). */
+typedef struct { int32_t x1, x2, y1, y2; } px_fq;      /* (laid out as int32_t[4]) */
+int px_fx_int = 1;
+int px_fx_hand;                                         /* the integer filter loop by hand (px_fx_check) */
+#define FQ_CB 29                                       /* coefficient fraction bits */
+#define FQ_SB 26                                       /* signal fraction bits (+-32) */
+static int32_t fq_c(float c) { return (int32_t)(c * (float)(1u << FQ_CB) + (c >= 0.0f ? 0.5f : -0.5f)); }
+static int fq_ok(const px_bq *f)
+{
+    const float m = (float)(1u << (31 - FQ_CB)) - 0.01f;
+    return f->b0 < m && f->b0 > -m && f->b1 < m && f->b1 > -m && f->b2 < m && f->b2 > -m &&
+           f->a1 < m && f->a1 > -m && f->a2 < m && f->a2 > -m;
+}
+/* the loop, on (b0, b1, b2, a1, a2) in Q29 and the state (x1, x2, y1, y2): the sum's bits 29..60 kept (rounded down,
+ * no saturation: the signal's range leaves room). By hand on the pedal (checked against this one at start-up) */
+static void fq_loop_c(int32_t *b, int n, const int32_t *c, int32_t *st)
+{
+    int32_t x1 = st[0], x2 = st[1], y1 = st[2], y2 = st[3];
+    for (int k = 0; k < n; k++) {
+        const int32_t x = b[k];
+        int64_t acc = (int64_t)c[0] * x;
+        acc += (int64_t)c[1] * x1;
+        acc += (int64_t)c[2] * x2;
+        acc -= (int64_t)c[3] * y1;
+        acc -= (int64_t)c[4] * y2;
+        const int32_t y = (int32_t)(uint32_t)(uint64_t)(acc >> FQ_CB);
+        x2 = x1; x1 = x; y2 = y1; y1 = y;
+        b[k] = y;
+    }
+    st[0] = x1; st[1] = x2; st[2] = y1; st[3] = y2;
+}
+#if defined(__PI32V2__)
+void px_fq_asm(int32_t *b, int n, const int32_t *c, int32_t *st);
+__asm__("\t.text\n"
+        "\t.global px_fq_asm\n"
+        "px_fq_asm:\n"
+        "\t[--sp] = {rets, r15-r4}\n"
+        "\tsp += -4\n"
+        "\t[sp+0] = r3\n"
+        "\tr4 = [r2+0]\n\tr5 = [r2+4]\n\tr6 = [r2+8]\n\tr7 = [r2+12]\n\tr12 = [r2+16]\n"
+        "\tr13 = [r3+0]\n\tr14 = [r3+4]\n\tr15 = [r3+8]\n\tr11 = [r3+12]\n"
+        "\tr1 = r1 >> 1\n"
+        ".Lpx_fq:\n"
+        "\tr10 = [r0+0]\n"
+        "\tr9_r8 = r10 * r4 (s)\n"
+        "\tr9_r8 += r13 * r5 (s)\n"
+        "\tr9_r8 += r14 * r6 (s)\n"
+        "\tr9_r8 -= r15 * r7 (s)\n"
+        "\tr9_r8 -= r11 * r12 (s)\n"
+        "\tr9_r8 >>>= 29\n"
+        "\t[r0++=4] = r8\n"
+        "\tr14 = [r0+0]\n"
+        "\tr3_r2 = r14 * r4 (s)\n"
+        "\tr3_r2 += r10 * r5 (s)\n"
+        "\tr3_r2 += r13 * r6 (s)\n"
+        "\tr3_r2 -= r8 * r7 (s)\n"
+        "\tr3_r2 -= r15 * r12 (s)\n"
+        "\tr3_r2 >>>= 29\n"
+        "\t[r0++=4] = r2\n"
+        "\tr13 = r14\n\tr14 = r10\n\tr15 = r2\n\tr11 = r8\n"
+        "\tr1 += -1\n"
+        "\tif (r1 != 0) goto .Lpx_fq\n"
+        "\tr3 = [sp+0]\n"
+        "\t[r3+0] = r13\n\t[r3+4] = r14\n\t[r3+8] = r15\n\t[r3+12] = r11\n"
+        "\tsp += 4\n"
+        "\t{pc, r15-r4} = [sp++]\n");
+#endif
+static void (*fq_loop)(int32_t *, int, const int32_t *, int32_t *) = fq_loop_c;
+/* start-up: the hand loop against the C one (1 = in use) */
+int px_fx_check(void)
+{
+#if defined(__PI32V2__)
+    static int32_t a[66], b[66];
+    int32_t sa[4] = {1000, -2000, 3000, -4000}, sb[4] = {1000, -2000, 3000, -4000};
+    const int32_t c[5] = {fq_c(0.25f), fq_c(-0.4f), fq_c(0.2f), fq_c(-1.6f), fq_c(0.7f)};
+    uint32_t r = 777u;
+    for (int i = 0; i < 66; i++) { r = r * 1103515245u + 12345u; a[i] = b[i] = (int32_t)r >> 5; }
+    fq_loop_c(a, 66, c, sa);
+    px_fq_asm(b, 66, c, sb);
+    for (int i = 0; i < 66; i++) if (a[i] != b[i]) return 0;
+    for (int i = 0; i < 4; i++) if (sa[i] != sb[i]) return 0;
+    fq_loop = px_fq_asm;
+    return 1;
+#else
+    return 0;
+#endif
+}
+static void fq_block(const px_bq *f, px_fq *s, int32_t *b, int n)
+{
+    if (n <= 0) return;
+    const int32_t c[5] = {fq_c(f->b0), fq_c(f->b1), fq_c(f->b2), fq_c(f->a1), fq_c(f->a2)};
+    if (n & 1) fq_loop_c(b, n, c, &s->x1);              /* (the hand loop does 2 samples a turn) */
+    else fq_loop(b, n, c, &s->x1);
+}
+static int32_t px_fqbuf[PX_OVERSAMPLE * PX_MAX_BLOCK];
+static void fq_to(int32_t *q, const float *x, int n)
+{
+    for (int k = 0; k < n; k++) {
+        float v = x[k] * (float)(1u << FQ_SB);
+        q[k] = v >= 2147483520.0f ? 2147483520 : v <= -2147483520.0f ? -2147483520 : (int32_t)v;
+    }
+}
+static void fq_from(float *x, const int32_t *q, int n)
+{
+    for (int k = 0; k < n; k++) x[k] = (float)q[k] * (1.0f / (float)(1u << FQ_SB));
+}
+/* a chain of filters over a float buffer: in integer arithmetic if all can be, else as floats */
+static void fq_chain(px_bq *f, px_fq *s, int nf, float *b, int n)
+{
+    int ok = 1;
+    for (int c = 0; c < nf; c++) ok &= fq_ok(&f[c]);
+    if (!ok) { for (int c = 0; c < nf; c++) bq_block(&f[c], b, n); return; }
+    fq_to(px_fqbuf, b, n);
+    for (int c = 0; c < nf; c++) fq_block(&f[c], &s[c], px_fqbuf, n);
+    fq_from(b, px_fqbuf, n);
+}
 /* a chain of filters over a buffer, two at a time */
 static void bq_chain(px_bq *f, int nf, float *b, int n)
 {
@@ -873,7 +991,7 @@ static void rc_sfx(px_engine *e)
 static void rc_drive(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
-    float sr = e->sr, osr = sr * PX_OVERSAMPLE;
+    float sr = e->sr, osr = sr * (float)(e->drv_os ? e->drv_os : PX_OVERSAMPLE);
     int t = p->type[PX_B_DRIVE] % PX_DRV_COUNT;
     const drv_v *d = &DV[t];
 #ifdef PX_FIT
@@ -1037,6 +1155,7 @@ int px_nam_check(uint32_t (*ticks)(void))
     typedef char room[sizeof px_nam_r0 >= PXN_TEST_WORDS * 4u ? 1 : -1];
     (void)sizeof(room);
     const int ok = pxn_selftest(px_nam_r0);
+    px_fx_hand = px_fx_check();
     px_nam_m.ready = 0;
     if (ticks) {
         float lv;
@@ -1642,6 +1761,12 @@ static void px_recalc(px_engine *e)
     bq_lowpass(&e->osb_up2, osr, sr * 0.47f, 1.31f);
     bq_lowpass(&e->osb_dn, osr, sr * 0.47f, 0.54f);
     bq_lowpass(&e->osb_dn2, osr, sr * 0.47f, 1.31f);
+    bq_lowpass(&e->osc_up, sr * 2.0f, sr * 0.47f, 0.54f);   /* set C: x2, for a drive before a NAM amp */
+    bq_lowpass(&e->osc_up2, sr * 2.0f, sr * 0.47f, 1.31f);
+    bq_lowpass(&e->osc_dn, sr * 2.0f, sr * 0.47f, 0.54f);
+    bq_lowpass(&e->osc_dn2, sr * 2.0f, sr * 0.47f, 1.31f);
+    /* v37: before a NAM amp the drive runs at x2 (the network does not alias; x4 cost 18% of the CPU) */
+    e->drv_os = (e->cur.on[PX_B_AMP] && e->cur.type[PX_B_AMP] == PX_AMP_NAM) ? 2 : PX_OVERSAMPLE;
     rc_drive(e);
     rc_amp(e);
     rc_cab(e);
@@ -2263,7 +2388,8 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
         const float strim = tr[s];
         if (sblk == PX_B_CAB) {                          /* cabinet: its filters one after the other over the block */
             if (p->on[PX_B_CAB] && e->cab_n) {
-                bq_chain(e->cab, e->cab_n, xb, n);
+                if (px_fx_int) fq_chain(e->cab, (px_fq *)e->fq_cab, e->cab_n, xb, n);
+                else bq_chain(e->cab, e->cab_n, xb, n);
                 for (int k = 0; k < n; k++) {
                     float x = xb[k];
                     if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);
@@ -2273,19 +2399,38 @@ PX_HOT void px_engine_process(px_engine *e, const float *in, float *out, int n)
             continue;
         }
         if (sblk == PX_B_DRIVE && (!pair || !amp_os)) {  /* drive without the fitted amp's stages, oversampled: stage by
-                                                            stage over the block (set A or B, as the sample path picks) */
+                                                            stage over the block (set A or B as the sample path picks; set
+                                                            C at x2 before a NAM amp) */
             if (drv_on) {
+                const int os = e->drv_os == 2 ? 2 : PX_OVERSAMPLE, no = os * n;
+                const int set = os == 2 ? 2 : (pair || !amp_os) ? 0 : 1;
+                px_bq *fu = os == 2 ? &e->osc_up : dua, *fu2 = os == 2 ? &e->osc_up2 : dub;
+                px_bq *fd = os == 2 ? &e->osc_dn : dda, *fd2 = os == 2 ? &e->osc_dn2 : ddb;
                 float *ub = px_os_u;
+                const float g = (float)os;
                 for (int k = 0; k < n; k++) {
                     e->dn = (k & 1) ? 1e-15f : -1e-15f;
                     const float x = drive_pre(e, xb[k]);
-                    ub[PX_OVERSAMPLE * k] = x * osg;
-                    for (int o = 1; o < PX_OVERSAMPLE; o++) ub[PX_OVERSAMPLE * k + o] = 0.0f;
+                    ub[os * k] = x * g;
+                    for (int o = 1; o < os; o++) ub[os * k + o] = 0.0f;
                 }
-                bq_block2(dua, dub, ub, PX_OVERSAMPLE * n);
-                drive_block(e, ub, PX_OVERSAMPLE * n, PX_OVERSAMPLE);
-                bq_block2(dda, ddb, ub, PX_OVERSAMPLE * n);
-                for (int k = 0; k < n; k++) xb[k] = ub[PX_OVERSAMPLE * k + PX_OVERSAMPLE - 1] * strim;
+                px_fq *fs = (px_fq *)e->fq_os[set];
+                if (px_fx_int && fq_ok(fu) && fq_ok(fu2) && fq_ok(fd) && fq_ok(fd2)) {
+                    fq_to(px_fqbuf, ub, no);
+                    fq_block(fu, &fs[0], px_fqbuf, no);
+                    fq_block(fu2, &fs[1], px_fqbuf, no);
+                    fq_from(ub, px_fqbuf, no);
+                    drive_block(e, ub, no, os);
+                    fq_to(px_fqbuf, ub, no);
+                    fq_block(fd, &fs[2], px_fqbuf, no);
+                    fq_block(fd2, &fs[3], px_fqbuf, no);
+                    fq_from(ub, px_fqbuf, no);
+                } else {
+                    bq_block2(fu, fu2, ub, no);
+                    drive_block(e, ub, no, os);
+                    bq_block2(fd, fd2, ub, no);
+                }
+                for (int k = 0; k < n; k++) xb[k] = ub[os * k + os - 1] * strim;
             } else for (int k = 0; k < n; k++) xb[k] *= strim;
             continue;
         }
