@@ -590,6 +590,32 @@ static void tuner_bat_raw(void)
     b[i] = 0;
     ft_box(0, 206, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
+/* v38: where the CPU goes (px_audio.h a_pf): the 4 costliest blocks, % of an audio block's time, in the footer */
+static uint32_t tn_last_pf = ~0u;
+static void tuner_prof(void)
+{
+    uint32_t h = 0;
+    for (int k = 0; k <= PX_NBLK; k++) h = h * 0x9E3779B1u + a_pf[k];
+    if (h == tn_last_pf) return;
+    tn_last_pf = h;
+    uint8_t used[PX_NBLK + 1] = {0};
+    char b[48]; int i = 0;
+    for (int n = 0; n < 4; n++) {
+        int best = -1;
+        for (int k = 0; k <= PX_NBLK; k++) if (!used[k] && a_pf[k] && (best < 0 || a_pf[k] > a_pf[best])) best = k;
+        if (best < 0) break;
+        used[best] = 1;
+        const char *l = best == PX_NBLK ? "NAM" : px_block_label(best);
+        if (i) b[i++] = ' ';
+        while (*l && i < 40) b[i++] = *l++;
+        b[i++] = ' ';
+        char t[8]; t[0] = 0; b_num(t, a_pf[best]);
+        for (int j = 0; t[j] && i < 44; j++) b[i++] = t[j];
+    }
+    if (i) { b[i++] = ' '; b[i++] = '%'; } else { const char *z = "CPU: --"; while (*z) b[i++] = *z++; }
+    b[i] = 0;
+    ft_box(0, F_Y + 3u, 240, b, &FT_SM, UI_DIM, UI_PANEL, 1);
+}
 #define TN_BAR_Y 172u
 static void tuner_open(void)
 {
@@ -606,7 +632,8 @@ static void tuner_open(void)
     ft_box(190, TN_BAR_Y + 18u, 40, "+50", &FT_SM, UI_DIM, UI_BG, 1);
     tn_last_raw = ~0u;
     lcd_rect(0, F_Y, 240, 240u - F_Y, UI_PANEL);
-    ft_box(0, F_Y + 3u, 240, "ANY BUTTON: EXIT", &FT_SM, UI_DIM, UI_PANEL, 1);
+    ft_box(120, 9, 116, "ANY KEY: EXIT", &FT_SM, BLK, GRN, 2);   /* v38: the footer shows the CPU per block */
+    tn_last_pf = ~0u;
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
 static void tuner_close(void) { a_tmute = 0; ui_mode = M_CHAIN; lcd_rect(0, 0, 240, 240, UI_BG); uc.screen = -1; ui_invalidate(); }
@@ -615,6 +642,7 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
     int note = -1, c = 0; float cents = 0.0f;
     tuner_level();
     tuner_bat_raw();
+    tuner_prof();
     if (hz > 20.0f) {
         float st = 12.0f * logf(hz / 440.0f) * 1.44269504f;   /* semitones from A4 = 440 Hz */
         int r = (int)(st + (st >= 0 ? 0.5f : -0.5f));

@@ -44,6 +44,15 @@ The stock firmware runs its modulation and delay effects at 24 kHz to save time.
 1 to 3 % of what the NAM network costs, so halving them would free about 1 %, and their echoes and chorus would lose
 everything above 11 kHz. Not worth it for now; the reverb already runs at half rate.
 
+## Delay and reverb: lighter loops, and the CPU per block on screen
+- The delay and the reverb run over each block in a loop made for their type, as the stock firmware's effects do: the
+  type's tests are made once a block instead of once a sample (on the pedal a taken branch costs about 8 cycles). The
+  sound is unchanged, bit for bit (checked on every factory preset and every delay and reverb type).
+- **The tuner page's footer shows where the CPU goes:** the 4 costliest blocks, in % of an audio block's time, over the
+  last second (for example `NAM 64 REV 7 DLY 5 CAB 3 %`; with a NAM amp the blocks after it run on the second core,
+  beside the network). "ANY KEY: EXIT" moves to the title bar. If a sound crackles, a photo of this page (with the
+  LATE count) says which block to make lighter.
+
 ## For developers
 - Engine: `px_engine_change`, `px_engine_knobs`, `px_engine_prepare` (`engine/px_dsp.h`); the firmware's side in
   `firmware/px_audio.h` (`audio_apply`, `a_commit`).

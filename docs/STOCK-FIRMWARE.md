@@ -164,7 +164,30 @@ In order of value for the sound, with what it would cost.
 8. **Bluetooth, if it comes back:** radio interrupts below the audio interrupt, on CPU0, and no radio work on the core
    that runs the network at the time it runs it (section 2).
 
-## 6. Not done yet
+## 6. Second pass (v38): how the effects' code is kept fast
+
+**Read.** The effects' per-sample code lives in 20 blocks of flash (`0x2095728..0x209A0F4`, a table of {address, size}
+at `0x2055DA0`), each linked to run at one of four RAM slots, and copied there when its type is chosen: the code that
+runs is always in RAM, and only the chosen types' code is there. Found by the slot address that makes each block's calls
+land on known functions:
+
+| RAM slot | Blocks | What they are |
+| --- | --- | --- |
+| `0x1C23F80` | 6 | modulation (**likely**: chorus, flanger and the like: a modulated line read with a cubic, a sine table) |
+| `0x1C24540` | 6 | **likely** the reverbs: 16-bit lines, 10 reads and 1 write a sample, decay times worked out with `1/ln 2` |
+| `0x1C24E20` | 6 | **likely** the delays and the pitch effects |
+| `0x1C25200` | 2 | the amp (calls the 6x oversampling routines of section 4) |
+
+Each block is one type's own routine: no test of the type inside the sample loop. **Read:** their reverbs keep their
+lines in 16 bits, as OpenPocket's do since v35.
+
+What OpenPocket took from it in v38: the delay and the reverb run over the block in a loop made for their type (the
+type's tests done once a block, not once a sample: on this CPU a taken branch costs about 8 cycles), with the output
+unchanged bit for bit. Moving the effects' code into RAM as well would need the engine split so that no call crosses
+between flash and RAM code (out of the CPU's call range): left for when the per-block times on the pedal (the tuner
+page's footer, v38) show the effects are worth it.
+
+## 7. Not done yet
 
 - The ALNK clock registers were not traced to a written rate; 48 kHz rests on the effects' coefficient code.
 - The exact network behind the stock `NAM` type and the role of overlay B (possibly the SBC decoder for A2DP).

@@ -236,6 +236,7 @@ typedef struct {
     float gl_t[PX_GL_MAX]; int gl_left;
     float bf[PX_NBLK], bfa[PX_NBLK]; int8_t bfd[PX_NBLK];
     px_preset_t run;
+    uint32_t pf[PX_NBLK + 1];                          /* v38: time spent per block, [PX_NBLK] the NAM network (px_clock ticks) */
 } px_engine;
 int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two cores: process it on the job-giving core */
 
@@ -258,6 +259,7 @@ enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engin
 void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);
 extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (off: slower) */
 extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
+extern uint32_t (*px_clock)(void);      /* v38: set by the firmware: px_engine.pf counts each block's time */
 
 #ifdef __cplusplus
 }

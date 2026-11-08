@@ -108,6 +108,9 @@ static px_preset_t a_kp;
 static volatile uint8_t a_kpend;
 static uint8_t a_full;                                 /* the next apply must be a full one (a user model rewritten) */
 static void a_commit(void) { if (a_kpend) { px_engine_knobs(&g_eng, &a_kp); a_kpend = 0; } }
+/* v38: where the time goes, per block, over the last second: % of an audio block's time (index PX_NBLK: the NAM network;
+ * with a NAM amp the blocks after it run on the second core, beside the ones before it) */
+static uint8_t a_pf[PX_NBLK + 1];
 static volatile uint8_t a_nan;                         /* engine output a NaN/Inf: needs a reset */
 static volatile uint32_t a_nan_count;
 static int a_running;
@@ -573,6 +576,7 @@ static void audio_start(void)
 #endif
     op_stage(ST_ENG_INIT, "ENGINE INIT...");
     px_engine_init(&g_eng, 44100.0f);
+    px_clock = b_ticks;                                /* v38: each block's time (the tuner page shows it) */
     op_stage(ST_ENG_SET, "ENGINE SET...");
 #if DSP_CPU1
     a_c1 = fm1_cpu1_on;                                /* started by app_main at the very start (fm1_cpu1_start) */
@@ -598,9 +602,23 @@ static void audio_start(void)
     gpio_direction_output(G_AMP_EN, 1);                /* amp ON (after I2S: no "pop") */
 }
 
+static void audio_prof(uint32_t now)                    /* (main loop) once a second: px_engine.pf -> a_pf */
+{
+    static uint32_t t_last, b_last;
+    if (now - t_last < 1000u) return;
+    const uint32_t nb = a_blocks - b_last;
+    t_last = now; b_last = a_blocks;
+    for (int i = 0; i <= PX_NBLK; i++) {
+        const uint32_t t = g_eng.pf[i];
+        g_eng.pf[i] = 0;
+        const uint32_t pc = nb ? (uint32_t)((uint64_t)t * 100u / ((uint64_t)A_BUDGET * nb)) : 0u;
+        a_pf[i] = (uint8_t)(pc > 255u ? 255u : pc);
+    }
+}
 /* call from the main loop: applies preset changes (40 ms debounce) */
 static void audio_poll(uint32_t now)
 {
+    audio_prof(now);
     static uint32_t last_h, t_change, t_apply, vol_shown = 1000u;
     static int pending;
     if (a_nan) audio_reset();

@@ -117,6 +117,7 @@ static int bat_mv = 3920, bat_usb_mv = 0;
 static int32_t bat_raw[5] = {612, 1, 0, 3, 91};   /* bat_read's raw values (the tuner page shows them) */
 static int bat_pct = -1;                /* (-1: the gauge from bat_mv) */
 static int a_level_db(int ch) { return ch ? -84 : -62; }
+static uint8_t a_pf[PX_NBLK + 1] = {0};   /* v38: CPU per block (the tuner's footer) */
 static volatile uint8_t a_tmute;
 static float tuner_hz;
 #include "../firmware/px_midi.h"          /* (ui.h's MIDI page, #10) */
