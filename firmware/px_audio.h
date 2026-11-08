@@ -611,7 +611,8 @@ static void audio_prof(uint32_t now)                    /* (main loop) once a se
     for (int i = 0; i <= PX_NBLK; i++) {
         const uint32_t t = g_eng.pf[i];
         g_eng.pf[i] = 0;
-        const uint32_t pc = nb ? (uint32_t)((uint64_t)t * 100u / ((uint64_t)A_BUDGET * nb)) : 0u;
+        const uint32_t den = A_BUDGET * nb / 100u;      /* (32-bit: the pedal has no 64-bit division) */
+        const uint32_t pc = den ? t / den : 0u;
         a_pf[i] = (uint8_t)(pc > 255u ? 255u : pc);
     }
 }
