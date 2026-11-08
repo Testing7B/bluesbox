@@ -57,7 +57,8 @@ firmware read in three passes), `docs/NAM.md` (the fixed-point network), `docs/B
 - **Start it at power-on**, before audio and timers run, with interrupts off (Melodee's and X0X's finding). The entry address
   goes in the word at `0x01C7FFF8`.
 - **One job at a time:** `fm1_cpu1_run(fn, arg)` → do your own share → `fm1_cpu1_wait()`. CPU1's idle loop is in RAM
-  (`.c1_text`). The job itself runs from flash, so never switch the flash off (a flash write) with a job outstanding.
+  (`.c1_text`). The job itself runs from flash (v40: mostly from RAM, but it still calls flash code), so never switch
+  the flash off (a flash write) with a job outstanding.
 - **Some units misread shared RAM on CPU1** (0x00200000 where 0 is stored, more often under load). The BSP guards
   every job with a check word, and `FM1_CPU1_FALLBACK 1` retires CPU1 on any misread or fault, so CPU0 continues alone.
   OpenPocket builds with the fallback on and always keeps a one-core path that works.
@@ -86,9 +87,10 @@ firmware read in three passes), `docs/NAM.md` (the fixed-point network), `docs/B
 | Range | Size | What | How sure |
 | --- | --- | --- | --- |
 | `0x02000120..` | up to ~580 KB (`XIP` in `app.ld`) | flash code, executed in place; **app.bin file offset 0 = 0x02000120** (not 0x02000000: several of our early address readings were off by 0x120 for that reason) | measured |
-| `0x01C00000..0x01C06000` | 24 KB | `RAMTEXT`: code copied to RAM at boot (`.ram_text`: flash driver, CPU1's loop, anything that runs with the flash off) | read (`app.ld`) |
+| `0x01C00000..0x01C08000` | 32 KB | free since v40 (until v39: `RAMTEXT`, 24 KB) | read (`app.ld`) |
 | `0x01C08000..` | 96 KB | `RAM`: `.data`, `.bss` | read |
-| `0x01C20000..0x01C74000` | 336 KB | `POOL`: free SRAM, OpenPocket's DSP engine (~337 KB used) | read |
+| `0x01C20000..0x01C5E000` | 248 KB | `POOL`: free SRAM, OpenPocket's DSP engine (~246 KB used in v40: the delay at half rate freed 87 KB) | read |
+| `0x01C5E000..0x01C74000` | 88 KB | `RAMTEXT` (v40): code copied to RAM at boot. The flash driver and CPU1's loop (`.ram_text`, run with the flash off), and the audio path (`.ram_text.dsp.*`, about 75 KB, `tools/ramcode.py`). High enough to be within the call range of all the flash code | read (`app.ld`) |
 | `0x01C74000..0x01C7C000` | | user and supervisor stacks with 256-byte guard bands | read |
 | `0x01C7C000..0x01C7FD50` | | `NOINIT`: survives resets (crash records, boot counters) | read |
 | `0x01C7FD50..0x01C7FFFF` | | reserved: boot info, the CPU1 mailbox/entry word (`0x01C7FFF8`), vector table | read |
@@ -107,12 +109,15 @@ PCM ring at `0x1F29EE0`, inside the cache-way range above (**likely**: the stock
 
 ### Rules learnt the hard way
 
-- **Call range:** a direct `call` between flash (`0x02xxxxxx`) and RAM code (`0x01C0xxxx`) is out of the instruction's
-  range (+-4 MiB, 23 bits). The linker refuses it, but names only one of the offending calls (a v37 build had 478). Our
-  `tools/check_calls.py` lists them all before linking. To call RAM code from flash, call through a pointer the compiler
-  cannot fold (`FL_FAR`, `fm1_flash.h`).
+- **Call range:** a direct `call` reaches +-4 MiB. RAM code at the bottom of the RAM (`0x01C0xxxx`) is out of reach
+  of the flash (`0x02000120..`): the linker refuses such a call, but names only one of the offending calls (a v37 build
+  had 478). **v40's way out:** put the RAM code high in the RAM (`0x01C5E000..0x01C74000`). Every flash address up to
+  `0x0205E000` is then within reach both ways, and `app.ld` asserts it. The audio path is moved there without touching
+  the source (`tools/ramcode.py` renames `.text.NAME` to `.ram_text.dsp.NAME`, so the compiler's inlining is unchanged).
+  `tools/check_calls.py` still refuses calls between the flash and the code that runs with the flash off (`.ram_text`,
+  `.c1_text`); for those, call through a pointer the compiler cannot fold (`FL_FAR`, `fm1_flash.h`).
 - **RAM is the scarce resource.** Count `.data + .bss + CPU1 stack (3 KB) + the SDK driver's bss` against 96 KB, and
-  `.pool` against 336 KB, on every change. We compile the objects for the target and add up the section sizes even when
+  `.pool` against 248 KB and the RAM code against `RAMTEXT` (88 KB) since v40, on every change. We compile the objects for the target and add up the section sizes even when
   we cannot link.
 - **Stack guard:** felucca's EMU stack limit faults any `sp` outside `[_ustack_lo, _sstack_top]`. Task stacks placed in
   ordinary RAM (an RTOS, the BLE controller) crash at once with the guard on (section 11).
@@ -279,9 +284,13 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
    beside the chain (the other core). The delay's taps that are *heard* read the lag less far back; the taps *fed back*
    keep the delay time, so echo timing and repeat spacing are exact, bit for bit (`tests/engine/wet_test.c`). Mind the
    gap lesson in section 1.
-10. **Safety nets:** NaN/Inf at the output → silence + engine reset by the main loop. Sustained overload (> 85 % for 8
+10. **The audio path from RAM, the delays at half rate (v40, from the stock firmware):** the per-block code is copied to
+    RAM at boot (no misses in the instruction cache the two cores share), placed within call range of the flash
+    (section 2). The delay line ticks at 22.05 kHz (pairs averaged in, output interpolated, a small lift of the top):
+    half the work and half the memory, echoes within 0.1 dB on guitar through a cabinet.
+11. **Safety nets:** NaN/Inf at the output → silence + engine reset by the main loop. Sustained overload (> 85 % for 8
     blocks) → bypass. A soft knee at 0.8 of full scale instead of a hard clip.
-11. **Test on the PC with the pedal's own code and libm:** bit-exact regression hashes over every preset and type, a
+12. **Test on the PC with the pedal's own code and libm:** bit-exact regression hashes over every preset and type, a
     two-core pipeline test, a vector-unit emulator that completes commands late at random, a simulated second core.
     Almost every pedal-only bug we had would have shown there.
 

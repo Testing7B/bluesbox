@@ -3,7 +3,7 @@
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
 Install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
-NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · **v39: the delay and the reverb off the critical path**: [docs/WHATS-NEW-v39.md](docs/WHATS-NEW-v39.md) · v38: changes without clicks, your own cabinet IRs: [docs/WHATS-NEW-v38.md](docs/WHATS-NEW-v38.md) · v37: neural amp models (NAM A2), load your own from TONE3000: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · **v40: the effects run the stock firmware's way (from RAM, delays at half rate)**: [docs/WHATS-NEW-v40.md](docs/WHATS-NEW-v40.md) · v39: the delay and the reverb off the critical path: [docs/WHATS-NEW-v39.md](docs/WHATS-NEW-v39.md) · v38: changes without clicks, your own cabinet IRs: [docs/WHATS-NEW-v38.md](docs/WHATS-NEW-v38.md) · v37: neural amp models (NAM A2), load your own from TONE3000: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
@@ -32,7 +32,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 - **MIDI over USB-C (v37)**: Program Change selects a preset, Control Change switches blocks and sets their models and
   settings, the pedal tells the computer when you change the sound, MIDI clock sets the delay time. Class-compliant, no driver;
   Bluetooth MIDI is only in the test image ([docs/BLE-TEST.md](docs/BLE-TEST.md)). Reference: [docs/MIDI.md](docs/MIDI.md), hardware test: [docs/MIDI-TEST.md](docs/MIDI-TEST.md)
-- What changed: [v39](docs/WHATS-NEW-v39.md), [v38](docs/WHATS-NEW-v38.md), [v37](docs/WHATS-NEW-v37.md), [since v33](docs/WHATS-NEW-v34-v36.md)
+- What changed: [v40](docs/WHATS-NEW-v40.md), [v39](docs/WHATS-NEW-v39.md), [v38](docs/WHATS-NEW-v38.md), [v37](docs/WHATS-NEW-v37.md), [since v33](docs/WHATS-NEW-v34-v36.md)
 - **New screen (v36)**: a PLAY page readable from a distance (preset number and name, amp, chain in colour) and an EDIT
   page with big values and bars
 - **8 reverbs rebuilt in v35**: an 8-line feedback delay network with early reflections and moving lines (no

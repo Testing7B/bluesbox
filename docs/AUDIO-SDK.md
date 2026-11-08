@@ -289,3 +289,26 @@ Driver setup: `iis_open` IIS_PORTA, channel_in = BIT(1), channel_out = BIT(0), m
   editor for user models and by `tools/mk_nam_factory.py` for the factory ones), then one constant that puts NAM +
   1x12 at GAIN noon at the fitted amps' -23 LUFS.
 - 24 factory presets rebuilt on the 12 factory NAM models, levelled by `tools/level_presets.py`; USER slots: NAM TWIN.
+
+## v40: the audio path in RAM, the delays at half rate (the stock firmware's way)
+- The per-block code runs from RAM, as the stock firmware's per-sample library does (66 KB copied at boot). The 478
+  refused calls of the first v37 try came from the RAM code's place: at `0x01C0xxxx` it is just out of the call
+  instruction's +-4 MiB of the flash. `RAMTEXT` now sits at `0x01C5E000..0x01C74000`, within reach of every flash
+  address up to `0x0205E000` (`app.ld` asserts it). So the flash and the audio path call each other directly, and no
+  pointer is needed.
+- How the code gets there: `px_dsp.c` is compiled with `-ffunction-sections`, then `tools/ramcode.py` renames the listed
+  functions' sections (`.text.NAME` to `.ram_text.dsp.NAME`) and px_dsp.o's plain `.text` (the hand-written routines).
+  `openpocket.o` gets the same for the audio interrupt's own functions. The source carries no attribute, so the
+  compiler inlines exactly as before (this compiler does not inline into a function that has a section of its own:
+  v37's note). About 75 KB moves.
+- `check_calls.py` lets `.ram_text.dsp.*` call the flash and be called from it, and still refuses it for the code that
+  runs with the flash off (`.ram_text` proper, `.c1_text`).
+- The room for it: the delay line at 22.05 kHz, as the stock delays (88 KB for 2 s instead of 175 KB). `POOL` goes from
+  336 to 248 KB.
+- Delay at half rate: one tick every two samples, with the pair averaged in, the output interpolated between the last two
+  ticks, and a fixed lift `1.15 d - 0.15 d_prev` on the wet output. Glide and envelope coefficients are doubled, and
+  depths and LFO steps are converted to ticks; the lane's lag is 128 ticks. On the lead loop through an amp and a
+  cabinet, the wet part is within 0.1 dB, and within 0.4 dB up to 6 kHz. `tests/engine/wet_test.c` still checks the
+  lane against the inline delay, bit for bit.
+- Reverb: the low cut after the tank runs at the tank's rate. TONE stays at the full rate, because it takes down the
+  half rate's images. The output is within 2e-4 of v39 on every type.

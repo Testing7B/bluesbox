@@ -13,10 +13,10 @@
  */
 #include "px_dsp.h"
 #include "px_nam.c"                                     /* v37: NAM A2-Lite (one translation unit: every build gets it) */
-/* The engine runs from the flash (XIP), as in v36: a direct call between the flash (0x02xxxxxx) and the RAM code
- * (0x01C0xxxx) is out of the CPU's call range, so code in RAM may call nothing in the flash and the reverse, except
- * through a pointer (FL_FAR in fm1_flash.h). Only the NAM layer routine is in RAM (px_nam.c, called through a
- * pointer). */
+/* v40: on the pedal the audio path runs from RAM, as the stock firmware's does: firmware/build.sh compiles this file with
+ * -ffunction-sections and tools/ramcode.py moves the per-block functions (px_engine_part, the delay and reverb loops,
+ * the NAM network, the oversampling, the IR...) and the hand-written routines into the RAM code window, which sits
+ * within call range of the flash (firmware/app.ld). Nothing to mark here: the code is the compiler's, unchanged. */
 #define PX_HOT
 #define PX_INL
 #define PX_AINL __attribute__((always_inline))
@@ -1702,12 +1702,13 @@ static void rc_mod(px_engine *e)
 static void rc_delay(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
-    float sr = e->sr;
+    float sr = e->sr * 0.5f;                           /* v40: the line's rate (half rate, as the stock delays): ticks */
+    const float lpmax = 0.45f * sr;                    /* (the filters in the loop stay below its Nyquist) */
     const uint8_t *q = p->p[PX_B_DELAY];
     int t = p->type[PX_B_DELAY] % PX_DLY_COUNT;
     float len = dly_ms(t, q[0]) * 0.001f * sr;
-    if (len > (float)(PX_DLY_N - 1200)) len = (float)(PX_DLY_N - 1200);
-    if (e->dly_len < 2.0f || e->dly_type != t) { e->dly_len = len; e->rev_cnt = 0; e->rev_start = e->dly_w; }
+    if (len > (float)(PX_DLY_N - 600)) len = (float)(PX_DLY_N - 600);
+    if (e->dly_len < 1.0f || e->dly_type != t) { e->dly_len = len; e->rev_cnt = 0; e->rev_start = e->dly_w; }
     e->dly_type = t;
     e->dly_tgt = len;
     e->dly_fb = f01(q[1]) * 0.95f;
@@ -1715,32 +1716,34 @@ static void rc_delay(px_engine *e)
     e->dly_mix = f01(q[2]);
     e->dly_wow = 0.0f; e->dly_flut = 0.0f; e->dly_sat = 0.0f; e->dly_q = 0.0f; e->dly_mod = 0.0f;
     e->dly_inc = 0.7f / sr; e->dly_inc2 = 8.0f / sr;
-    float tone = f01(q[3]);
+    float tone = f01(q[3]), lp;
+    /* (depths in ticks: half the samples they were at the full rate, the same times) */
     switch (t) {
     case PX_DLY_DIGITAL: case PX_DLY_DUAL:
-        bq_lowpass(&e->dly_lp, sr, 3000.0f + tone * 13000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 40.0f, 0.7f); break;
+        lp = 3000.0f + tone * 13000.0f;
+        bq_lowpass(&e->dly_lp, sr, lp < lpmax ? lp : lpmax, 0.7f); bq_highpass(&e->dly_hp, sr, 40.0f, 0.7f); break;
     case PX_DLY_ANALOG:                                /* bucket brigade: dark repeats that saturate */
         bq_lowpass(&e->dly_lp, sr, 1500.0f + tone * 2000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 80.0f, 0.7f);
-        e->dly_sat = 1.0f; e->dly_mod = 1.5f; break;
+        e->dly_sat = 1.0f; e->dly_mod = 0.75f; break;
     case PX_DLY_MEMORY:                                /* analog with modulated repeats */
         bq_lowpass(&e->dly_lp, sr, 2800.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 80.0f, 0.7f);
-        e->dly_sat = 1.0f; e->dly_inc = (0.5f + f01(q[3]) * 4.5f) / sr; e->dly_mod = 2.0f + f01(q[4]) * 0.004f * sr; break;
+        e->dly_sat = 1.0f; e->dly_inc = (0.5f + f01(q[3]) * 4.5f) / sr; e->dly_mod = 1.0f + f01(q[4]) * 0.004f * sr; break;
     case PX_DLY_TAPE:                                  /* tape echo: wow 0.7 Hz + flutter 8 Hz */
         bq_lowpass(&e->dly_lp, sr, 4000.0f + tone * 4000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 120.0f, 0.7f);
-        e->dly_sat = 2.0f; e->dly_wow = 1.0f + f01(q[4]) * (len * 0.004f + 6.0f); e->dly_flut = f01(q[4]) * 3.0f; break;
+        e->dly_sat = 2.0f; e->dly_wow = 0.5f + f01(q[4]) * (len * 0.004f + 3.0f); e->dly_flut = f01(q[4]) * 1.5f; break;
     case PX_DLY_SPACE: {                               /* 3 playback heads 1:2:3 */
         static const uint8_t HM[7] = {1, 2, 4, 3, 6, 5, 7};
         int h = HM[(int)(tone * 6.99f)], nh = (h & 1) + ((h >> 1) & 1) + ((h >> 2) & 1);
         e->dly_heads = h; e->dly_hn = 1.0f / sqrtf((float)nh); e->dly_hf = 1.0f / (float)nh;
         bq_lowpass(&e->dly_lp, sr, 4500.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 150.0f, 0.7f);
-        e->dly_sat = 2.0f; e->dly_wow = 1.0f + f01(q[4]) * (len * 0.003f + 5.0f); e->dly_flut = f01(q[4]) * 2.5f;
+        e->dly_sat = 2.0f; e->dly_wow = 0.5f + f01(q[4]) * (len * 0.003f + 2.5f); e->dly_flut = f01(q[4]) * 1.25f;
     } break;
     case PX_DLY_REVERSE:
-        bq_lowpass(&e->dly_lp, sr, 9000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 60.0f, 0.7f);
+        bq_lowpass(&e->dly_lp, sr, 9000.0f < lpmax ? 9000.0f : lpmax, 0.7f); bq_highpass(&e->dly_hp, sr, 60.0f, 0.7f);
         e->rev_xf = 1.0f / (0.01f * sr); break;
     default:                                           /* lo-fi: few bits, narrow band, wobbly */
         bq_lowpass(&e->dly_lp, sr, 4000.0f - tone * 2000.0f, 0.9f); bq_highpass(&e->dly_hp, sr, 300.0f, 0.7f);
-        e->dly_q = powf(2.0f, 11.0f - tone * 6.0f); e->dly_wow = 4.0f + tone * 8.0f; e->dly_inc = 0.5f / sr; e->dly_sat = 1.5f; break;
+        e->dly_q = powf(2.0f, 11.0f - tone * 6.0f); e->dly_wow = 2.0f + tone * 4.0f; e->dly_inc = 0.5f / sr; e->dly_sat = 1.5f; break;
     }
     if (e->dly_sat > 0.0f) {                           /* saturating loop: tops out at 1.08 = self-oscillation, like the real units */
         e->dly_sat = 1.0f + e->dly_sat * 0.5f;         /* drive into the loop clipper */
@@ -1835,10 +1838,11 @@ static void rc_reverb(px_engine *e)
     e->rv_in = 0.25f;
     e->rv_out = v->out;
     e->rv_mix = f01(q[2]);
-    sr = e->sr;                                        /* the filters after the tank run at the full rate */
+    /* v40: the low cut after the tank runs at its rate (the stock reverbs' post too); TONE stays at the full rate */
+    bq_highpass(&e->rv_hp, sr, t == PX_REV_SPRING ? 120.0f : 50.0f, 0.7f);
+    sr = e->sr;
     if (t == PX_REV_SPRING) bq_lowpass(&e->rv_tone, sr, 2500.0f + tone * 2500.0f, 0.8f);
     else bq_lowpass(&e->rv_tone, sr, 3000.0f + tone * 9000.0f, 0.7f);
-    bq_highpass(&e->rv_hp, sr, t == PX_REV_SPRING ? 120.0f : 50.0f, 0.7f);
     e->sh_k = onepole_k(sr, 1.0f / (2.0f * PI_F * 5000.0f));
     e->sh_hk = onepole_k(sr, 1.0f / (2.0f * PI_F * 300.0f));
 }
@@ -2768,11 +2772,18 @@ PX_AINL static inline void dly_loop(px_engine *e, const float *xb, float *wo, in
                                     const int Q, const int S)
 {
     /* v39: in a wet lane its output is heard lg frames late: the taps heard read lg frames less far back, the ones fed
-     * back keep the delay time (the repeats keep their spacing) */
-    const float lg = e->wl_dlag;
+     * back keep the delay time (the repeats keep their spacing). v40: the line runs at half rate, as the stock delays
+     * (one tick every two samples), so lg is in ticks there */
+    const float lg = e->wl_dlag * 0.5f;
     for (int k = 0; k < n; k++) {
         float x = xb[k];
-            e->dly_len += (e->dly_tgt - e->dly_len) * 0.0004f;   /* time glides (no click) */
+        if (!e->dly_tick) {                            /* v40: the first sample of a pair: kept, the last output held */
+            e->dly_xa = x; e->dly_tick = 1;
+            wo[k] = e->dly_y1 * e->dly_mix;
+            continue;
+        }
+        x = 0.5f * (e->dly_xa + x);                    /* the tick's input: the pair averaged (a zero at 22.05 kHz) */
+            e->dly_len += (e->dly_tgt - e->dly_len) * 0.0008f;   /* time glides (no click); 0.0004 a sample before */
             float rd = e->dly_len, d, fsrc;
             if (M) {
                 e->dly_ph = wrap1(e->dly_ph + e->dly_inc);
@@ -2820,11 +2831,16 @@ PX_AINL static inline void dly_loop(px_engine *e, const float *xb, float *wo, in
             float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
             if (S) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
             float wv = x + fbk, av = px_abs(wv);
-            e->dly_env = av > e->dly_env ? av : e->dly_env * 0.99995f;
+            e->dly_env = av > e->dly_env ? av : e->dly_env * 0.9999f;   /* (0.99995 a sample before) */
             e->dly_rq = e->dly_env < 2e-4f ? 0.0f : 0.5f;
             e->dly_buf[e->dly_w] = dl_q(wv, e->dly_rq);
             if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
-        wo[k] = d * e->dly_mix;                        /* v39: the wet part only (wo may be xb: x is read first) */
+        {   /* v40: a gentle lift of the top (+1 dB at 5 kHz), for what the pair's average and the interpolation take off */
+            const float dl = 1.15f * d - 0.15f * e->dly_dp;
+            e->dly_dp = d; d = dl;
+        }
+        e->dly_y0 = e->dly_y1; e->dly_y1 = d; e->dly_tick = 0;
+        wo[k] = 0.5f * (e->dly_y0 + d) * e->dly_mix;   /* v39: the wet part only (wo may be xb: x is read first) */
     }
 }
 static void dly_block(px_engine *e, const float *xb, float *wo, int n, int t)
@@ -2867,12 +2883,11 @@ PX_AINL static inline void rv_loop(px_engine *e, const float *xb, float *wo, int
                 /* the last bits of a tail: fade it out over ~0.5 s, then let the ring empty itself (cut towards zero) */
                 if (e->rv_env < 5e-4f) e->rv_fade *= 0.9997f; else e->rv_fade = 1.0f;
                 e->rv_rq = e->rv_fade < 0.03f ? 0.0f : 0.5f;
-                y *= e->rv_fade;
+                y = bq_run(&e->rv_hp, y * e->rv_fade * e->rv_out);   /* v40: the low cut at the tank's rate, as the stock */
                 e->rv_y0 = e->rv_y1; e->rv_y1 = y; e->rv_tick = 0;
                 acc = 0.5f * (e->rv_y0 + y);
             }
-            acc *= e->rv_out;
-            acc = bq_run(&e->rv_hp, bq_run(&e->rv_tone, acc));
+            acc = bq_run(&e->rv_tone, acc);            /* (TONE at the full rate: it also takes the half rate's images down) */
             if (SH) {                   /* octave-up shifter in the feedback loop */
                 e->sh_buf[e->sh_w] = acc;
                 float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
