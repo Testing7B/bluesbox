@@ -11,6 +11,8 @@
  * store (px_store.h), BLK_COL (ui_colors.h), ota_frame_get / ota_frame_done / ota_wire_send, ms_now, OP_VERSION,
  * FELUCCA_ID_PTR, ed_load / ed_flags (the DSP load for PING), and (v37) the NAM user models (px_models.h) with
  * nm_changed(slot), called after a slot was written or erased.
+ * An image with a log channel also defines ED_DIAG_LINES
+ * and ed_diag_line(i, out), which writes line i (at most ED_DIAG_LEN - 1 characters); without them DIAG gets no reply.
  */
 #pragma once
 
@@ -23,7 +25,7 @@
 typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
 enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_ORDER, ED_NAME, ED_PUT, ED_SELECT,
        ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING,
-       ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE };
+       ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE, ED_DIAG };
 
 static uint8_t ed_out[1024];
 static uint32_t ed_n;
@@ -252,6 +254,14 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         nm_changed(a[0]);                              /* a sound playing that slot reloads it */
         ed_b(a[0]); ed_b((uint32_t)rc);
         break;
+#ifdef ED_DIAG_LINES
+    case ED_DIAG: {                                    /* read only: nothing here changes the pedal */
+        static char l[ED_DIAG_LEN];
+        ed_b(ED_DIAG_LINES);
+        for (i = 0; i < ED_DIAG_LINES; i++) { ed_diag_line(i, l); ed_str(l, sizeof l - 1u); }
+        break;
+    }
+#endif
     default:
         return;
     }

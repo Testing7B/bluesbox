@@ -46,9 +46,11 @@ void *os_current_task_rom(void) { return 0; }
 void cpu_assert_debug(void) { }
 void P33_SYSTEM_RESET(void) { for (;;) ; }
 
+#if !OP_BLE_TEST   /* the ble build has a real heap (ble/ble_os.c); iis_open draws its block from it */
 static uint8_t jl_heap[4096] __attribute__((aligned(8)));   /* iis_open: 2 channels x 8 x sr_points (256) */
 void *malloc(unsigned n) { return (n <= sizeof jl_heap) ? jl_heap : 0; }   /* single block: iis_open */
 void free(void *p) { (void)p; }
+#endif
 /* memset / memcpy: felucca-bsp libc.c (included by openpocket.c) */
 
 static volatile uint32_t *jl_preg(uint32_t gpio, uint32_t off)
@@ -88,6 +90,10 @@ static int a_level_db(int ch)
 }
 static volatile float a_gain = 0.64f;                  /* MASTER volume (knob), applied at the output */
 static volatile uint32_t a_load, a_peak, a_blocks;     /* DSP load in % */
+/* v37: what can be heard as a crackle. a_xrun: blocks that took longer than their 2.9 ms (the output then repeats or
+ * misses part of a block), a_xrun_at the block of the last one; a_clip: blocks whose output reached the soft clipper's
+ * knee (0.8 of full scale; it used to be a hard clip at full scale) */
+static volatile uint32_t a_xrun, a_xrun_at, a_clip, a_peak_all;
 static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boot, safe mode) */
 static volatile uint8_t a_mute;                      /* output zeros (a flash write is coming) */
 static volatile uint8_t a_tmute;                     /* v36: tuner open: the output fades to silence (5 ms) */
@@ -129,18 +135,29 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
             if (tg > 0.5f ? a_mg > 0.999f : a_mg < 0.0005f) a_mg = tg;
         } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     }
-    float g = a_gain * 8388607.0f;
+    /* the output: a soft knee from 0.8 of full scale (the same slope there, then bending towards full scale, which it
+     * never reaches) instead of a hard clip, whose corners crackle on the loudest notes */
+    const float g = a_gain;
+    int clip = 0;
     for (uint32_t i = 0; i < A_FR; i++) {
-        float v = a_out[i] * g;
-        if (v > 8388607.0f) v = 8388607.0f; else if (v < -8388608.0f) v = -8388608.0f;
-        a_res[i] = (int32_t)v;
+        float v = a_out[i] * g, m = v < 0.0f ? -v : v;
+        if (m > 0.8f) {
+            float t = (m - 0.8f) * 5.0f;
+            m = 0.8f + 0.2f * t / (1.0f + t);
+            v = v < 0.0f ? -m : m;
+            clip = 1;
+        }
+        a_res[i] = (int32_t)(v * 8388607.0f);
     }
+    if (clip) a_clip++;
 }
 static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the safety bypass (over lim % 8 blocks running) */
 {
     uint32_t pct = (fm1_ticks() - t0) * 100u / A_BUDGET;
     a_load = (a_load * 7u + pct) / 8u;
     if (pct > a_peak) a_peak = pct;
+    if (pct > a_peak_all) a_peak_all = pct;
+    if (pct >= 100u && !a_hold) { a_xrun++; a_xrun_at = a_blocks; }
     if (!a_bypass && !a_hold) {
         if (pct > lim) { if (++a_over >= 8u) a_bypass = 1; } else a_over = 0;
     }

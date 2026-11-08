@@ -11,30 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "px_dsp.h"
+#include "../firmware/px_midi.h"
 
-enum { RED = 0xF800, GRN = 0x07E0, BLU = 0x001F, WHT = 0xFFFF, BLK = 0x0000, CYN = 0x07FF, YEL = 0xFFE0, ORG = 0xFD20 };
-enum { UI_BG = 0x0841, UI_PANEL = 0x18E3, UI_SEL = 0xFB00, UI_ACC = 0xFD20, UI_TXT = 0xEF7D, UI_DIM = 0x8410, UI_OK = 0x4E6B, UI_OFF = 0x2124 };
+#include "simlcd.h"
 #define POISON 0xF81F
 
-static uint16_t fb[240 * 240];
-static uint32_t wx, wy, ww, wh, wi;
-static unsigned long px_sent;
-static void lcd_win(uint32_t x, uint32_t y, uint32_t w, uint32_t h) { wx = x; wy = y; ww = w; wh = h; wi = 0; }
-static void lcd_px(uint16_t c)
-{
-    uint32_t x = wx + wi % ww, y = wy + wi / ww;
-    if (x < 240u && y < 240u) fb[y * 240u + x] = c;
-    wi++; px_sent++;
-}
-static void lcd_end(void) { }
-static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
-{
-    if (w == 0u || h == 0u || x >= 240u || y >= 240u) return;
-    if (x + w > 240u) w = 240u - x;
-    if (y + h > 240u) h = 240u - y;
-    for (uint32_t j = 0; j < h; j++) for (uint32_t i = 0; i < w; i++) fb[(y + j) * 240u + x + i] = c;
-    px_sent += w * h;
-}
 static void fm1_wdt_feed(void) { }
 static void fm1_delay_ms(int ms) { (void)ms; }
 
@@ -51,7 +32,13 @@ static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static int a_level_db(int ch) { return ch ? -84 : -62; }
 static volatile uint8_t a_tmute;
 static int bat_mv = 3920, bat_usb_mv = 0;
+static int32_t bat_raw[5] = {612, 1, 0, 3, 91};   /* bat_read's raw values (the tuner page shows them) */
+static int bat_pct = -1;                /* (-1: the gauge from bat_mv) */
 
+static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }
+static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }
+static int midi_saved;
+static void midi_persist(void) { midi_saved++; }
 #include "ui_text.h"
 #include "ui.h"
 
@@ -103,7 +90,23 @@ int main(int argc, char **argv)
     save_knob(1); save_draw(); shot(d, "save_other_slot");
     save_close(); ui_render(); status();
     tuner_open(); tuner_draw(110.5f); shot(d, "tuner_a_flat");
+    {   /* v37: no battery reading: the icon shows an empty cell and "--" (it was hidden) */
+        int m = bat_mv; bat_mv = 0; tuner_close(); poison(); ui_render(); status(); shot(d, "play_battery_unknown"); bat_mv = m;
+        tuner_open(); tuner_draw(110.5f);
+    }
     tuner_draw(110.0f); shot(d, "tuner_a_ok");
     tuner_close(); poison(); ui_render(); status(); shot(d, "play_after_tuner");
+    px_midi_cfg_unpack(&mid_cfg, 0);
+    midi_open(); midi_draw(); shot(d, "midi_defaults");
+    midi_knob(1); midi_knob(1); midi_draw(); shot(d, "midi_channel_2");
+    midi_push(); midi_knob(1); mid_usb_up = 1; mid_last[0] = PXM_CC; mid_last[1] = 25; mid_last[2] = 127; midi_draw(); shot(d, "midi_send_off_host_cc");
+    midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; midi_draw(); shot(d, "midi_clock_on_pc");
+    midi_push(); poison(); uc.screen = -1; ui_invalidate(); ui_render(); status();
+    if (midi_saved != 1 || ui_mode != M_CHAIN) { printf("midi: leaving the page after a change must save once and return to the chain\n"); return 1; }
+    midi_open(); midi_close();
+    if (midi_saved != 1) { printf("midi: leaving without a change must not save\n"); return 1; }
+    mid_cfg.chan = 16; midi_open(); midi_knob(1); midi_draw(); shot(d, "midi_channel_wraps_to_omni");
+    if (mid_cfg.chan != 0) { printf("midi: channel 16 + 1 must wrap to omni\n"); return 1; }
+    midi_knob(-1); if (mid_cfg.chan != 16) { printf("midi: omni - 1 must wrap to 16\n"); return 1; }
     return 0;
 }
