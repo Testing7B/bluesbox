@@ -174,6 +174,15 @@ window (`SFCENC_CON`, `fm1_flash.h`, `ble_vm.h`), not through `0x02xxxxxx`.
   is: `clang -target pi32v2 -Os -c -x ir iis.bc` (~5 KB). You provide malloc/free, gpio_* helpers and a few log symbols.
   It does not register its interrupt: call `iis_irq_handler(0)` from the ALNK0 ISR (**IRQ 11**). It sets the 44.1/48 kHz
   clock family itself (CLK_CON2 `0x10014`, ANA).
+- **Sample rate (read in the driver's `iis_set_sample_rate`, not probed on hardware):** two settings.
+  1. **The clock family** in CLK_CON2 `0x10014`: bit 8 for ALNK0 (bit 10 for ALNK1), **set for the 48 kHz family**
+     (48 / 24 / 12 / 96 / 192 kHz...), **cleared for the 44.1 kHz family**; for the 48 kHz family the driver also sets
+     bit 25 of `0x119A4` (**likely** an audio PLL output). It clears bit 9 (ALNK1: bit 11) at the end.
+  2. **Dividers** in the byte at offset `0x0C` of the ALNK register block as the driver addresses it: bits [7:5] = 4 and
+     [4:2] = 0 for both 44.1 and 48 kHz; [7:5] = 2 for 88.2/96, 1 for 176.4/192, 6 for 22.05/24, and [4:2] = 1 with
+     [7:5] = 6 for 11.025/12. 8 kHz is refused.
+  On the pedal `iis_set_sample_rate(44100)` gives 44.1 kHz (**measured**: the tuner reads notes in tune, and the NAM models
+  trained at 44.1 kHz play at their pitch). The stock firmware's rate was not traced to these bits.
 - **Callback order (read in the driver):** `iis_irq_handler` walks the channels in order and calls the output
   callback for channel 0 (TX), then the input callback for channel 1 (RX), in the same interrupt.
 - **24-bit mode (read in the stock firmware, measured):** set each channel's 24-bit bit (`CON1 |= 1 << (4*ch + 2)`, the
@@ -338,7 +347,8 @@ What it took to get JieLi's controller (from the SDK's `btctrler.a` / `btstack.a
 
 ## 12. Open questions
 
-- The ALNK sample-rate registers of the stock firmware (48 kHz for its effects is inferred from coefficient code).
+- Which ALNK rate the stock firmware sets (the bits are known, section 5; 48 kHz for its effects is inferred from its
+  coefficient code).
 - Which core `wet_audio` runs on in the stock firmware.
 - Whether CPU1's shared-RAM misreads depend on supply level, clock or temperature.
 - The code-cache cost of running the DSP from flash on both cores (suspected once, never measured in isolation).
