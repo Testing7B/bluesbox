@@ -338,6 +338,12 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
 - **Stock libraries (mapped):** FreeRTOS-style RTOS on both cores, a locked heap, sdfile flash file system (FAT
   linked but unused), USB device (MIDI + UAC1), Bluetooth controller + host with **only an A2DP sink** profile (no
   AVRCP, HFP, SPP) and a BLE GATT server; the SysEx `F0 22 24 35 7D F7` reboots to the boot loader's USB update mode.
+- **Stock boot (read):** RAM code (67,556 B) copied from flash `0x2081880` to `0x1C00000`, `.bss` 72,532 B at
+  `0x1C107E4`, no SDRAM, second RAM bank at `0x1F28000`; per-core memory protection (stacks fenced).
+- **Stock RTOS (read):** FreeRTOS 10 made SMP (IDLE0/IDLE1, a software interrupt per core for switches), **100 Hz
+  tick**; dlmalloc 2.8 heap with 32-byte chunks and a cross-core spin lock (a corrupt heap hangs).
+- **Stock Bluetooth (read):** SSP with ECDH P-192, auto-confirmed (Just Works, no PIN), no Secure Connections;
+  class of device 0x240404 (likely); tasks btctrler 19, btstack 18, btencry 16, bt_sbc_dec 27.
 - **Cabinet filters (read):** Lcut = first-order high-pass 20..300 Hz, Hcut = first-order low-pass 5..18 kHz.
 - **Spring (read):** a 640-tap (29 ms at 22,059 Hz) spring impulse response convolved ahead of the reverb tank.
 - **Shimmer (read):** a two-tap rotating-delay pitch shifter with a 512-entry crossfade window, inside the FDN loop.

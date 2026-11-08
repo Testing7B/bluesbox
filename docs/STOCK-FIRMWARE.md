@@ -1439,11 +1439,13 @@ width, height, x and y offsets; kerning records of 3 bytes: left, right, adjustm
 | `0x2046100..0x2058000` | — | read-only data: strings, effect and model tables, fonts, impulse responses, descriptors |
 | `0x2058000..0x2059900` | 1,524 | the **update library** (`INCLUDE_UPDATE`, `app_dir_head`, the `*_ota.bin` names, `flash.bin`, `LOADER.BIN`) |
 | `0x2059900..0x205C000` | 3,272 | the **heap** (`MEM_HEAP`): `malloc` `f_0205a17e`, `free` `f_02059b36`, `calloc` `f_0205b24c`; chunks with size and flag bits, bins, a spin lock shared by both cores |
-| `0x205C000..0x2060000` | 5,558 | the **RTOS**: FreeRTOS's design on two cores (the current task per core by `cnum`; queues created with FreeRTOS's types, 2 = counting semaphore `f_0205da94`, 4 = recursive mutex `f_0205d0cc`; take / give `f_0205cdba` / `f_0205ceb8`; task creation `f_0205ca82`; tasks found by name `f_0205e896`) |
+| `0x205C000..0x2060000` | 5,558 | the **RTOS** (FreeRTOS, 18.2) and, from `0x205EF00`, the **pairing crypto** (SHA-256, HMAC, ECDH P-192, 18.5) |
 | `0x2060000..0x2075000` | 29,160 | the **Bluetooth controller**: radio (`0x28000`), baseband (`0x2FC00`, `0x2FD00`), the `btctrler` task, the BLE link layer (`link_layer`, `ble_slave_mult`), the virtual HCI between host and controller (`H4_Controller`), low power (`btstack_lowpwer_deal`), the radio test mode (`autotest`) |
 | `0x2075000..0x2080000` | 16,057 | the **Bluetooth host** (`btstack`): L2CAP, SDP, AVDTP / A2DP, ATT / GATT |
-| `0x2080000..0x2088000` | 11,130 | start-up and low-level drivers: the flash controller (`0x11C00`), clocks, interrupts, the module table (`0x2080A10`) |
-| `0x2088000..0x2092000` | — | data: the RAM code's load image, the task table (`0x208CF00`) |
+| `0x2080000..0x2080738` | — | Bluetooth host code (the HCI event side) |
+| `0x2080738..0x2081880` | — | tables: the file-system operations, the init calls (`0x2080990`), the module table (`0x2080A10`) |
+| `0x2081880..0x2091F64` | — | the **RAM code's load image** (67,556 bytes copied to `0x1C00000` at boot, 18.1), with the task table (`0x208CF00`) |
+| `0x2091F64..0x2092084` | — | a 256-byte configuration block (**likely** the Bluetooth defaults, 18.5) and the 32 bytes of initial data of the second RAM bank |
 | `0x2092084..0x209A0F4` | — | the two overlays and the 20 effect blocks (sections 8.2, 8.4) |
 
 ### 17.3 What the libraries do for the BlackBox
@@ -1481,7 +1483,132 @@ two cores. The audio itself runs in interrupts (section 2), not in tasks.
 
 ### 17.4 What is left
 
-The libraries were mapped and their parts that the BlackBox uses were read. **Not read line by line**: the Bluetooth
-controller and host (about 45,000 instructions), the FAT driver (about 13,000), the RTOS internals, the start-up
-drivers and the heap's allocator. They are JieLi's generic code, shared by every product on this chip, and nothing in
-them is specific to the BlackBox. OpenPocket replaces or does not use them.
+Read in the thirteenth pass (section 18), which also **corrects** two rows of 17.2: `0x2080000..0x2088000` is
+not a driver library but tables and the RAM code's load image, and `f_0205ca82` gives a semaphore, it does not
+create tasks (`f_0205d93a` does).
+
+## 18. Thirteenth pass: boot, RTOS, heap, FAT and Bluetooth
+
+### 18.1 Boot
+
+**Read** (`f_02000120` → `f_0200018a` → `f_02021564`).
+1. **Entry** `0x2000120` jumps to `f_0200018a`: stack `0x1C1EB10`, supervisor stack `0x1C1FB10`.
+2. `f_0200042e` keeps the **boot loader's hand-over** (flash geometry, boot flags, 16 bytes of keys) at `0x1C7FD4C..`
+   (the same area as the `usb_update_mode` word at `0x1C7FD80`, 17.3).
+3. **`.bss`** cleared: 72,532 bytes from `0x1C107E4`.
+4. **RAM code** copied: **67,556 bytes from flash `0x2081880` to `0x1C00000`** (code and initialised data).
+5. An external-RAM section (`0x4000120`) would be copied and cleared: its size is 0, so the BlackBox uses **no SDRAM**.
+6. `f_01c00bb6`: cache set-up (`0x1EEE008`), the cache tag RAM cleared, and the **second RAM bank** at `0x1F28000`
+   prepared (32 bytes of data from `0x2092064`, then 20,160 bytes zeroed; the UI and the Bluetooth audio ring live
+   there, 16.3, 17.1).
+7. **`main`** (`f_02021564`):
+   - the **reset cause** read from the power unit and kept at `state + 508` (power-on, watchdog, low voltage, ...);
+   - the clocks named `hsb`, `sys`, `sdram`, `timer`, `app_core` reported;
+   - the **exception handler** installed (`0x2000238`: all registers pushed, then `f_02020ba2` prints them and
+     halts), the system timer interrupt (28, `f_02020df6`);
+   - **memory protection per core**: the flash code, the RAM code (`0x1C00000..0x1C0B38C`) and each core's stack
+     (core 0 `0x1C1EB10..0x1C1FB10`, core 1 `0x1C1FE10..0x1C20E10`) are fenced, so a stack overflow or a write to code
+     traps;
+   - the RTOS initialised (`f_0205d82e`, `f_0205d85a`), the task `app_core` created (`f_0202150e`), the scheduler
+     started (`f_0205da8e`).
+8. **Core 1** starts at `0x2000224` with its own stacks and jumps to the RAM code at `0x1C035C0`.
+
+### 18.2 The RTOS
+
+**Read.** It is **FreeRTOS (version 10 layout) made SMP by JieLi**:
+- the queue structure is FreeRTOS's to the byte: `pcHead +0`, `pcWriteTo +4`, waiting-to-send list `+16`,
+  waiting-to-receive list `+36`, `uxMessagesWaiting +56`, `uxLength +60`, `uxItemSize +64`, the locks `+68/+69`;
+  queue types 1 mutex, 2 counting semaphore (`f_0205da94`), 4 recursive mutex (`f_0205d0cc`);
+- **one current task per core** (`cnum` indexes `0x1C10054`), two idle tasks **`IDLE0`, `IDLE1`** (256-word stacks);
+- the context switch is a **software interrupt per core** (number `0x7F - core`, handler `0x204519A`);
+- **the tick is 100 Hz (10 ms)**: core 0's timer (`0x1EEF0EC`) reloads `sys clock / 100`, interrupt 3, handler
+  `f_0205df6e` (counts jiffies at `0x1C0B4C8`, then `xTaskIncrementTick` `f_0205c79c`, yields if needed);
+- API used by the BlackBox: take / give with timeout `f_0205cdba` / `f_0205ceb8`, semaphore give `f_0205ca82`
+  (with its from-interrupt path), task creation `f_0205d93a` (wrappers `f_0202150e` by name from the task table,
+  `f_0205d37e` by name and arguments), tasks found by name `f_0205e896`.
+
+**The task table** (`0x208CF00` in the RAM image; name, priority, stack in words, message queue in words):
+
+| Task | Priority | Stack | Queue |
+| --- | --- | --- | --- |
+| `app_core` | 15 | 1,024 | 128 |
+| `sys_event` | 29 | 512 | 0 |
+| `systimer` | 14 | 256 | 0 |
+| `sys_timer` | 9 | 512 | 64 |
+| `btencry` | 16 | 512 | 64 |
+| `btctrler` | 19 | 512 | 384 |
+| `btstack` | 18 | 512 | 384 |
+| `update` | 21 | 384 | 32 |
+| `tuner_task` | 3 | 512 | 0 |
+| `bt_sbc_dec` | 27 | 384 | 0 |
+
+The BlackBox's own tasks (`wet_audio`, `pd40_ui`, `USB-Audio`, `USB-Midi`, `midi_route`) are created from code with
+their own values. The audio path itself runs in interrupts (section 2), above every task.
+
+### 18.3 Memory allocation
+
+**Read.** Three allocators:
+- **`malloc` / `free` / `calloc`** (`f_0205a17e`, `f_02059b36`, `f_0205b24c`) are **dlmalloc 2.8**: its parameter
+  block to the field (granularity 4 KB, trim threshold 2 MB, no `mmap`, the magic `0x55AA55A8` mixed with the tick
+  count), chunks with size and in-use bits, small and tree bins, chunks rounded to **32 bytes** (cache lines, so
+  buffers are safe for DMA). A **spin lock** (`testset` on `state + 8524`) makes it safe on both cores. A corrupted
+  heap makes it **loop forever** (dlmalloc's `CORRUPTION_ERROR_ACTION`), which shows up as a hang, not a crash
+  screen.
+- **`MEM_HEAP`** (`f_0205be6c`): a small pool for the Bluetooth controller with guard words `0xA5ABCDEE` /
+  `0x5A5AEAAE` around blocks.
+- A **block allocator** for buffers (`f_0205b3e6` / `f_0205b87a`, through `f_0205b9c4`), used by the UI and
+  `wet_audio` (**likely** JieLi's `lbuf`).
+
+### 18.4 The FAT driver
+
+**Read** (mount `f_020365f8`, the rest through the file-system table `0x20808A0`).
+- **FAT12, FAT16 and FAT32**, chosen by cluster count (the 65,525 limit); sectors of 512 bytes, clusters of 512 B to
+  64 KB; no exFAT;
+- long file names in **UTF-8** (`f_020228ca` decodes it), 8.3 names, wildcards (`*`) in searches, `/` and `\`
+  separators;
+- the usual operations through the table: open, read, write, seek, length, position, rename, delete, directory
+  scan; a FAT32 boot-sector template (`MSDOS5.0`, `NO NAME`, `FAT32`) for formatting; MBR and GPT (`EFI PART`)
+  partition tables read;
+- **unused by the BlackBox**: no code path mounts a FAT volume (17.3). It is there because JieLi's file-system layer
+  links it in; the pedal has no card and does not expose a disk over USB.
+
+### 18.5 The Bluetooth stack
+
+**Read** (its tasks, its configuration, its interfaces and its fixed tables). Both halves run on the chip, joined by
+a **virtual HCI** (`H4_Controller`): the host sends standard HCI commands (`f_02061aae(type, length, opcode, ...)`),
+the controller answers with events.
+
+**Controller** (`0x2060000..0x2075000`, tasks `btctrler` and `btencry`):
+- the **radio** (registers `0x28000..`) and the **baseband** (`0x2FC00`, `0x2FD00`), driven by the controller's
+  scheduler;
+- **classic**: page and inquiry scan, connection accept, link keys, and **Secure Simple Pairing (Bluetooth 2.1)**:
+  ECDH on **P-192** (the curve's constants at `0x205FEE4`) and SHA-256 / HMAC (`0x205EF00..`) computed in the
+  `btencry` task; the user confirmation is answered **automatically** (`f_0206e146`), so pairing is **Just Works**
+  with no PIN. There is **no P-256**, so no Secure Connections;
+- **BLE**: a link layer with several slave links (`ble_slave_mult`), advertising set through the LE HCI commands
+  (`0x2006` parameters, `0x200A` enable);
+- the radio test mode (`autotest`) and low-power handling (`btstack_lowpwer_deal`);
+- its own memory pool (`MEM_HEAP`, 18.3).
+
+**Host** (`0x2075000..0x2080738`, task `btstack`):
+- **L2CAP**, **SDP** with one record (A2DP sink, 17.3), **AVDTP / A2DP sink** with SBC decoded by the `bt_sbc_dec`
+  task (priority 27) into the 6,144-sample ring (16.3);
+- **ATT / GATT** with the BLE-MIDI service (`f_020420e0`), advertised as `sinco...`;
+- the BlackBox configures it once at start-up (`f_020221ac`): a set of feature bits, two timeouts of **8,000 slots
+  (5 s)**, the **Bluetooth address** (from the `btif` record, with a 16-bit check `f_02077256`), the event callbacks
+  (`f_0202865a`, `f_02028664`), then starts the two tasks (`f_020772e6`);
+- the default block at `0x2091F64` (**likely** the stack's defaults) holds a class of device **`0x240404`**:
+  Audio/Video, wearable headset, with the Audio and Rendering service bits.
+
+**What it means for the BlackBox**: Bluetooth is only a **receiver** of music (A2DP sink) and a **BLE-MIDI**
+peripheral; no remote control (AVRCP), no calls (HFP), no serial port (SPP). Its tasks (priorities 16..27) all run
+below the audio interrupts, but its radio work shares the CPU, which fits the extra load seen when Bluetooth is on
+(section 1).
+
+### 18.6 What is left
+
+Every part of the image is now identified and the parts that matter are read. What was not taken instruction by
+instruction is the inside of JieLi's generic state machines (the Bluetooth controller's scheduler, LMP and link
+layer, L2CAP/AVDTP/ATT details, FAT's cluster allocation, FreeRTOS's lists, dlmalloc's bins): they are standard
+designs (FreeRTOS, dlmalloc, the Bluetooth specification) or chip-specific radio code, the same in every JieLi
+product, and OpenPocket neither uses nor replaces them line by line.
