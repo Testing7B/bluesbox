@@ -325,8 +325,13 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   100, 120, 200 or 240 Hz (+-1 %, rectified 50/60 Hz mains hum) as noise, so hum does not hold the gate open.
 - **020 to 021:** the wet_audio lanes, the MW drives, the CC map, the pd40j storage and most settings are new in 021.
 - **Dynamics (read):** every dynamics model and every MW drive has the same adaptive noise gate built in (default
-  threshold -60 dB, tracks the noise floor); Boost is 0..+10.8 dB (quadratic knob); Compress has ratio 1.5..10.5:1,
-  a soft knee and a +-10 dB first-order shelf.
+  threshold -60 dB, tracks the noise floor); Boost is 0..+10.8 dB (quadratic knob); Compress (read in full): detector
+  high-passed at ~0.7..3.6 kHz by Attack, one envelope time 23.75..80 ms, threshold -48 dB, 30 dB soft knee, ratio
+  1 + 5 (Sustain/100)^4 (up to 6:1), make-up 3..12 dB, then tanh soft clip and Level x 0.014; its tone shelf stays flat.
+- **Lofi (read in full):** asinh drive (3.5 + 2.5 Grit), 9 biquads, a wow pre-delay (LFO 0.5..10 Hz), then a 16-bit
+  line of 100..782 ms (quadratic Time knob).
+- **Loopback (read):** OFF = the computer records the pedal alone; ON = the pedal plus the computer's own playback.
+- **Hold:** every stock delay has an unused infinite-repeat hold (feedback to 1, input faded out).
 - **Cabinet filters (read):** Lcut = first-order high-pass 20..300 Hz, Hcut = first-order low-pass 5..18 kHz.
 - **Spring (read):** a 640-tap (29 ms at 22,059 Hz) spring impulse response convolved ahead of the reverb tank.
 - **Shimmer (read):** a two-tap rotating-delay pitch shifter with a 512-entry crossfade window, inside the FDN loop.

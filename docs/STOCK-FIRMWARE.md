@@ -368,7 +368,7 @@ slot's address through a pointer (the modulation's `f_01c05924` calls `[instance
 | 7 | Duck (type 12, max 789) | envelope times from `ln(0.001)` (the ducker) |
 | 8 | dTape (type 13, max 790) | wow and flutter (`Speed`, `Depth`), `Grit` |
 | 9 | Dual (type 14, max 478) | two heads (20 16-bit reads a pass) |
-| 10 | Lofi (type 15, max 782) | an 8-band EQ curve (615 Hz -8.4 dB, 738 -6.2, 749 +3.1, 1.6 k +2.4, 4.1 k -1.0, 6.2 k -5.5, 6.7 k -3.8, 7.2 k ...) |
+| 10 | Lofi (type 15, max 782) | an EQ curve, 9 biquad sections (16.2) (615 Hz -8.4 dB, 738 -6.2, 749 +3.1, 1.6 k +2.4, 4.1 k -1.0, 6.2 k -5.5, 6.7 k -3.8, 7.2 k ...) |
 | 11..17 | Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter | full rate, two states (left, right), mixed by `f_01c08d08` |
 | 18, 19 | MW-GOLD, MW-RAT drives | their oversampled clipping stages (section 10.2; first taken for amp set-ups) |
 
@@ -867,9 +867,8 @@ writes take a 32-bit address; the top nibble picks the space.
 - In mode 0 (Loopback ON), the mixer first copies the output block (512 bytes) and then mixes the computer's playback
   into it (`f_01c071b0`).
 
-So, **likely**: with Loopback ON the computer also records its own playback, mixed with the pedal (the usual meaning of
-"loopback" on a streaming interface). The two USB rings were not followed to their DMA, so this is the reading of the
-mixer's branches, not a measurement.
+Settled in the eleventh pass (16.3): with Loopback ON the computer records the pedal **plus** its own playback; OFF, the
+pedal alone.
 
 ### 12.4 The battery
 
@@ -971,9 +970,8 @@ The output mixer `f_02029ede` sends a block to the ring at **two possible points
 - or **after** the mix, from a copy (`0x202A0DA`), chosen by the mode byte (Loopback) and two stream flags (bytes 8 and
   9 of the routing struct).
 
-So Loopback chooses **whether the computer records the pedal alone or the pedal plus its own playback**. The mixer's
-code decides it. Which flag combination gives which in practice was not settled from the code alone; recording one
-second each way would settle it.
+So Loopback chooses **whether the computer records the pedal alone or the pedal plus its own playback**. Every flag
+combination is worked out in 16.3.
 
 ### 13.3 The power module
 
@@ -1048,16 +1046,9 @@ It is an adaptive gate that tracks the noise floor and opens relative to it, not
 - plus the gate;
 - the process applies the gain (`f_01c0942e`) and runs the gate.
 
-**Compress** (set `f_0200b25e` read; process `f_0200b38e` read in outline):
-- **ratio** `1.5 + 0.09 x Sustain`: 1.5:1 to 10.5:1;
-- a knee factor `1 / (1 + 5 S^4)` (`S = Sustain / 100`);
-- a time `80 + 0.5625 x (Attack - 100)`: 23.75..80, **likely** ms (the process turns times into one-pole coefficients
-  with `exp(-6,907.76 / (t x fs))`, i.e. -60 dB over `t` ms);
-- Level scaled by 0.014;
-- every parameter glides by 0.1 a block;
-- the gain computer works in dB with a **soft knee** (two thresholds at `T +- W/2`);
-- a **first-order high shelf** (`f_0200b080`) of `20 p - 10` dB (-10..+10 dB) on one of the parameters, a tone control;
-- plus the gate.
+**Compress**: read in full in the eleventh pass (16.1), which **corrects** this paragraph's first reading: the
+`1.5 + 0.09 x Sustain` value is the make-up gain in dB (3..12 dB, the constant is 3, not 1.5), the ratio is
+`1 + 5 S^4`, and the shelf is fixed at 0 dB.
 
 ### 14.4 The four other delays
 
@@ -1081,11 +1072,7 @@ Hermite, and written saturated to 16 bits. What each adds:
   - **`asinh` saturation** driven by **Grit** (`asinh(Grit x)`, built from the sqrt and log2 tables, 7.5);
   - the `tanh` table on the output (`x 71.81 / 64`);
   - wow and flutter from Speed and Depth.
-- **Lofi** (block 10, 664 instructions, **read in outline**):
-  - the 8-band EQ curve of 8.6;
-  - `asinh` saturation (Grit);
-  - processing in pieces through a subroutine (`+0x5B4` in the block);
-  - the same LFO.
+- **Lofi** (block 10): read in full in the eleventh pass (16.2).
 
 ### 14.5 Shimmer, Swell, Spring
 
@@ -1262,9 +1249,119 @@ engine and of the system around the same effects**: what this document describes
 
 ### 15.7 What is left
 
-Nothing of the effects, the models, the storage, the protocols, the keys, USB or the tasks is unread any more. What
-remains are details that change nothing for OpenPocket:
-- the compressor's per-sample loop and Lofi's 664 instructions line by line (their structure and constants are in
-  14.3 and 14.4);
-- the exact routing of Loopback's two flags (a recording on the pedal settles it, 13.2);
-- the drawing code of the screens.
+Done in the eleventh pass (section 16): the compressor's loop, Lofi, Loopback's flags and the screens' drawing code.
+
+## 16. Eleventh pass: the last unread code
+
+### 16.1 Compress, line by line
+
+**Read** (set `f_0200b25e`, process `f_0200b38e`, defaults `f_0200b100`). `S`, `A`, `L` are Sustain, Attack and
+Level over 100; Gate is the shared gate (14.2).
+
+**Per sample, in this order:**
+1. **Detector high-pass**: a one-pole high-pass on the input, `y = c (y + x - x_prev)`, with `c = 0.9 - 0.3 A`
+   (0.9 at A = 0, 0.6 at A = 1): its corner moves from about **740 Hz to 3.6 kHz**. The compressor listens to the
+   pick and the treble, not to the low strings.
+2. **Envelope**: one one-pole on `|y|`, the same coefficient for attack and release:
+   `k = 1 - 6,907.76 / (fs x t)` with `t = 80 + 56.25 (A - 1)` ms (**23.75..80 ms**, the time to fall by 60 dB;
+   a time constant of 3.4..11.6 ms). The level is `20 log10(env)` (computed as `3.0103 x log2(env^2 + 1e-12)` with the
+   log2 table).
+3. **Gain computer**, in dB, the sum of two soft-knee stages:
+   - a **compressor**: threshold **-48 dB**, knee **30 dB** wide, ratio **`1 + 5 S^4`** (1:1 at S = 0, 1.31:1 at 0.5,
+     6:1 at 1). Above `T + W/2`: `(L - T)(1/R - 1)`; in the knee: `(L - T + W/2)^2 / (2W) x (1/R - 1)`;
+   - a **downward expander**: threshold -90 dB, knee 30 dB, its ratio starts at 12 but the set routine always sends
+     it to **1.0, so it is off**;
+   - plus a **make-up gain of `3 + 9 S` dB** (3..12 dB).
+4. **Gain**: `x x 10^(dB / 20)` (`exp2(dB x 0.1661)`), every sample.
+5. **Output**: a one-pole DC blocker (`1 - 5e-5 x Sustain`: none at 0, about 35 Hz at 100); a first-order **1 kHz high
+   shelf** (`f_0200b080`, `0.0227 x fs`) whose gain `20 p - 10` dB has `p = 0.5` from the defaults and **is never
+   set**, so it stays flat; then **`tanh`** (the 512-entry table, `|x| x 64`), so the output soft-clips;
+   then **x `0.014 x Level`** (0.7 at 50, 1.4 at 100). The dry path's gain is 0: the output is fully compressed.
+6. Every parameter glides by 0.1 a block toward its target. The gate runs after, on the block.
+
+### 16.2 Lofi, line by line
+
+**Read** (process: block 10, `f_01c24540`, 664 instructions; set `f_0201cfce`; the stereo wrapper `+0x5BE`).
+
+**Knobs** (each 0..100, over 100): Time `t`, Fb, Mix, Grit `g`, Speed `s`, Depth.
+- delay time = **`100 + 682 t^2` ms** (100..782 ms, quadratic), in samples at 22,059 Hz; it glides by `1.44e-4` a
+  sample;
+- feedback = Fb, glided by 0.01 a block;
+- drive `d = 3.5 + 2.5 g` (glided by 0.0183 a block);
+- LFO rate = **`0.5 + 9.5 s`** (**likely** Hz; `f_01c05098`, the delays' LFO); Depth sets the length of the
+  modulated pre-delay below, so how far the wow swings.
+
+**Per 32-sample chunk:**
+1. **Saturation**: `asinh(x sinh(d)) / (6 d)` (built from the sqrt and log2 tables; `sinh(d)` is recomputed only when
+   `d` moves). Small signals get a gain of `sinh(d) / 6d` (0.79 at Grit 0, 5.6 at Grit 100); large ones are
+   compressed logarithmically.
+2. **The lo-fi EQ**: **9 biquad sections** in cascade (`f_01c0b246`, 324 bytes of state: the curve of 8.2).
+3. **A modulated pre-delay**: the chunk is written into a float ring and read back with a 4-point Hermite at
+   `(1 + k x LFO) x D` samples, `D` growing with Depth (wow).
+4. **The main line** (16-bit, 22,059 Hz): read at the delay time with the integer-difference Hermite; the output is
+   that read (**wet only**: the Mix is the wrapper's, 8.6); the line is written with
+   `input_fade x modulated + feedback x read`, scaled by 32,768 and saturated to 16 bits.
+
+**The stereo wrapper** compares the two channels' states (128 + 324 + 12 bytes); when they match, it saturates and
+filters the input once and copies the result, saving half the work.
+
+### 16.3 Loopback, settled
+
+**Read** (`f_02029ede` in full, and `f_020298d8`, the USB playback mixer). The flags:
+- `m` = the routing mode, byte 7 of `0x1C0B510` (**Loopback ON = 0, OFF = 1**; 2 and 3 are internal);
+- `P` = byte 8 of that struct;
+- `R` = the computer is recording (`state + 58`), `A` = the computer is playing (`state + 57`), `B` = Bluetooth audio
+  is streaming (`state + 61 == 2`).
+
+What reaches the computer (`R` set):
+
+| Loopback | `P` | The computer records |
+| --- | --- | --- |
+| OFF | 1 | the pedal's processed block, **before** the output volume and before any mixing |
+| OFF | 0 | the pedal's block **after** the output volume and balance, before the computer's playback and Bluetooth are mixed in |
+| ON | 1 | a copy of the pedal's block, taken before the output volume, into which **the computer's playback** is mixed (**likely** Bluetooth audio too, `f_02029a6e`) |
+| ON | 0 | **exactly what the pedal outputs**: the pedal, plus the computer's playback, plus Bluetooth audio |
+
+So **Loopback OFF = the pedal alone; ON = the pedal plus the computer's own sound** (and Bluetooth audio when
+`P = 0`). In every case the output is clipped to 24 bits (`f_01c070ee`) and its peak is kept for a meter
+(`state + 636`).
+
+The mixer also shows **the Bluetooth audio path**: a **6,144-sample** ring at `0x1F29EE0` (indices `state + 122` /
+`+ 124`), mixed into the output with the same volume and polarity bytes (bytes 5 and 6 of the struct invert the
+two sources' signs), underruns counted at `state + 2096`. The USB playback ring is the 1,024-frame one at
+`0x1C17FC0` (`state + 114` / `+ 116`, underruns at `state + 2080`), scaled by the host's volume (`f_0202967e`).
+
+### 16.4 A "hold" in every delay
+
+**Read.** All five delays (blocks 6..10) carry a flag (byte `+20` of their state). When it is set:
+- the input fades out (0.01 a block);
+- the **feedback glides to 1.0**;
+so the repeats **hold forever** (an infinite-repeat "hold" or "freeze"). The flag is set for both channels through
+the last function of each delay's descriptor (`f_0202bbec`, `f_0202bc14`, `f_0202bc3c`, `f_0202bc64`, ... at
+descriptor `+36`). **No code in the application calls that slot**: no footswitch function, CC or menu reaches it, so
+in 021 the hold exists in the engine but is not used.
+
+### 16.5 How the screens are drawn
+
+**Read in outline** (the `pd40_ui` task; `f_0201adb0` its loop; `f_02018920` and `f_020178ee` the drawing).
+- A **retained widget tree**: each object has a parent, a first child (`+4`) and a next sibling (`+8`), bounds
+  clipped to **240 x 240** (`f_02004b72`), a dirty flag (`+162`) and a global redraw flag (`state + 388`, a frame
+  counter at `state + 4548`). Only dirty objects are redrawn.
+- **Styles per state**: a property lookup (`f_02004abe`) picks a value by property id and object state (a pressed or
+  focused bit), the design of LVGL, written small.
+- **Text**: a pool of 32 strings of 96 bytes (`0x1C7F120`; overflow counted at `state + 2285..2287`); strings carry
+  LVGL-style colour tags (`#ffffff P#%s %02d#`).
+- **Drawing**: a software rasteriser into **RGB565** with alpha (`f_02016e8e` fills a clipped span, blending each 5/6-bit
+  channel by the opacity); knobs are drawn as **anti-aliased arcs in degrees** (`f_020178ee`, 360); the screens are
+  built by one function each (main `f_0200dac8`, edit `f_0200d47c`, settings `f_0200de68` / `f_0200df42`, tuner
+  `f_0200ed68` / `f_0200f534`, save and swap `f_0200e59a` / `f_0200fbda`, low battery `f_0201adb0`).
+- The frame goes to the panel by SPI DMA, which OpenPocket already drives (handbook, display).
+
+Nothing here changes OpenPocket: its UI is its own.
+
+### 16.6 What is left
+
+Nothing of the application is unread at the level that matters: every effect, model, format, protocol, storage
+record, task, key, USB and Bluetooth path, and the UI's structure. The only things not followed line by line are
+the UI widgets' pixel code and JieLi's SDK libraries (file system, Bluetooth stack, USB stack), which are not
+BlackBox code.
