@@ -332,6 +332,12 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   line of 100..782 ms (quadratic Time knob).
 - **Loopback (read):** OFF = the computer records the pedal alone; ON = the pedal plus the computer's own playback.
 - **Hold:** every stock delay has an unused infinite-repeat hold (feedback to 1, input faded out).
+- **Stock UI (read):** an LVGL-style library; RGB565 with alpha-blended spans, anti-aliased rounded corners (4 x 4
+  sub-pixels), fonts of 4 bpp (20 px ASCII with kerning, 54 px run-length digits for the preset number, 38 px tuner
+  notes); flush by CASET / RASET / RAMWR and SPI1 DMA of up to 3,840 bytes, 2 ms timeout with SPI reset.
+- **Stock libraries (mapped):** FreeRTOS-style RTOS on both cores, a locked heap, sdfile flash file system (FAT
+  linked but unused), USB device (MIDI + UAC1), Bluetooth controller + host with **only an A2DP sink** profile (no
+  AVRCP, HFP, SPP) and a BLE GATT server; the SysEx `F0 22 24 35 7D F7` reboots to the boot loader's USB update mode.
 - **Cabinet filters (read):** Lcut = first-order high-pass 20..300 Hz, Hcut = first-order low-pass 5..18 kHz.
 - **Spring (read):** a 640-tap (29 ms at 22,059 Hz) spring impulse response convolved ahead of the reverb tank.
 - **Shimmer (read):** a two-tap rotating-delay pitch shifter with a 512-entry crossfade window, inside the FDN loop.

@@ -1357,11 +1357,131 @@ in 021 the hold exists in the engine but is not used.
   `f_0200ed68` / `f_0200f534`, save and swap `f_0200e59a` / `f_0200fbda`, low battery `f_0201adb0`).
 - The frame goes to the panel by SPI DMA, which OpenPocket already drives (handbook, display).
 
-Nothing here changes OpenPocket: its UI is its own.
+Nothing here changes OpenPocket: its UI is its own. The pixel code is read in 17.1.
 
 ### 16.6 What is left
 
-Nothing of the application is unread at the level that matters: every effect, model, format, protocol, storage
-record, task, key, USB and Bluetooth path, and the UI's structure. The only things not followed line by line are
-the UI widgets' pixel code and JieLi's SDK libraries (file system, Bluetooth stack, USB stack), which are not
-BlackBox code.
+The UI's pixel code and JieLi's libraries: done in section 17.
+
+## 17. Twelfth pass: the pixel code and JieLi's libraries
+
+### 17.1 How a pixel is drawn
+
+**Read** (`f_02018920` and the routines it calls). The UI is a small **LVGL-style** library: an object tree, styles
+read by property id, a draw pass per object, a flush to the panel.
+
+**The draw pass** (`f_02018920`, recursive over the children):
+1. Skip the object if it is hidden (flag bit 0 of `+155`) or outside the area being redrawn (its bounds, widened by
+   the shadow and outline sizes, against the clip rectangle).
+2. Draw its **background**: `f_0201716a`, a filled rectangle with a **corner radius** (prop 14) and an optional
+   **vertical gradient** between two colours (props 0 and 1, opacity prop 8).
+3. Draw the **type's content**, a switch on the type byte (`+122`):
+
+| Type | Object | Drawn by |
+| --- | --- | --- |
+| 2 | **label** (text) | `f_0201745e` per glyph; the font from the object or its parents (`f_02015c78`, default `0x2054F0C`), style props 18, 2, 9 and 22 |
+| 3 | **image** | inline: its pixels drawn as spans through a 16-bit palette, with a recolour (props 12, 5) |
+| 4 | **line** | inline: a polyline (points at `+20`, count at `+28`), width prop 21, colour prop 7 |
+| 5 | **bar** | the value mapped to pixels (`f_0200fc96`, a linear map), then a rounded rectangle |
+| 6 | **arc** | `f_020178ee` twice: the background ring and the value's ring, angles in degrees (props 20, 6, 13, 24) |
+| 7 | **gauge / knob** | 674 inline instructions: value mapped to an angle, then `f_020178ee` |
+| others | plain object | border and outline (`f_0201858a`), a run-length image (`f_020177d8`, **likely** a background image), then the children (recursion) |
+
+**The primitives:**
+- **Span fill** (`f_02016e8e`): one row from `x0` to `x1` in the **RGB565** buffer. At full opacity it stores the colour;
+  otherwise it blends each channel: `(src x a + dst x (255 - a) + 127) / 255`, with a cache of the last blend.
+- **Rounded corners** (`f_02016f8e`): the coverage of a corner pixel is measured on a **4 x 4 sub-pixel grid**
+  (offsets 1, 3, 5, 7 eighths) against the radius, giving an opacity of 0..255: **anti-aliased corners**.
+- **Rectangles** (`f_0201716a`): the radius is found with an integer square root; each row is a span, the gradient
+  colour interpolated per row; the corner rows use the coverage above.
+- **Arcs** (`f_020178ee`): between two angles in degrees, on spans, edge pixels blended by opacity (**likely**
+  anti-aliased like the corners).
+- **Text** (`f_0201745e`): each glyph is a bitmap of `bpp` bits a pixel (1, 2, 4 or 8), each value scaled to an
+  opacity and drawn as spans. A font can instead store glyphs **run-length coded**: each byte is a run (high nibble)
+  of a 4-bit opacity (low nibble, x opacity / 15).
+- **Images** (`f_020177d8`): 8-bit **palette indices**, each row **run-length coded** (a byte with bit 7 set repeats
+  the next index, otherwise it counts literal indices), a row offset table, and an **RGB565 palette**.
+
+**The fonts** (font records at `0x2054F0C..0x2054F84`, 24 bytes each: bitmaps, glyph table, kerning table, counts,
+line height, baseline, `bpp`, compression; glyph records of 10 bytes: bitmap offset, code point, advance in 1/16 px,
+width, height, x and y offsets; kerning records of 3 bytes: left, right, adjustment in 1/16 px):
+
+| Record | Glyphs | Height | Format | Use |
+| --- | --- | --- | --- | --- |
+| `0x2054F0C` | ASCII 32..126 (95), 380 kerning pairs | 20 px | 4 bpp | all text |
+| `0x2054F24` | `0123456789P` | 54 px | 4 bpp, run-length | the big preset number (`P05`) |
+| `0x2054F3C` | `ABCDEFG` | 38 px | 4 bpp, run-length | the tuner's note |
+| `0x2054F84` | ` #0123456789?BHMRTadefnoprstuyz` | 22 px | 4 bpp | the tuner page (`Ref 440Hz`, `Mute`, `Bypass`, `#`) |
+| `0x2054F54`, `0x2054F6C` | one glyph each (`A`) | 16 / 10 px | 1 bpp | **likely** placeholders or icons |
+
+**The flush** (`f_0201bccc`, registered as the display driver's flush function `f_0201be1c`):
+- the window is set with the panel's standard commands, **CASET `0x2A`, RASET `0x2B`, RAMWR `0x2C`** (`f_0201b9ce`;
+  data/command on the GPIO at `0x50040` bit 5, chip select bit 1);
+- the pixels go by **SPI1 DMA** (`0x11D0C` address, `0x11D10` count), at most 3,840 bytes (1,920 pixels) a transfer;
+- every SPI wait has a **2 ms timeout** (`f_020105da`); on a timeout the SPI is reset (`CON = 0x4021`) and the
+  command retried once; counters at `state + 3736..3772` keep the failures.
+
+### 17.2 The map of the image
+
+**Read** (strings, peripheral addresses, call graph). What each part of the application image is:
+
+| Addresses | Instructions | What it is |
+| --- | --- | --- |
+| `0x1C00000..0x1C11000` (RAM) | 24,841 | interrupt entry, flash and cache helpers, the multi-core lock (`f_01c01196` / `f_01c011ae`), the audio interrupt and the DSP kernels (sections 2..8) |
+| `0x2000000..0x2022000` | 44,619 | **BlackBox**: presets, effects' set-up, UI, keys, MIDI, settings (sections 3..16) |
+| `0x2022000..0x2025B00` | 4,915 | JieLi's app framework: system events (`sys_event`), the file-system switch (`jlfat`), UTF-8, the app's start-up (`f_02023a20`), the driver version (`INCLUDE_DRIVER-$a5f5fbc`) |
+| `0x2025B00..0x202AE00` | 7,116 | **USB device** (registers at `0x16000..0x16800`): the USB-MIDI receiver, Audio Class, the record and playback rings and mixer (16.3) |
+| `0x202AE00..0x2030A00` | 7,371 | BlackBox's DSP glue: amp, cabinet, reverbs, Shimmer (sections 4..14) |
+| `0x2030A00..0x2035D00` | 7,572 | system services: timers (`sys_timer`, `usr_systimer`), clocks and power domains (`ble`, `edr`, `wifi`), the flash file system (`sdfile`, `EXT_RESERVED`, `app_area_head`, `res`), the Bluetooth pairing file (`btif`) |
+| `0x2035D00..0x203F000` | 13,398 | a **FAT** file system (12/16/32, long names in UTF-8, 8.3 names), partition tables (MBR, GPT `EFI PART`) |
+| `0x203F000..0x2043000` | 5,434 | clock (`osc`), environment (`getenv`), the BLE GATT application (`f_020420e0`), the **SBC/mSBC decoder** (`f_02042caa`, on a hardware block at `0x13D00`, **likely**) |
+| `0x2043000..0x2046100` | 4,086 | C library: `memcpy` `f_0204534a`, `memset` `f_0204540c`, `memcmp` `f_02045004`, `strcmp` `f_0204503c`, `strlen` `f_0204514a`, software double-precision floating point |
+| `0x2046100..0x2058000` | — | read-only data: strings, effect and model tables, fonts, impulse responses, descriptors |
+| `0x2058000..0x2059900` | 1,524 | the **update library** (`INCLUDE_UPDATE`, `app_dir_head`, the `*_ota.bin` names, `flash.bin`, `LOADER.BIN`) |
+| `0x2059900..0x205C000` | 3,272 | the **heap** (`MEM_HEAP`): `malloc` `f_0205a17e`, `free` `f_02059b36`, `calloc` `f_0205b24c`; chunks with size and flag bits, bins, a spin lock shared by both cores |
+| `0x205C000..0x2060000` | 5,558 | the **RTOS**: FreeRTOS's design on two cores (the current task per core by `cnum`; queues created with FreeRTOS's types, 2 = counting semaphore `f_0205da94`, 4 = recursive mutex `f_0205d0cc`; take / give `f_0205cdba` / `f_0205ceb8`; task creation `f_0205ca82`; tasks found by name `f_0205e896`) |
+| `0x2060000..0x2075000` | 29,160 | the **Bluetooth controller**: radio (`0x28000`), baseband (`0x2FC00`, `0x2FD00`), the `btctrler` task, the BLE link layer (`link_layer`, `ble_slave_mult`), the virtual HCI between host and controller (`H4_Controller`), low power (`btstack_lowpwer_deal`), the radio test mode (`autotest`) |
+| `0x2075000..0x2080000` | 16,057 | the **Bluetooth host** (`btstack`): L2CAP, SDP, AVDTP / A2DP, ATT / GATT |
+| `0x2080000..0x2088000` | 11,130 | start-up and low-level drivers: the flash controller (`0x11C00`), clocks, interrupts, the module table (`0x2080A10`) |
+| `0x2088000..0x2092000` | — | data: the RAM code's load image, the task table (`0x208CF00`) |
+| `0x2092084..0x209A0F4` | — | the two overlays and the 20 effect blocks (sections 8.2, 8.4) |
+
+### 17.3 What the libraries do for the BlackBox
+
+**USB** (read):
+- the **USB-MIDI receiver** (`f_02025b12`) recognises two 8-byte packets `04 F0 22 24` + `07 35 xx F7`, the SysEx
+  `F0 22 24 35 xx F7`:
+  - `xx = 7D` writes `usb_update_mode` at `0x1C7FD80` and resets the chip (`f_020253d6`): **the boot loader's USB
+    update mode** (the same key OpenPocket uses, `firmware/bsp/chip/usb.c`);
+  - `xx = 7F` sets the update request flag (OpenPocket's `ota_req`, the M-UPGRADE path);
+- the same reset is reached from a second handler (`f_0202710a`) on a command packet `FC 00 FE 00 00 00`
+  (**likely** JieLi's PC update tool);
+- Audio Class and the rings: 15.2, 13.2, 16.3.
+
+**Bluetooth** (read):
+- **one classic profile: A2DP sink**. The only SDP record (`0x2075950`) is: Audio Sink `0x110B`, L2CAP PSM `0x19`
+  (AVDTP) version 1.3, Advanced Audio `0x110D` version 1.3, features `0x0001`, name `JL_A2DP`. **No AVRCP, no
+  HFP, no SPP record**;
+- the audio is decoded as SBC (`bt_sbc_dec` task) and mixed into the output through the 6,144-sample ring (16.3);
+- **BLE**: a GATT server with the BLE-MIDI service, advertised as `sinco...` (10.6);
+- the pairing records live in the `btif` file.
+
+**Files** (read): every file the BlackBox opens is on the **`sdfile`** flash file system (`mnt/sdfile/...`: `app`,
+`res`, `EXT_RESERVED/pd40j`, `EXT_RESERVED/usr`, `app/btif`, `app/cfg_tool.bin`), resolved through the flash
+directory (`app_area_head`). The FAT driver is linked in through the file-system table but **no code path the
+BlackBox uses mounts a FAT volume** (its mount, `f_020365f8`, is reached only through that table).
+
+**Update** (read): the update library knows JieLi's loader names (`edr_ota2.bin`, `ble_app_ota.bin`, ...) and loads
+`LOADER.BIN` from flash (`f_0202567e`). The update itself runs in the boot loader after the reset above, not in the
+application.
+
+**RTOS and heap** (read): FreeRTOS-style tasks on both cores (`wet_audio`, `pd40_ui`, `tuner_task`, `USB-Audio`,
+`USB-Midi`, `bt_sbc_dec`, `midi_route`, `sys_timer`, `btctrler`, `btstack`, ...), a heap with a lock shared by the
+two cores. The audio itself runs in interrupts (section 2), not in tasks.
+
+### 17.4 What is left
+
+The libraries were mapped and their parts that the BlackBox uses were read. **Not read line by line**: the Bluetooth
+controller and host (about 45,000 instructions), the FAT driver (about 13,000), the RTOS internals, the start-up
+drivers and the heap's allocator. They are JieLi's generic code, shared by every product on this chip, and nothing in
+them is specific to the BlackBox. OpenPocket replaces or does not use them.
