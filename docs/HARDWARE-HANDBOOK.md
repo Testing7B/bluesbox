@@ -1,0 +1,345 @@
+# AC791N handbook: what OpenPocket learnt about the chip (for FM-1 firmware work)
+
+This document collects what the OpenPocket project found about the JieLi AC791N, the chip in the FM-1, the Donner Pocket X
+and the M-VAVE BlackBox. It covers the CPU, memory, flash, second core, audio, accelerators and radio, the methods that
+worked for DSP on this chip, the mistakes that cost us builds, and what M-VAVE's own firmware does. It is written for a
+developer, or an assistant, building FM-1 firmware on felucca-bsp: OpenPocket uses the same BSP (`firmware/bsp/`), so the
+register names and helpers below are the ones you already have.
+
+**How sure each fact is.** **Measured**: seen on a real unit (pedal or FM-1). **Read**: seen in code (ours, the JieLi
+SDK, or the disassembled stock firmware) but not measured. **Likely / guess**: reasoned, one step unproven.
+
+**What carries over to the FM-1.** Everything about the chip carries over: CPU, memory, flash controller, second core,
+ALNK (I2S), FFT block, cache, power, reset and USB. Board facts (which pin does what, the external ADC/DAC, the button lights)
+are the Pocket X / BlackBox's and are marked **[pedal]**. Use them only as examples of how to find your own.
+
+Sources in this repository: `docs/AUDIO-SDK.md` (the audio bring-up, v10..v37), `docs/STOCK-FIRMWARE.md` (the stock
+firmware read in three passes), `docs/NAM.md` (the fixed-point network), `docs/BLE-TEST.md` (Bluetooth),
+`docs/RESCUE.md` (mask-ROM recovery), `firmware/bsp/chip/*.h` (felucca-bsp, with our additions).
+
+---
+
+## 1. CPU and clocks
+
+| Item | Value | How sure |
+| --- | --- | --- |
+| Cores | two pi32v2 cores (JieLi's own ISA), CPU0 and CPU1, shared memory | read, measured |
+| Core clock | **360 MHz** under M-VAVE's bootloader (PLL1 = 24 MHz / 12 x 270 = 540 MHz, system clock 2/3 of it); **320 MHz** under m-bootloader 1.2 (PLL1 off), so every firmware ran 11 % slower and the peripheral clock was 53 MHz instead of 60 | measured (fm1-x0x debug build; `fm1_clock.h` puts the stock clock back) |
+| Bus clocks | HSB /2 = 180 MHz, LSB /3 = 60 MHz (0x10008 = 0x00010200) | measured |
+| Time base | **TIMER4 free-running at 24 MHz** from the crystal (`0x10804`, `fm1_ticks()`, `FM1_TICKS_PER_US 24`) | measured |
+| FPU | single-precision float in hardware, **only with `-mcpu=r3 -mfprev1`** (the SDK's options for the WL82). Without them clang emits soft-float calls (`__addsf3`...) | measured |
+| Division | integer and float divisions are slow: take them out of per-sample loops (compute `1/x` once a block) | measured (v27: two divisions a sample moved to once a block) |
+| 64-bit | 64-bit multiply is native (`r11_r10 = r1 * r2`); **64-bit division is not: `__udivdi3` is missing from the toolchain's runtime**, the link fails | measured (v38 build error) |
+
+### The performance model that held on the pedal (measured)
+
+- **A taken branch costs about 8 cycles.** A per-sample `switch` or `if` on a block's type, inside the loop, costs more
+  than the arithmetic. Make one loop per type (C `always_inline` with constant parameters) and decide once a block.
+- **There is no data cache in front of the SRAM.** The data cache serves the flash only. Every load from RAM pays the bus.
+  Keep inner-loop data in registers, read each weight once for several frames, and avoid scattered reads.
+- **Two instructions can issue together**: a 32-bit multiply-add with a 16-bit load (5 issues for 4 MACs + 4 loads in
+  our hand routine).
+- **Load-use stall:** a multiply-add paired with the load of the value it needs next waits (3.2 cycles against 2.2
+  without the wait). Load each value 2 to 4 steps before its use (`tools/gen_rdq.py` unrolls that way).
+- **Hardware loops** (`rep N { ... }`) have no branch cost. The compiler uses them for simple counted loops. The stock
+  firmware's sample loops are all hardware loops.
+- **Flash code runs through the instruction cache** (XIP), shared by both cores. A cache miss on flash is expensive. The
+  stock firmware keeps every per-sample routine in RAM (section 9). We keep the NAM hand routines in flash next to their
+  callers (see the call-range rule in section 2).
+- **libm precision matters.** Our first `cosf` (sin(x + pi/2), error 4e-6) made biquads at 30 Hz with 4x oversampling
+  unstable, giving NaN and then permanent silence on the pedal while the PC (system libm) was fine. Always simulate with
+  the libm you ship (`firmware/px_math.c`).
+- **Denormals:** digital silence through feedback filters falls into denormals and the FPU slows down. We add +-1e-15,
+  alternating sign per sample, at the chain input and after stages that can swallow it (bias, gates).
+
+### The second core (felucca-bsp `fm1_cpu1.h`; measured)
+
+- **Start it at power-on**, before audio and timers run, with interrupts off (Melodee's and X0X's finding). The entry address
+  goes in the word at `0x01C7FFF8`.
+- **One job at a time:** `fm1_cpu1_run(fn, arg)` → do your own share → `fm1_cpu1_wait()`. CPU1's idle loop is in RAM
+  (`.c1_text`). The job itself runs from flash, so never switch the flash off (a flash write) with a job outstanding.
+- **Some units misread shared RAM on CPU1** (0x00200000 where 0 is stored, more often under load). The BSP guards
+  every job with a check word, and `FM1_CPU1_FALLBACK 1` retires CPU1 on any misread or fault, so CPU0 continues alone.
+  OpenPocket builds with the fallback on and always keeps a one-core path that works.
+- **Sharing:** a single writer per word and `csync` around the hand-over. We saw no coherence problem with buffers
+  written on one core and read on the other after the job's completion.
+- **Patterns that worked:**
+  1. **Whole chain on CPU1, one block late:** block N goes to CPU1 at the end of IRQ N, and IRQ N+1 collects it before
+     output. CPU0 is free between interrupts (UI, display) and never touches audio.
+  2. **Work split inside a block:** a causal network (each layer's frame t depends only on frames <= t of the layer
+     before). CPU1 takes the first 12 or 16 frames of each 32 through all layers without waiting. CPU0 takes the rest,
+     waiting per layer on one counter.
+  3. **Pipeline:** CPU1 runs the effects after the amp on the previous block while CPU0 runs the effects before the amp
+     on this block, then both share the network. This costs one extra block of latency (`tests/engine/pipe_test.c`: same
+     output, one block later).
+  4. **v39 "wet lanes"**: delay and reverb run beside the chain, two blocks late (section 8).
+- **Lesson from v39 (measured as a defect):** with pattern 3 we gave CPU1 the delay and reverb as a job in the gap
+  after the block, before the next interrupt. The gap was too short, because the network shares its work between the
+  cores and only half of the freed time came back to the gap. The job was cut every block and the wet sound came out
+  chopped at the block rate (a whistle). **Never put work in "the time left before the next interrupt" without
+  measuring that time under the heaviest load.** Put it where the work-sharing accounts for it.
+
+---
+
+## 2. Memory map
+
+| Range | Size | What | How sure |
+| --- | --- | --- | --- |
+| `0x02000120..` | up to ~580 KB (`XIP` in `app.ld`) | flash code, executed in place; **app.bin file offset 0 = 0x02000120** (not 0x02000000: several of our early address readings were off by 0x120 for that reason) | measured |
+| `0x01C00000..0x01C06000` | 24 KB | `RAMTEXT`: code copied to RAM at boot (`.ram_text`: flash driver, CPU1's loop, anything that runs with the flash off) | read (`app.ld`) |
+| `0x01C08000..` | 96 KB | `RAM`: `.data`, `.bss` | read |
+| `0x01C20000..0x01C74000` | 336 KB | `POOL`: free SRAM, OpenPocket's DSP engine (~337 KB used) | read |
+| `0x01C74000..0x01C7C000` | | user and supervisor stacks with 256-byte guard bands | read |
+| `0x01C7C000..0x01C7FD50` | | `NOINIT`: survives resets (crash records, boot counters) | read |
+| `0x01C7FD50..0x01C7FFFF` | | reserved: boot info, the CPU1 mailbox/entry word (`0x01C7FFF8`), vector table | read |
+| `0x01F28000..0x01F2F000` | 28 KB | **seven of the eight 4 KB data-cache ways turned into plain RAM** at boot (`firmware/px_cacheram.h`, from melodee). The data cache serves only the flash, so nothing is lost. OpenPocket puts the vector unit's inputs there, away from the RAM the CPUs use | measured |
+| `0x01EE0400` | | FFT block / vector unit (section 6) | measured |
+| `0x01EEE008` / `00C` / `010` | | cache control: CON (bit 14 = idle), data ways, instruction ways | read (melodee) |
+| `0x01EEF0F0` | | a free-running timer the stock firmware reads to time its audio interrupt | read (stock) |
+| `0x00050000 + port x 0x40` | | GPIO: OUT +0x00, DIR +0x08 (1 = input), DIE +0x0C, PU +0x10, PD +0x14. Port D = the flash (never touch) | measured |
+| `0x00012E00` / `0x00015100` | | ALNK0 / ALNK1 (I2S) | read (SDK `WL82.h`) |
+| `0x00010000`, `0x00011900`, `0x00051000+` | | CLOCK, ANA, IOMAP | read (SDK) |
+
+**Stock firmware for comparison (read):** RAM code `0x1C00000..0x1C107E4` (66 KB, the whole per-sample DSP library),
+copied at boot from app.bin offset 0x81760; an overlay window at `0x1C22340` (7 KB, two code sets swapped on demand);
+four RAM slots from `0x1C23F80` where each effect type's code is copied when chosen. It also keeps the Bluetooth A2DP
+PCM ring at `0x1F29EE0`, inside the cache-way range above (**likely**: the stock firmware also uses cache ways as RAM).
+
+### Rules learnt the hard way
+
+- **Call range:** a direct `call` between flash (`0x02xxxxxx`) and RAM code (`0x01C0xxxx`) is out of the instruction's
+  range (+-4 MiB, 23 bits). The linker refuses it, but names only one of the offending calls (a v37 build had 478). Our
+  `tools/check_calls.py` lists them all before linking. To call RAM code from flash, call through a pointer the compiler
+  cannot fold (`FL_FAR`, `fm1_flash.h`).
+- **RAM is the scarce resource.** Count `.data + .bss + CPU1 stack (3 KB) + the SDK driver's bss` against 96 KB, and
+  `.pool` against 336 KB, on every change. We compile the objects for the target and add up the section sizes even when
+  we cannot link.
+- **Stack guard:** felucca's EMU stack limit faults any `sp` outside `[_ustack_lo, _sstack_top]`. Task stacks placed in
+  ordinary RAM (an RTOS, the BLE controller) crash at once with the guard on (section 11).
+
+---
+
+## 3. Flash (1 MiB SPI NOR)
+
+**[pedal] layout as OpenPocket uses it. The FM-1's own layout differs: felucca's main store is `0x97000..0xE0000`.**
+
+| Range | What |
+| --- | --- |
+| `0x00000..0x04000` | flash header, boot config: **never written** |
+| `0x04000..0xA3000` | the application area (the update loader rewrites only this) |
+| `0xA3000..0xFF000` | where the bootloader looks for update records: anything that ends like a record can be erased by an update, so user data there must be skipped by the loader (`loader/ldr_core.c`) |
+| `0xA5000` | stock "VM" (settings; holds the radio calibration records, VM 106..108, 187) |
+| `0xBE000` | stock BTIF (Bluetooth pairing) |
+| `0xC0000..0xE0000` | OpenPocket: NAM user models (16 x 8 KB) |
+| `0xE0000..` | update loader staging (5 x 4 KB) |
+| `0xF0000..0xF4000` | OpenPocket presets, A/B copies, header written last (sequence + CRC16), read back after writing; bytes `0xF00..0xF7F` of each sector left erased (the loader reads that area) |
+| `0xF4000..0xFC000` | OpenPocket: cabinet IRs (8 x 4 KB) |
+| near `0xFF000` | key/MAC area |
+
+**Writing the flash while audio runs (measured, v25 on):** the SFC (XIP) is switched off during erase and program, so
+everything that runs then must be in `.ram_text` and touch only registers, the stack and RAM: no `.rodata`, no library
+calls, no flash-resident helper. Interrupts off, and CPU1 idle between two jobs (its job code is in flash). We mute the
+output, mask the ALNK0 interrupt, write, unmask, and fade back in.
+
+**Reading raw:** the XIP window decrypts. Data written by another tool (the stock VM) must be read through the plain
+window (`SFCENC_CON`, `fm1_flash.h`, `ble_vm.h`), not through `0x02xxxxxx`.
+
+---
+
+## 4. Power, reset, boot (measured on pedals)
+
+- **Long-press reset:** P33 `PINR_CON` (`0x94`, bit 0 = enable) resets the chip when one wake-up pin is held for 4 or 8 s.
+  The always-on P33 domain keeps it across a warm reset but not across a power cycle. The boot loader's value applies
+  after power-on. On one BlackBox the pin sits at its active level, so the unit reset every ~4.3 s after power-on
+  (issue #1). The stock app writes `PINR_CON = 0` first thing; **do the same**. Pocket X boots with `PINR 08`
+  (off), a BlackBox with `PINR 09` (on).
+- **Reset source:** `P3_RST_SRC` bits: 0 power-on, 1 VDDIO low, 2 watchdog, 3 VCM, 4 long press, 5 1.2 V, 6 soft. Show
+  it on the boot screen; it named the long-press cause above.
+- **Supplies:** the stock firmware sets VDC14 7, SYSVDD 15, the 1.3 V supply on the DC-DC and several P3_ANA_CON bits.
+  We copied that in v30. On a Pocket X the same engine then measured **77 % instead of 61 %** CPU, with crackles
+  (v32), so v33 went back to the boot loader's levels (the link was not proven). Do not change the supplies without
+  measuring the DSP load before and after.
+- **Crash and boot diagnostics that paid off:** a `.noinit` record of the last boot (stage reached, blocks of audio
+  played, load, NaN count, reset source, crash PC/RETS); a boot guard (two failed starts → safe mode, then back to the
+  loader); the crash screen with `VEC`, `PC`, `RETS` looked up in `symbols.txt`.
+- **Mask-ROM rescue:** a looping unit spends ~44 s between crashes in JieLi's USB boot ROM ("UBOOT", USB `4C4A:8057`,
+  `WL82 UBOOT1.00`). With JieLi's `wl82loader.bin` in RAM the whole flash can be read and rewritten (chip key `0x980F`).
+  The ROM cannot be damaged (`tools/uboot_rescue.py`, `docs/RESCUE.md`).
+
+---
+
+## 5. Audio (ALNK / I2S)
+
+- **Driver:** JieLi's own `iis.c` from the AC79 SDK is shipped as LLVM bitcode (`cpu.a`). Our toolchain compiles it as
+  is: `clang -target pi32v2 -Os -c -x ir iis.bc` (~5 KB). You provide malloc/free, gpio_* helpers and a few log symbols.
+  It does not register its interrupt: call `iis_irq_handler(0)` from the ALNK0 ISR (**IRQ 11**). It sets the 44.1/48 kHz
+  clock family itself (CLK_CON2 `0x10014`, ANA).
+- **Callback order (read in the driver):** `iis_irq_handler` walks the channels in order and calls the output
+  callback for channel 0 (TX), then the input callback for channel 1 (RX), in the same interrupt.
+- **24-bit mode (read in the stock firmware, measured):** set each channel's 24-bit bit (`CON1 |= 1 << (4*ch + 2)`, the
+  SDK's `data_width`). The DMA then stores one sample per 32-bit word, right-aligned (bit 23 = sign), and LEN counts
+  words: `sr_points = 2 x frames`. Read input as `(int32_t)(w << 8) >> 8`. 24-bit is what the stock firmware uses (a hiss
+  we first blamed on 16-bit input turned out to be the right channel's noise, below).
+- **[pedal]** I2S on IIS_PORTA: MCLK PA4, SCLK PA5, LRCK PA6, output DAT0 PA7 → external DAC → SGM8905 amp (enable PA9
+  high), input DAT1 PA8 from an external ADC, guitar on the **left channel only** (the right one carries steady noise
+  14 dB above the left floor; mixing L+R added it). The chip's internal DAC is not used on the pedal.
+- **Blocks:** OpenPocket uses 128 frames at 44.1 kHz (2.9 ms). The stock firmware uses **64-frame blocks**. Its
+  effects compute their coefficients with fs = 48 000 (**likely 48 kHz**: the ALNK rate was not traced to a register).
+- **Real-time accounting:** time every block with TIMER4 against its budget (`frames / fs x 24 MHz`). Count blocks over
+  100 % (`LATE`), blocks that reach the output clipper (`CLIP`), the peak load, and a per-effect time (v38 profiler). The
+  stock firmware keeps the sum and the **maximum over 512 blocks** of its interrupt's time: the maximum is what predicts
+  a crackle.
+
+---
+
+## 6. The FFT block / vector unit at `0x1EE0400` (measured)
+
+- **Registers:** CON `0x1EE0400`, CADR `0x1EE0404` (address of a command), CONST `0x1EE0408`. Start a command with
+  `CON = 0x149` (stock FFT jobs: `0x101`). Done = CON bit 7, cleared by setting bit 6. It runs beside the CPU.
+- **Dot-product command** (layout from the AC79 SDK `apps/common/jl_math`, Apache-2.0), 8 words, 32-byte aligned:
+  `[0] 0xAA1` (dot product, x y z 32-bit), `[1] x`, `[2] y`, `[3] z`, `[4] q << 24 | nloop << 12 | nlen`,
+  `[5] z step << 20 | y step << 10 | x step` (bytes), `[6] 0`, `[7] 0`. It computes `nloop` dot products of `nlen` pairs,
+  `z = sum(x*y) >> q`. We use it as a matrix-vector engine for the network layers (a weight row against many X rows).
+- **Speed:** about **4.8 cycles per multiply-add**, about as fast as a good CPU loop. The gain comes from running it
+  beside the CPU (split each layer in two halves: while the unit does one, the CPU gathers or post-processes the other).
+- **Memory contention:** its inputs went into the cache-way RAM (`0x1F28000`), so it does not fight the CPUs for SRAM.
+- **Check it at boot:** run it against the C result on a pattern. If it is absent, unclocked, or off by more than 1 LSB,
+  do not use it (we time out after 400 000 polls).
+- **FFT mode (read in the stock firmware):** a 3-word job `[config | 1, in, out]`, CADR pointed at it, `CON = 0x101`,
+  wait for bit 7, clear with bit 6. It is **fixed point**: the stock code finds the block's headroom, clamps the shift to
+  -24..+18, and rebuilds a float scale `2^e` for the result (block floating point). It uses the hardware **only when
+  `cnum` says it runs on CPU1**, and software radix routines in RAM otherwise.
+- **CORDIC** (`copex`, the SDK's `tanh_float`): studied, no faster than a rational tanh.
+
+---
+
+## 7. Peripherals and I/O (registers generic, pins **[pedal]**)
+
+- **Display:** hardware SPI1 group A (PB6 CLK, PB7 DO, IOMAP_CON1 bit 4 = 0), CON = 0x4021, 20 MHz (BAUD 2), pixels by
+  DMA from a double buffer of 1024 pixels (`fm1_lcd_hw.h`).
+- **Button lights [pedal]:** one 74HC595 on port C: DS PC8, SHCP PC5, STCP PC6; **PC7 = output enable, low = on** (not a
+  screen line, as we long assumed: with it high the lights stay dark). Byte MSB first, ~5 us per edge, sent inverted.
+  Read-modify-write of PORTC from the main loop only.
+- **Inputs [pedal]:** buttons PA0..PA3, encoder PC0/PC1, MASTER knob on PA10 (ADC), battery divider on PC9 (ADC);
+  `0x16A10` bit 16 is read by the stock firmware beside the battery gauge (**guess**: charging).
+- **USB device:** felucca `usb.c`, polled from TIMER5 at 2 kHz (10 kHz tick). USB-MIDI and SysEx (our editor
+  protocol: `F0 7D 4F 50 cmd ... F7`). The M-UPGRADE update entry (`ota.c`) stages a loader at `0xE0000` and restarts
+  into it.
+- **Watchdog:** feed it from the main loop. A vendor call that never returns, or a cooperative scheduler stuck, shows up
+  as `RESET BY: WATCHDOG` after ~8 s.
+
+---
+
+## 8. DSP methods that worked on this chip
+
+Measured on the pedal or proven on the PC against a reference. The engine is `engine/px_dsp.c`, the network `engine/px_nam.c`.
+
+1. **Fixed point for the heavy network:** NAM A2-Lite (23 dilated layers, 3 channels, 1 871 weights, ~1 730 MAC/sample).
+   Activations Q20, weights Q24, 64-bit accumulators shifted by a constant: 83..100 dB SNR against float. Blocks of 32
+   frames, layer by layer, each layer's ring interleaved `[time][channel]` with its first 3 frames mirrored past the end
+   (4 frames read straight from any position). Hand assembly for the inner loops, **checked against C at boot** (falls
+   back to C on any 1-bit difference). The first, per-frame version ran at 223 % of real time; the layer-by-layer one fits.
+2. **Pick the fastest way at boot:** time CPU alone, vector unit, both, one or two cores on the first model, and keep the
+   fastest (`pxn_tune`). Units differ, and so do bootloaders (320 versus 360 MHz).
+3. **No per-sample branches:** one loop per effect type (v38: delay and reverb, bit-identical). Block-wise processing:
+   each stage over the whole block keeps its state in registers.
+4. **Oversampling with polyphase IIR half-band filters** (two all-pass branches, one multiply per section, each branch
+   at the lower rate). Coefficients: stage 1 (6) 0.062889286, 0.224015205, 0.424695820, 0.616864442, 0.782113520,
+   0.927573355; stage 2 (2) 0.132097462, 0.574998436. Stop band 78/66 dB, about 40 % fewer instructions than Butterworth
+   biquads. The stock firmware's amp uses 2x (0.3195, 0.0958, 0.7420, 0.5567, 0.9600, 0.8695) then a 3x three-branch
+   stage (0.7396, 0.3513, 0.1013) for 6x.
+5. **Waveshapers without `tanh()`:** a rational curve (one division) or a **512-entry table of `tanh(i/64)`** with linear
+   interpolation (the stock firmware's, RAM `0x1C0E408`). The stock firmware builds `asinh` from 256-entry sqrt and log2
+   mantissa tables.
+6. **16-bit delay and reverb lines** (rounded; once a tail is down to the last bits it is cut towards zero, so a loop
+   cannot hold a tiny pattern for ever). The reverb tank runs at half rate (22.05 kHz) in one 16-bit ring of 32 KB. The
+   stock reverbs also keep 16-bit lines.
+7. **Cabinet impulse responses by uniform partitioned FFT convolution:** 64-frame partitions, a real FFT of 128 built from
+   a complex FFT of 64, 1024 taps. It is exact to -124 dB against direct FIR, costs ~420 instructions/sample, and uses
+   17 KB of RAM. The stock firmware does the same on the FFT block.
+8. **Changes without clicks:** prepare heavy recomputation outside the interrupt, hand a flag to the audio side, apply at
+   the start of the next block. Glide gains and mixes (~23 ms), fade blocks on/off, and fade the output out and in
+   (~6 ms) around a full rebuild. **Never mask the audio interrupt for a long recompute** (v37 did, for up to a whole
+   engine rebuild: most likely a late block, heard as a crackle, on heavy presets).
+9. **The wet lanes (v39, from the stock firmware):** the delay and the reverb no longer run in series in the critical
+   path. At their slot the chain sends the signal and mixes in the lane's wet output of two blocks before. The lane runs
+   beside the chain (the other core). The delay's taps that are *heard* read the lag less far back; the taps *fed back*
+   keep the delay time, so echo timing and repeat spacing are exact, bit for bit (`tests/engine/wet_test.c`). Mind the
+   gap lesson in section 1.
+10. **Safety nets:** NaN/Inf at the output → silence + engine reset by the main loop. Sustained overload (> 85 % for 8
+    blocks) → bypass. A soft knee at 0.8 of full scale instead of a hard clip.
+11. **Test on the PC with the pedal's own code and libm:** bit-exact regression hashes over every preset and type, a
+    two-core pipeline test, a vector-unit emulator that completes commands late at random, a simulated second core.
+    Almost every pedal-only bug we had would have shown there.
+
+---
+
+## 9. What M-VAVE's stock firmware does (BlackBox_021, read; details in `docs/STOCK-FIRMWARE.md`)
+
+- **OS:** FreeRTOS SMP from JieLi's SDK. Tasks include `app_core`, `sys_event`, `systimer`, `btctrler`, `btstack`,
+  `tuner_task`, `bt_sbc_dec`, `USB-Audio`, and **`wet_audio` (priority 24, created with a 384-word stack)**.
+- **Audio interrupt:** `request_irq(11, prio 4, 0x202A230, CPU0)`. Per 64-frame block it copies ALNK0, sign-extends with
+  an input shift, keeps peaks, runs the **whole dry chain inside the interrupt** (float, two planar channels of 64),
+  mixes in USB playback (a 1 024-frame packed 24-bit ring with a linear-interpolation resampler) and A2DP (a 16-bit ring),
+  converts back with round-to-even, and times itself.
+- **Chain runner:** six slots, each with a category, on flag, instance, descriptor and six 16-bit parameters. A slot
+  switched on/off is crossfaded over 320 samples. **Delay and reverb are not run in the chain:** at their slot the
+  interrupt outputs `dry x gain + the lane's wet output of the previous block` and gives the lane a mono `(L+R)/2` copy.
+  It then posts a semaphore to `wet_audio`, which processes the lane, swaps the double buffer, and times itself. That is
+  where our v39 came from.
+- **Effects:** module descriptors `{name, params {count, names, defaults, min, max}, funcs {init, set, process, ...}}`.
+  Six categories (gates/dynamics/drives 10, one AMP descriptor for 20 amps, modulation 7, delay 5, reverb 6, one CAB
+  descriptor for 20 cabinets). Delays and reverbs run at **half rate** behind a 2:1 polyphase decimator/interpolator.
+  Modulation runs at full rate, stereo. The amp runs 6x oversampled with a rational waveshaper. Cabinets are FFT
+  convolution on the FFT block.
+- **Code placement:** every per-sample routine in RAM. Per-type effect code copied into one of four RAM slots when chosen,
+  so the per-sample loop has no type test.
+- **Preset (92 bytes):** volume 0..100, the order (a permutation of 0..5), on[6], model[6], 6 x 6 parameters.
+- **Interrupt priorities:** audio 4, radio 2, timers 1, on CPU0. The **radio sits below the audio**, so audio always
+  preempts the radio. A hardware-job completion interrupt (IRQ 62) runs on CPU1.
+
+---
+
+## 10. Toolchain notes
+
+- JieLi's clang for pi32v2 (`clang -target pi32v2`, LLVM 4-era) + its `ld`, `objdump`, `objcopy`. **Disassemble with
+  `objdump --mcpu=r3`**, or the FPU instructions do not decode.
+- Flags that matter: `-mcpu=r3 -mfprev1` (hardware float), `-fno-builtin`, `-ffunction-sections`. `-O2` for DSP, `-Os` for
+  the rest. Our clang needed `-isystem <host clang>/include -ffreestanding` for `stdint.h` when used outside the SDK.
+- SDK libraries are often LLVM bitcode: compile them with `-x ir` instead of reimplementing them (I2S driver, BLE
+  controller, DAC).
+- Avoid `uint64_t` division and modulo (no `__udivdi3`). Keep 64-bit for multiply-accumulate only.
+- Engine code is portable C: it builds for the PC (tests) and as WebAssembly (`engine/wasm.sh`, the simulator's sound)
+  from the same sources.
+
+---
+
+## 11. Bluetooth LE on this chip (measured on a BlackBox; `docs/BLE-TEST.md`)
+
+What it took to get JieLi's controller (from the SDK's `btctrler.a` / `btstack.a` bitcode) running without their RTOS:
+
+- **Call `__crc16_mutex_init()`** before starting the controller, or `thread_create → crc_get_32bit` waits for ever.
+- **`low_power_get` must return a non-null handle**, or a vendor assertion parks the CPU in `P33_SYSTEM_RESET`
+  (looks like a hang, then the watchdog fires).
+- **The context switch must save r4..r15**, the registers the compiler's prologues preserve, not only r4..r9.
+- **Radio silent until two fixes:** the modem's TX I/Q trims (`0x2FC10`, `0x2FC08`) must be set (neutral gains `0x80`;
+  stock fills them from the Wi-Fi front-end calibration), and the stand-in for `wf_rf_common_init` must **return 0**,
+  or a stray value switches on the Wi-Fi/BT coexistence arbiter (`0x14000` bit 1).
+- **The link:** link `dev_hci_set_event_mask` for real (a stand-in means the host never sees LE meta events), and set
+  advertising up again after each disconnection.
+- **Interrupts:** BLE IRQ 45 and 29 at priority 2 (stock's numbers), below audio.
+- **Stack guard:** the controller's task stacks in ordinary RAM trip felucca's stack-limit guard. Build that image with
+  the guard off, or place the stacks inside the window (our linker script now refuses the bad combination).
+- **Radio calibration:** read the stock VM records raw (VM 106..108 to the radio replay, VM 187 the unit's calibration).
+- **Not verified:** sound under a link, long runs, bonding across a power cycle, flash writes during a link (the
+  library's interrupt code runs from flash).
+
+---
+
+## 12. Open questions
+
+- The ALNK sample-rate registers of the stock firmware (48 kHz for its effects is inferred from coefficient code).
+- Which core `wet_audio` runs on in the stock firmware.
+- Whether CPU1's shared-RAM misreads depend on supply level, clock or temperature.
+- The code-cache cost of running the DSP from flash on both cores (suspected once, never measured in isolation).
+- The stock `NAM` model format's exact network (1 871 float weights, type 16) and the role of overlay B.
