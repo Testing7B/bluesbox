@@ -2022,6 +2022,7 @@ void px_engine_init(px_engine *e, float sr)
     px_preset_t p; px_preset_factory(&p, 0);
     px_engine_set(e, &p);
 }
+static void wl_clear(px_engine *e);
 void px_engine_set(px_engine *e, const px_preset_t *p)
 {
     e->cur = *p;
@@ -2029,6 +2030,7 @@ void px_engine_set(px_engine *e, const px_preset_t *p)
     else px_order_default(e->ord);
     px_recalc(e);
     e->run = e->cur;                                   /* v38: nothing gliding, nothing fading */
+    wl_clear(e);                                       /* v39: the lanes start empty (the output fades in) */
     e->gl_left = 0;
     for (int b = 0; b < PX_NBLK; b++) { e->bf[b] = e->bfa[b] = p->on[b] ? 1.0f : 0.0f; e->bfd[b] = 0; }
 }
@@ -2762,9 +2764,12 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
 /* ---- v38: the delay and the reverb over a block, each type's branches decided once for the block (on the pedal a taken
  * branch costs about 8 cycles: the per-sample code had 6 to 10 of them). Each call with constants is its own copy of
  * the loop; the operations and their order are the per-sample code's, so the output is the same, bit for bit. */
-PX_AINL static inline void dly_loop(px_engine *e, float *xb, int n, const int T, const int M, const int FL, const int Q,
-                                    const int S)
+PX_AINL static inline void dly_loop(px_engine *e, const float *xb, float *wo, int n, const int T, const int M, const int FL,
+                                    const int Q, const int S)
 {
+    /* v39: in a wet lane its output is heard lg frames late: the taps heard read lg frames less far back, the ones fed
+     * back keep the delay time (the repeats keep their spacing) */
+    const float lg = e->wl_dlag;
     for (int k = 0; k < n; k++) {
         float x = xb[k];
             e->dly_len += (e->dly_tgt - e->dly_len) * 0.0004f;   /* time glides (no click) */
@@ -2790,15 +2795,27 @@ PX_AINL static inline void dly_loop(px_engine *e, float *xb, int n, const int T,
                 if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f);
                 if (e->dly_heads & 4) s += dly_tap(e, rd);
                 d = s * e->dly_hn; fsrc = s * e->dly_hf;   /* loop gain stays <= FDBK whatever the heads */
+                if (lg > 0.0f) {
+                    s = 0.0f;
+                    if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f - lg);
+                    if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f - lg);
+                    if (e->dly_heads & 4) s += dly_tap(e, rd - lg);
+                    d = s * e->dly_hn;
+                }
             } else if (T == PX_DLY_DUAL) {
                 float a = dly_tap(e, rd), b = dly_tap(e, rd * 0.75f);
-                d = 0.6f * (a + 0.8f * b); fsrc = a;
+                fsrc = a;
+                if (lg > 0.0f) { a = dly_tap(e, rd - lg); b = dly_tap(e, rd * 0.75f - lg); }
+                d = 0.6f * (a + 0.8f * b);
             } else {
                 d = dly_tap(e, rd); fsrc = d;
+                if (lg > 0.0f) d = dly_tap(e, rd - lg);
             }
             if (Q) {
-                float v = d * e->dly_q;
-                d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; fsrc = d;
+                float v = fsrc * e->dly_q;
+                fsrc = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q;
+                if (lg > 0.0f) { v = d * e->dly_q; d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; }
+                else d = fsrc;
             }
             float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
             if (S) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
@@ -2807,30 +2824,30 @@ PX_AINL static inline void dly_loop(px_engine *e, float *xb, int n, const int T,
             e->dly_rq = e->dly_env < 2e-4f ? 0.0f : 0.5f;
             e->dly_buf[e->dly_w] = dl_q(wv, e->dly_rq);
             if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
-            x = x + d * e->dly_mix;
-        xb[k] = x;
+        wo[k] = d * e->dly_mix;                        /* v39: the wet part only (wo may be xb: x is read first) */
     }
 }
-static void dly_block(px_engine *e, float *xb, int n, int t)
+static void dly_block(px_engine *e, const float *xb, float *wo, int n, int t)
 {
     const int m = e->dly_wow > 0.0f || e->dly_mod > 0.0f, fl = e->dly_flut > 0.0f, q = e->dly_q > 0.0f, s = e->dly_sat > 0.0f;
     switch (t) {                                       /* the combinations each type sets (rc_delay) */
-    case PX_DLY_DIGITAL: if (!m && !fl && !q && !s) { dly_loop(e, xb, n, PX_DLY_DIGITAL, 0, 0, 0, 0); return; } break;
-    case PX_DLY_DUAL:    if (!m && !fl && !q && !s) { dly_loop(e, xb, n, PX_DLY_DUAL, 0, 0, 0, 0); return; } break;
-    case PX_DLY_REVERSE: if (!m && !fl && !q && !s) { dly_loop(e, xb, n, PX_DLY_REVERSE, 0, 0, 0, 0); return; } break;
-    case PX_DLY_ANALOG:  if (m && !fl && !q && s) { dly_loop(e, xb, n, PX_DLY_ANALOG, 1, 0, 0, 1); return; } break;
-    case PX_DLY_MEMORY:  if (m && !fl && !q && s) { dly_loop(e, xb, n, PX_DLY_MEMORY, 1, 0, 0, 1); return; } break;
+    case PX_DLY_DIGITAL: if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_DIGITAL, 0, 0, 0, 0); return; } break;
+    case PX_DLY_DUAL:    if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_DUAL, 0, 0, 0, 0); return; } break;
+    case PX_DLY_REVERSE: if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_REVERSE, 0, 0, 0, 0); return; } break;
+    case PX_DLY_ANALOG:  if (m && !fl && !q && s) { dly_loop(e, xb, wo, n, PX_DLY_ANALOG, 1, 0, 0, 1); return; } break;
+    case PX_DLY_MEMORY:  if (m && !fl && !q && s) { dly_loop(e, xb, wo, n, PX_DLY_MEMORY, 1, 0, 0, 1); return; } break;
     case PX_DLY_TAPE:
-        if (m && !q && s) { if (fl) dly_loop(e, xb, n, PX_DLY_TAPE, 1, 1, 0, 1); else dly_loop(e, xb, n, PX_DLY_TAPE, 1, 0, 0, 1); return; }
+        if (m && !q && s) { if (fl) dly_loop(e, xb, wo, n, PX_DLY_TAPE, 1, 1, 0, 1); else dly_loop(e, xb, wo, n, PX_DLY_TAPE, 1, 0, 0, 1); return; }
         break;
     case PX_DLY_SPACE:
-        if (m && !q && s) { if (fl) dly_loop(e, xb, n, PX_DLY_SPACE, 1, 1, 0, 1); else dly_loop(e, xb, n, PX_DLY_SPACE, 1, 0, 0, 1); return; }
+        if (m && !q && s) { if (fl) dly_loop(e, xb, wo, n, PX_DLY_SPACE, 1, 1, 0, 1); else dly_loop(e, xb, wo, n, PX_DLY_SPACE, 1, 0, 0, 1); return; }
         break;
-    case PX_DLY_LOFI:    if (m && !fl && q && s) { dly_loop(e, xb, n, PX_DLY_LOFI, 1, 0, 1, 1); return; } break;
+    case PX_DLY_LOFI:    if (m && !fl && q && s) { dly_loop(e, xb, wo, n, PX_DLY_LOFI, 1, 0, 1, 1); return; } break;
     }
-    dly_loop(e, xb, n, t, m, fl, q, s);                /* (anything else: decided per sample, as before) */
+    dly_loop(e, xb, wo, n, t, m, fl, q, s);                /* (anything else: decided per sample, as before) */
 }
-PX_AINL static inline void rv_loop(px_engine *e, float *xb, int n, const int ALG, const int SP, const int SH, const int GT)
+PX_AINL static inline void rv_loop(px_engine *e, const float *xb, float *wo, int n, const int ALG, const int SP, const int SH,
+                                   const int GT)
 {
     for (int k = 0; k < n; k++) {
         e->dn = (k & 1) ? 1e-15f : -1e-15f;
@@ -2874,17 +2891,68 @@ PX_AINL static inline void rv_loop(px_engine *e, float *xb, int n, const int ALG
                 if (e->rv_gg < 1e-6f) e->rv_gg = 0.0f;
                 acc *= e->rv_gg;
             }
-            x = x * (1.0f - 0.4f * e->rv_mix) + acc * e->rv_mix * 1.4f;
-        xb[k] = x;
+        wo[k] = acc * e->rv_mix * 1.4f;                /* v39: the wet part only; the dry part: x * (1 - 0.4 mix) */
     }
 }
-static void rv_block(px_engine *e, float *xb, int n)
+static void rv_block(px_engine *e, const float *xb, float *wo, int n)
 {
     const int alg = e->rv_alg != 0, sp = e->sp_on != 0, sh = e->rv_shim > 0.0f, gt = e->rv_gate != 0;
-    if (!alg && !sp && !sh && !gt) rv_loop(e, xb, n, 0, 0, 0, 0);          /* room, hall, cathedral, ambient */
-    else if (alg && !sp && !sh && !gt) rv_loop(e, xb, n, 1, 0, 0, 0);      /* plate */
-    else if (!alg && sp && !sh && !gt) rv_loop(e, xb, n, 0, 1, 0, 0);      /* spring */
-    else rv_loop(e, xb, n, alg, sp, sh, gt);                                 /* shimmer, gated (and anything else) */
+    if (!alg && !sp && !sh && !gt) rv_loop(e, xb, wo, n, 0, 0, 0, 0);          /* room, hall, cathedral, ambient */
+    else if (alg && !sp && !sh && !gt) rv_loop(e, xb, wo, n, 1, 0, 0, 0);      /* plate */
+    else if (!alg && sp && !sh && !gt) rv_loop(e, xb, wo, n, 0, 1, 0, 0);      /* spring */
+    else rv_loop(e, xb, wo, n, alg, sp, sh, gt);                                 /* shimmer, gated (and anything else) */
+}
+
+/* ---- v39: the wet lanes (px_dsp.h). [lane][buffer][frame]: 2 KB of RAM ---- */
+static float px_wl[2][2][PX_WL_N];
+static void wl_clear(px_engine *e)
+{
+    e->wl_b = 0;
+    for (int L = 0; L < 2; L++) {
+        e->wl_rd[L] = e->wl_p[L] = 0;
+        for (int b = 0; b < 2; b++) { e->wl_n[L][b] = 0; e->wl_w[L][b] = 0; }
+    }
+}
+void px_wet_mode(px_engine *e, int on, int lag)
+{
+    wl_clear(e);
+    e->wl_late = 0;
+    e->wl_on = (uint8_t)(on != 0);
+    e->wl_dlag = on ? (float)lag : 0.0f;
+}
+void px_wet_swap(px_engine *e)
+{
+    const int b = e->wl_b ^ 1;                         /* the buffer made wet meanwhile: the chain's now */
+    e->wl_b = (uint8_t)b;
+    for (int L = 0; L < 2; L++) {
+        e->wl_rd[L] = e->wl_w[L][b] ? e->wl_n[L][b] : 0;
+        e->wl_w[L][b] = 0; e->wl_n[L][b] = 0; e->wl_p[L] = 0;
+    }
+}
+int px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop)
+{
+    const int b = e->wl_b ^ 1;                         /* the sends of the block before */
+    for (int L = 0; L < 2; L++) {
+        const int n = e->wl_n[L][b];
+        if (!n || e->wl_w[L][b]) continue;
+        const uint32_t t0 = px_clock ? px_clock() : 0u;
+        float *bw = px_wl[L][b];
+        const int dly_t = e->run.type[PX_B_DELAY] % PX_DLY_COUNT;
+        for (int o = 0; o < n; o += 16) {
+            if ((stop && *stop) || (deadline && px_clock && (int32_t)(px_clock() - deadline) > 0)) {
+                e->wl_n[L][b] = (uint16_t)o;           /* the rest: silence (the lines miss it too) */
+                e->wl_w[L][b] = 1;
+                e->wl_late++;
+                if (px_clock) e->wl_pf[L] += px_clock() - t0;
+                return 0;
+            }
+            const int m = n - o < 16 ? n - o : 16;
+            if (L) rv_block(e, bw + o, bw + o, m); else dly_block(e, bw + o, bw + o, m, dly_t);
+        }
+        e->wl_w[L][b] = 1;
+        if (px_clock) e->wl_pf[L] += px_clock() - t0;
+    }
+    return 1;
 }
 
 /* part: PX_PART_ALL, or (with a NAM amp: px_nam_dual) one stage of the two-core pipeline: PRE the blocks before the
@@ -3014,7 +3082,31 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             goto faded;
         }
         if (sblk == PX_B_DELAY || sblk == PX_B_REVERB) {   /* v38: over the block, each type's own loop */
-            if (p->on[sblk]) { if (sblk == PX_B_DELAY) dly_block(e, xb, n, dly_t); else rv_block(e, xb, n); }
+            if (p->on[sblk]) {
+                const int L = sblk == PX_B_REVERB;
+                if (e->wl_on && e->wl_p[L] + n <= PX_WL_N) {   /* v39: the lane: the send in, two blocks old wet out */
+                    const float dg = L ? 1.0f - 0.4f * e->rv_mix : 1.0f;
+                    float *bw = px_wl[L][e->wl_b] + e->wl_p[L];
+                    const int rd = (int)e->wl_rd[L] - (int)e->wl_p[L];
+                    for (int k = 0; k < n; k++) {
+                        const float x = xb[k], w = k < rd ? bw[k] : 0.0f;
+                        bw[k] = x;
+                        xb[k] = x * dg + w;
+                    }
+                    e->wl_p[L] = (uint16_t)(e->wl_p[L] + n);
+                    e->wl_n[L][e->wl_b] = e->wl_p[L];
+                } else {
+                    float wb[PX_MAX_BLOCK];
+                    if (L) {
+                        rv_block(e, xb, wb, n);
+                        const float dg = 1.0f - 0.4f * e->rv_mix;
+                        for (int k = 0; k < n; k++) xb[k] = xb[k] * dg + wb[k];
+                    } else {
+                        dly_block(e, xb, wb, n, dly_t);
+                        for (int k = 0; k < n; k++) xb[k] = xb[k] + wb[k];
+                    }
+                }
+            }
             for (int k = 0; k < n; k++) xb[k] *= strim;
             goto faded;
         }

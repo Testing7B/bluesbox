@@ -237,6 +237,14 @@ typedef struct {
     float bf[PX_NBLK], bfa[PX_NBLK]; int8_t bfd[PX_NBLK];
     px_preset_t run;
     uint32_t pf[PX_NBLK + 1];                          /* v38: time spent per block, [PX_NBLK] the NAM network (px_clock ticks) */
+    /* v39: the wet lanes (px_wet_mode below): lane 0 the delay, 1 the reverb, two buffers each (px_dsp.c: px_wl), used
+     * in turn. wl_b: the buffer the chain uses this block (it reads its wet out and writes its sends in); wl_n: how many
+     * samples a buffer holds, wl_w: 1 once they are wet; wl_rd: wet samples the chain may read this block, wl_p: where
+     * it is in the buffer; wl_dlag: the lag, in samples (the delay's taps read that much less far back) */
+    uint8_t wl_on, wl_b, wl_w[2][2];
+    uint16_t wl_n[2][2], wl_rd[2], wl_p[2];
+    float wl_dlag;
+    uint32_t wl_late, wl_pf[2];                        /* wet blocks cut short (out of time); wet time per lane (ticks) */
 } px_engine;
 int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two cores: process it on the job-giving core */
 
@@ -260,6 +268,21 @@ void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);
 extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (off: slower) */
 extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
 extern uint32_t (*px_clock)(void);      /* v38: set by the firmware: px_engine.pf counts each block's time */
+/* v39: wet lanes, as in the stock firmware (docs/STOCK-FIRMWARE.md 7.3). With them on, the DELAY and REVERB blocks no
+ * longer process in the chain: at their place the chain sends its signal to the lane and mixes in the lane's wet output
+ * of two blocks before (PX_WL_N frames a block); px_wet_run makes that wet output, on whichever core has time, outside
+ * the chain's own deadline. The delay's taps read wl_dlag samples less far back, so its echoes keep their time to the
+ * sample; the reverb starts lag samples later (5.8 ms at 2 x 128 frames).
+ *   px_wet_mode(e, on, lag): on or off (the lanes emptied); lag: the frames between a send and its wet output.
+ *   px_wet_swap(e): at each block boundary, nothing running: the buffers change roles.
+ *   px_wet_run(e, deadline, stop): makes the wet output of the other buffer's sends, 16 frames at a time. It stops
+ *     early (the rest of that block's wet is silence, wl_late counts it) once px_clock() passes deadline (0: none) or
+ *     *stop is set (0: none). Returns 1 when it got through. Off the chain's deadline: it may run on the other core
+ *     while the chain runs. */
+#define PX_WL_N 128
+void px_wet_mode(px_engine *e, int on, int lag);
+void px_wet_swap(px_engine *e);
+int  px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop);
 
 #ifdef __cplusplus
 }

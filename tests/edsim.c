@@ -53,8 +53,8 @@
 
 static uint8_t nor[0x100000];
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && (uint32_t)(n) <= (hi) - (uint32_t)(off))
-#define OP_VERSION "v38"
-static const char *FELUCCA_ID_PTR = "PocketX_938";
+#define OP_VERSION "v39"
+static const char *FELUCCA_ID_PTR = "PocketX_939";
 
 static uint32_t ms_now(void)
 {
@@ -118,6 +118,7 @@ static int32_t bat_raw[5] = {612, 1, 0, 3, 91};   /* bat_read's raw values (the 
 static int bat_pct = -1;                /* (-1: the gauge from bat_mv) */
 static int a_level_db(int ch) { return ch ? -84 : -62; }
 static uint8_t a_pf[PX_NBLK + 1] = {0};   /* v38: CPU per block (the tuner's footer) */
+static uint32_t a_wcut;                    /* v39: wet blocks cut short */
 static volatile uint8_t a_tmute;
 static float tuner_hz;
 #include "../firmware/px_midi.h"          /* (ui.h's MIDI page, #10) */

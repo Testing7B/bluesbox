@@ -590,12 +590,14 @@ static void tuner_bat_raw(void)
     b[i] = 0;
     ft_box(0, 206, 240, b, &FT_SM, UI_DIM, UI_BG, 1);
 }
-/* v38: where the CPU goes (px_audio.h a_pf): the 4 costliest blocks, % of an audio block's time, in the footer */
+/* v38: where the CPU goes (px_audio.h a_pf): the 4 costliest blocks, % of an audio block's time, in the footer; v39: then
+ * "CUT n" once the delay or the reverb has had to cut a wet block short (out of time) */
 static uint32_t tn_last_pf = ~0u;
 static void tuner_prof(void)
 {
     uint32_t h = 0;
     for (int k = 0; k <= PX_NBLK; k++) h = h * 0x9E3779B1u + a_pf[k];
+    h = h * 0x9E3779B1u + a_wcut;
     if (h == tn_last_pf) return;
     tn_last_pf = h;
     uint8_t used[PX_NBLK + 1] = {0};
@@ -613,6 +615,12 @@ static void tuner_prof(void)
         for (int j = 0; t[j] && i < 44; j++) b[i++] = t[j];
     }
     if (i) { b[i++] = ' '; b[i++] = '%'; } else { const char *z = "CPU: --"; while (*z) b[i++] = *z++; }
+    if (a_wcut) {                                      /* v39: wet blocks cut short (the delay / reverb out of time) */
+        const char *z = " CUT ";
+        while (*z && i < 44) b[i++] = *z++;
+        char t[12]; t[0] = 0; b_num(t, a_wcut > 9999u ? 9999u : a_wcut);
+        for (int j = 0; t[j] && i < 47; j++) b[i++] = t[j];
+    }
     b[i] = 0;
     ft_box(0, F_Y + 3u, 240, b, &FT_SM, UI_DIM, UI_PANEL, 1);
 }

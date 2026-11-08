@@ -311,7 +311,8 @@ radio interrupt is short and its work is done in tasks.
 
 ### 7.7 What OpenPocket can take from this
 
-1. **Take the delay and the reverb out of the critical path** (the largest gain for crackles). Today they run inside the
+1. **Take the delay and the reverb out of the critical path** (the largest gain for crackles; **done in v39**,
+   [WHATS-NEW-v39.md](WHATS-NEW-v39.md), with a lag of two 128-frame blocks that the delay's taps make up for). Today they run inside the
    block that must finish before the next interrupt, in series. As in the stock firmware: send a mono copy at their slot,
    return their wet output one block later, and let the dry path finish without them. A late wet block then costs an
    echo's 2.9 ms, not a crackle. With a NAM amp, CPU1 already runs everything after the amp; the wet part could go to
