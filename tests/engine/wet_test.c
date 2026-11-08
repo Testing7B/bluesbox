@@ -107,10 +107,10 @@ int main(void)
         memset(got, 0, sizeof got);
         for (int b = 0; b < NB; b++) {
             px_wet_swap(&e);
+            px_wet_run(&e, 0, 0);                      /* (as the firmware: first in POST's share, post_job) */
             if (b) for (int o = 0; o < FR; o += 64) px_engine_part(&e, nb[cur ^ 1] + o, got + FR * (b - 1) + o, 64, PX_PART_POST);
             for (int o = 0; o < FR; o += 64) px_engine_part(&e, sig + FR * b + o, nb[cur] + o, 64, PX_PART_PRE);
             for (int o = 0; o < FR; o += 64) px_engine_part(&e, nb[cur] + o, nb[cur] + o, 64, PX_PART_NAM);
-            px_wet_run(&e, 0, 0);
             cur ^= 1;
         }
         n3++;

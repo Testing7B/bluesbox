@@ -202,16 +202,21 @@ static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the 
 static volatile uint8_t a_c1;                          /* 1 = DSP runs on the 2nd core */
 static uint8_t a_job;                                  /* a block is in progress on CPU1 */
 /* v39: the wet lanes (px_dsp.h px_wet_*, docs/STOCK-FIRMWARE.md 7.3): with the 2nd core on, the delay and the reverb make
- * their sound beside the chain, two blocks late (their taps make up for it), outside the chain's deadline:
- *  - one core's chain (no NAM amp): CPU1 runs the chain, CPU0 the lanes at the same time, in the interrupt;
- *  - a NAM amp on two cores: CPU1 runs the lanes after the block, in the time left before the next interrupt, which stops
- *    them (a_wstop) if they are not done: that wet block is cut short (counted), the dry sound is never late for them. */
+ * their sound beside the chain, two blocks late (their taps make up for it):
+ *  - one core's chain (no NAM amp): CPU1 runs the chain, CPU0 the lanes at the same time, in the interrupt (cut short,
+ *    and counted, if they ever reach 85 % of the block);
+ *  - a NAM amp on two cores: CPU1 runs the lanes first in its share (post_job), where the delay and the reverb ran in
+ *    v38; the network's sharing between the cores takes their time into account as before.
+ * v39.1: the lanes of a NAM preset no longer run after the block, in the time left before the next interrupt: there was
+ * too little of it (the network shares its work between the cores, so the lanes' time only half came back), they were
+ * cut short every block, and the echoes and the reverb came out chopped at the block rate (a whistle). */
+#ifndef OP_WET_LANES
+#define OP_WET_LANES 1                                 /* 0: the delay and the reverb in the chain, as in v38 */
+#endif
 #if DSP_CPU1
 #define A_WLAG (2 * (int)A_FR)
-static volatile uint8_t a_wjob, a_wstop;               /* the lanes' job on CPU1; the next interrupt's stop */
 static void a_c1_off(void) { a_c1 = 0; px_wet_mode(&g_eng, 0, 0); }   /* one core from now on: no lanes */
 static void dsp_job(uint32_t arg) { (void)arg; dsp_block(); }
-static void wet_job(uint32_t arg) { (void)arg; px_wet_run(&g_eng, 0u, &a_wstop); }
 #endif
 #if DSP_CPU1
 /* the NAM network's helper core (CPU1), for its two-core modes: the job functions (px_nam_helper) */
@@ -225,6 +230,7 @@ static float a_nb[2][A_FR];                            /* the network's output: 
 static uint8_t a_nbi, a_nbv, a_prun;                  /* a_nb[a_nbi] is this block's; a_nbv: the other one holds one */
 static void post_job(uint32_t prev)
 {
+    if (g_eng.wl_on) px_wet_run(&g_eng, 0u, 0);       /* v39.1: the lanes (the previous block's sends), first */
     if (a_prun && a_nbv) {
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
             px_engine_part(&g_eng, a_nb[prev] + o, a_out + o, PX_MAX_BLOCK, PX_PART_POST);
@@ -279,12 +285,6 @@ static void a_collect(void)                            /* collects the block in 
     if (a_job) {
         a_job = 0;
         if (fm1_cpu1_wait() < 0) a_c1_off();           /* dropped: CPU0 takes over (this block is lost) */
-    }
-    if (a_wjob) {                                      /* v39: the lanes' job: stopped where it is (16 frames at most) */
-        a_wstop = 1;
-        a_wjob = 0;
-        if (fm1_cpu1_wait() < 0) a_c1_off();
-        a_wstop = 0;
     }
 #endif
 }
@@ -373,14 +373,7 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
         }
         a_c1_off();
     }
-    if (a_c1) {
-        dsp_pipe();
-        if (a_c1 && g_eng.wl_on) {                     /* v39: the lanes, on CPU1 until the next interrupt */
-            if (fm1_cpu1_run(wet_job, 0)) a_wjob = 1;
-            else px_wet_run(&g_eng, t_irq + A_BUDGET * 90u / 100u, 0);
-        }
-        return;
-    }
+    if (a_c1) { dsp_pipe(); return; }                 /* (the lanes: in post_job) */
     a_nbv = 0;
 #endif
     dsp_block();
@@ -451,7 +444,7 @@ static void audio_reset(void)                          /* after a NaN: engine re
     a_collect();
     px_engine_init(&g_eng, 44100.0f);
 #if DSP_CPU1
-    px_wet_mode(&g_eng, a_c1, A_WLAG);                 /* (the init cleared it) */
+    px_wet_mode(&g_eng, a_c1 && OP_WET_LANES, A_WLAG);   /* (the init cleared it) */
 #endif
     px_engine_set(&g_eng, &pp);
     a_kpend = 0; a_xf = 0.0f; a_xft = 1;               /* (back from silence) */
@@ -617,7 +610,7 @@ static void audio_start(void)
     op_stage(ST_ENG_SET, "ENGINE SET...");
 #if DSP_CPU1
     a_c1 = fm1_cpu1_on;                                /* started by app_main at the very start (fm1_cpu1_start) */
-    px_wet_mode(&g_eng, a_c1, A_WLAG);                 /* v39: the wet lanes, with the 2nd core */
+    px_wet_mode(&g_eng, a_c1 && OP_WET_LANES, A_WLAG);   /* v39: the wet lanes, with the 2nd core */
 #endif
     audio_volume(master_vol);
     audio_apply();
