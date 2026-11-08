@@ -317,6 +317,12 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   the GRU's three 16 x 16 matrix-vector products a sample run **on the FFT block as a vector unit**, as OpenPocket's NAM
   does (read, `STOCK-FIRMWARE.md` 11.4).
 - **Its cabinets:** 20 IRs of 1 024 taps (files, signed 24-bit), 64-frame partitions.
+- **Battery (read):** percentage from ADC channel 8, raw 528..635 mapped linearly to 0..100 %; icon red below 21 %,
+  charging on GPIO 151; at boot a supply below 3.4 V changes a power setting; hardware LVD level `VLVD=4`.
+- **Uploads (read):** a model is staged in the 12 KB `usr` file (`0xBA000`) with a `P4JR` journal record (CRC-32) at
+  `0xBC000`, and copied into its `pd40j` slot at boot: power-cut safe.
+- **SysEx (read):** `F0 00 59 cmd len24 payload ~sum F7`, 8-bit payload; object 5 is a memory-mapped file service
+  (`0x7xxxxxxx` = `pd40j` offsets, `0xD0000000` = a `PMV1` map descriptor, `0xE00003xx` = a `PDB1` status block).
 - **MIDI:** Program Change loads a preset; CC 0..5 switch the six units, 20..27 are the footswitches, 28 the tuner,
   40..42 tap tempo, 48..53 choose each unit's model, 54..89 set the 36 parameters (`54 + 6 x unit + param`, 0..127 to
   0..100). The channel (or OMNI) and the input gain (-10..+10 dB) are kept in the `GLB1` log.

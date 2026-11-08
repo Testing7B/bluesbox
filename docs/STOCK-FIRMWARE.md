@@ -734,8 +734,8 @@ The stock firmware uses the FFT block as a matrix-vector engine **for its GRU**,
 **`BEND`**:
 - 72 floats: one triplet for each of the 23 A2-Lite layers and one for the head;
 - each triplet is converted to Q20 and copied to **every channel of its layer**;
-- the triplets are per-layer parameters of the activation (**likely**; the kernel that reads them is in overlay A and
-  was not followed).
+- **corrected in the seventh pass (12.1)**: the triplets are not activation parameters; they pre-fill each layer's history
+  ring (3 channels a frame) with its steady state.
 
 ### 11.5 The tuner
 
@@ -800,8 +800,7 @@ The total must equal the length + 7. The payload is **8-bit**, not packed to 7 b
 | `0x23` | object, 24-bit address, up to 1,024 bytes: its handler 1, reply with the data |
 | `0x30` | address and data: copied into a buffer and **written by the flash task** (`f_0205ca82`), with a busy handshake |
 
-Errors get an 8-byte reply with status 1. The eight object handlers are registered at run time (`0x1C1B66C`); which
-object is which (preset, global, model slot...) was not followed.
+Errors get an 8-byte reply with status 1. Only objects 4 and 5 are registered (section 12.2).
 
 ### 11.9 What is still not done after this pass
 
@@ -810,3 +809,106 @@ object is which (preset, global, model slot...) was not followed.
 - Cloud and the Phaser's designer in full detail; the tuner's thresholds.
 - Loopback's routing; the battery threshold (in the SDK's power service); the SysEx object list.
 - The 12 KB `usr` file.
+
+## 12. Seventh pass: the five open points
+
+### 12.1 `BEND`: the layers' resting state
+
+**Read.** The init (`f_02008692`, from `0x2009A1E`) takes each of the 72 floats of the trailer in threes, converts them to
+Q20, and **writes the triplet into every frame of the layer's history ring** (`[layer + 56]`, `count + 72` frames of
+12 bytes). A2-Lite's layers have 3 channels and their rings are interleaved `[time][channel]`, 12 bytes a frame, as in
+OpenPocket's `engine/px_nam.c`. The `+ 72` is the runner's largest piece: `0x1C23464` runs the network in pieces of at
+most 72 samples.
+
+So `BEND` is **each layer's output at silence, used to pre-fill its history**: 23 triplets for the 23 layers, one for
+the head. A model loaded with it starts at rest, with no thump and no warm-up. Without it the init clears the rings
+(`memset` of 72,000 and 30,156 bytes) and the network has to settle by itself, as the `AM` models do with their
+1,102-sample warm-up (11.4).
+
+The input of the network is also read: `x 2^20` to Q20, with saturation at `+-2^31`, and every clipped sample counted
+(`0x1C2389C`).
+
+### 12.2 The SysEx objects
+
+**Read.** Only two objects are registered (`f_020226e4`, at boot): **4** and **5** (`[state + 459 x 4]` and
+`[state + 460 x 4]`, i.e. `0x1C1B67C` and `0x1C1B680`). No instruction writes the other six slots, so commands `0x21`
+to `0x23` on objects 0..3, 6 and 7 get the error reply. Each object is three handlers: `+0` for command `0x21`, `+4`
+for `0x23` (read), `+8` for `0x22` (write).
+
+**Object 5, a memory-mapped file service** (ops at `0x2054C8C`: `f_02006F16`, `f_02007400`, `f_02007534`). Reads and
+writes take a 32-bit address; the top nibble picks the space.
+- **`0x7xxxxxxx` = the `pd40j` file, by offset**: amp models `0x00000..0x27FFF` (8 KB slots), cabinets
+  `0x28000..0x3BFFF` (4 KB slots). Reads and writes are queued to the main loop (`f_02013260`), which validates a
+  model with `f_0200216e` before it is accepted.
+- **`0xD0000000`** = a 32-byte descriptor of the map, `PMV1` (`0x20583E0`): version 1, then sizes `0x3000` (12 KB, the
+  `usr` file), `0x2000` (an amp slot), `0x2000`, `0x1000` (a cabinet slot), and 7 (the `pd40j` nibble).
+- **`0xE0000300`** = a 36-byte status block, `PDB1`: version 1, size 36, three state bytes, a counter, a time, a pointer.
+- **`0xE00004xx`** = a 28-byte radio record (the advertising buffer of 10.6).
+- **`0xE0000500..0xE00006FF`** = a 512-byte buffer.
+- **`0xE0000700..0xE000071F`** = task statistics (`app_core`).
+- Other spaces (`0x0..0x1`, `0x2`, `0x8`, `0xA0000000`, `0xF`) are handled in `f_02013260` and were not mapped one by
+  one.
+
+**Object 4** (ops at `0x2054C98`: no `0x21`, `f_02006E3E` for reads, `f_02006EAA` for writes) queues requests of types
+4 and 5 to the same main-loop engine: a second stream (**likely** the live preset and settings).
+
+### 12.3 Loopback
+
+**Read up to the mixer.**
+- The setting (`state + 1052`) is copied by the main loop (`f_02016150`) to byte 7 of a 10-byte routing struct at
+  `0x1C0B510` (`0x1C0B4A0 + 112`), **inverted**: Loopback ON writes 0, OFF writes 1. Bytes 0 and 1 of that struct are
+  127, two volumes.
+- The audio interrupt reads the struct every block and passes byte 7 as the **mode** (0..3) to the output mixer
+  `f_02029ede`. Modes 2 and 3 are set by other states (2 resets the USB rings, `f_020296bc`; 3 copies the block to a
+  meter, `f_0202978c`).
+- In modes 1 and 2 (Loopback OFF), with the computer's playback active, the processed block is sent to the USB record
+  ring (`f_0202978c` through `f_020298ce`): **the computer records the pedal's sound**.
+- In mode 0 (Loopback ON), the mixer first copies the output block (512 bytes) and then mixes the computer's playback
+  into it (`f_01c071b0`).
+
+So, **likely**: with Loopback ON the computer also records its own playback, mixed with the pedal (the usual meaning of
+"loopback" on a streaming interface). The two USB rings were not followed to their DMA, so this is the reading of the
+mixer's branches, not a measurement.
+
+### 12.4 The battery
+
+**Read.**
+- **The measurement**: the SDK's `adc_scan` (`f_02020E96`, ADC at `0x13100`) samples a channel list every tick and,
+  every 100 ticks, the reference and the battery. It keeps the last 20 battery samples (`state + 2020`);
+  `adc_get_value(0x5000F)` returns their average (`f_0200B7D4`).
+- **The percentage** (`f_0201ADB0`, the UI loop): the raw value of ADC channel 8, **0 % below 528, 100 % above 635,
+  linear between**: `(raw x 100 - 52,700) / 109`, clamped to 0..100.
+- **The icon** (`f_02010BB8`): green while charging, red below **21 %**, white otherwise. Charging is detected on GPIO
+  151, read by `f_02016E76`.
+- **At boot** (`f_02023A20`): the supply is measured in mV, `(1023 x trim + 818,400) / (average / 10)`. Below
+  **3,400 mV** the firmware changes a power setting (`f_01c0128e(5, 0, 3, 7)`).
+- **The hardware low-voltage reset** is `VLVD = 4` in the package's `isd_config.ini` (read from BlackBox_020's package).
+- **The "Low Battery" label**: built by the UI (`state + 444`) and hidden right after it is built (`f_02004d58(obj, 1)`).
+  No other instruction reaches that object: **in this build it is never shown** (**likely**: an object could still be
+  reached through a path that was not found).
+
+### 12.5 The `usr` file: a journal for model uploads
+
+**Read.** `EXT_RESERVED/usr` (12 KB at `0xBA000`):
+- **`0xBA000..0xBBFFF`** (8 KB): the staging buffer;
+- **`0xBC000`**: a 20-byte journal record:
+
+| Bytes | What |
+| --- | --- |
+| 0..3 | `P4JR` |
+| 4, 5 | version 2 |
+| 6 | type: 0 = an amp model (8 KB), 1 = a cabinet (4 KB) |
+| 7 | the slot, 0..19 |
+| 8..11 | the size (8,192 or 4,096) |
+| 16..19 | CRC-32 (`0xEDB88320`) of bytes 0..15 |
+
+At boot `f_02012874` (from `f_02012B2E`) checks the record and, if valid, **copies the staged model into its `pd40j`
+slot**. So an upload survives a power cut: the model is written to `usr` first, the record last, and the copy into the
+real slot is redone at the next boot until it completes (**likely** for the order of the writes; the boot-side commit
+is read).
+
+### 12.6 What is still not done
+
+- The address spaces `0x0..0x2`, `0x8`, `0xA` and `0xF` of object 5, and the exact content of object 4's stream.
+- Loopback's two USB rings down to their DMA (a measurement would settle it).
+- The SDK's power service beyond the boot check (no other threshold was found in the application).
