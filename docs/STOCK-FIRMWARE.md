@@ -381,11 +381,12 @@ USER IR, v38), low cut from 20 Hz, high cut to 18 kHz.
 
 ### 8.4 The two overlays
 
-Overlay A (7,232 B, the fixed-point kernels) is loaded by the AMP's init: the A2-Lite network (section 4). Overlay
-B (6,756 B) is loaded by `f_0200f0ca`, called from a screen handler (`f_0200f534`, in the table of screen handlers at
-`0x204F590`) that sets up a pitch detector with A = 440 Hz (`-440.0`), 0.01 thresholds and a decimation by 8,192 /
-44,118: **likely** the tuner page. The NAM kernels and the tuner then share the same 7 KB of RAM, swapped when the
-tuner opens (the output is muted there anyway).
+Overlay A (7,232 B, the fixed-point kernels) is loaded by the AMP's init: the A2-Lite network (section 4).
+**Corrected in the sixth pass (section 11.4):** overlay B (6,756 B) is not the tuner. The loader `f_0200774c(n)` takes
+n = 1 for A (from flash `0x2093AE8`) and n = 0 for B (`0x2092084`), both into the same window at `0x1C22340`; the AMP's
+init asks for A when the model is a `NAM` file and for **B for every other model: B holds the `AM2`..`AM5` (GRU)
+kernels**. The tuner page (`f_0200f0ca`) calls the loader with n = 2, which only releases the window: the 7 KB are then
+free for the tuner while the amp is silent.
 
 ### 8.5 Which core runs `wet_audio`
 
@@ -581,7 +582,8 @@ name them); the firmware has no built-in amp or IR.
 **`GLB1`** (`f_0200c578`): the magic, then up to 511 records of 8 bytes appended one after the other (wear levelling);
 the last record that is not all `0xFF` wins. A record: byte 0 = 0; bytes 1 and 2 = two preset numbers 0..79 (**likely**
 the current preset and the other one of the A/B pair); byte 3 = 0/1; byte 4 = the input gain, -10..+10 dB (shown as
-`%s%d dB`); byte 5 = the MIDI channel 0..15, or 255 for OMNI; bytes 6 and 7 = 0/1, **likely** Delay Tail and Reverb Tail.
+`%s%d dB`); byte 5 = the MIDI channel 0..15, or 255 for OMNI; byte 6 = BT on/off; byte 7 = Loopback on/off (**corrected in the
+sixth pass**: the settings page reads them so, section 11.6; the tails are not in this record).
 
 ### 10.5 MIDI
 
@@ -612,6 +614,199 @@ channel already filtered by the OMNI/CH setting).
 
 - Flanger, Vibrato, Tremolo, Autofilter line by line; the drives' curves and filter values; Hall's and Cloud's front ends.
 - The `LMT` and `BEND` trailers' exact use; the third and fourth bytes of `GLB1`; the `usr` file.
-- The tuner's pitch algorithm (`tuner_task`, overlay B), the USB Audio loopback, the battery thresholds, the preset
-  order bytes.
+- The tuner's pitch algorithm (`tuner_task`), the USB Audio loopback, the battery thresholds, the preset order bytes.
+
+**Section 11 (sixth pass) takes up this list.**
 - The BLE app protocol beyond BLE-MIDI (SysEx used by M-VAVE's app).
+
+## 11. Sixth pass: the list of section 10.7, read
+
+Two more corrections, made in place: overlay B is the `AM` models' kernels, not the tuner (8.4); bytes 6 and 7 of a
+`GLB1` record are BT and Loopback, not the tails (10.4).
+
+### 11.1 The modulations, line by line
+
+**Tremolo** (block 13, read in full; runs in pieces of at most 64 samples):
+- a 32-bit phase into the 512-step sine of `f_01c03562` (a 256-entry quarter table, `-1..+1`), linearly interpolated;
+- `gain = 1 - 0.499 x depth x (1 + sin)`: from 1 down to 0.002 at full depth;
+- the gain itself goes through a one-pole of 0.1 a sample (it softens the edges; the wave is a sine anyway);
+- depth and level are smoothed by `0.00143` a sample; level is clamped to 0..2 and multiplies the output.
+
+**Autofilter** (block 17, read in full): a **band-pass biquad swept by a sine LFO, its coefficients recomputed every
+sample**:
+- `f = fmin + (fmax - fmin) x (1 + sin) / 2`; `K = tan(pi f / fs)` from the table sine and cosine (`f_02007992`,
+  `f_02007a22`);
+- `b0 = K x norm`, `b2 = -b0`, `a1 = 2 Q (K^2 - 1) x norm`, `norm = 1 / (K + Q + K^2 Q)` (`Q` from the knob), direct form I;
+- output = `5 x mix x band-pass + (1 - mix) x dry`: the band-pass is made up by 5x (+14 dB).
+
+**Flanger** (block 14, read in full), per 16-sample piece then per sample:
+- knobs: rate `0.17..16 Hz`; depth `0..0.8`; feedback `0.2..0.8`; base delay **2..7 ms**; one of the **five LFO shapes**
+  (`0x2054EB4`, phase to 0..1);
+- every value is smoothed (`0.0046`, `0.00183`, `0.0143` a sample);
+- `delay = base x (1 - depth x (1 - LFO))`; the line is **16-bit**, read with the integer-difference Hermite of the
+  delays (8.6);
+- the line's input is `x + feedback x delayed`, then: a first-order filter; a gentle asymmetric cubic,
+  `0.95 y - (y^2 + y^3) / 64`; the `tanh` table; x 0.5; two biquads; `x 32768`, `sat16`;
+- the kernel outputs `line input + delayed x 0.6 (1 - feedback)` (wet only, mixed by the wrapper).
+
+**Vibrato** (block 15, read in full): a **tape-style vibrato**, 100 % wet, with a lo-fi knob:
+- the LFO is **not a sine**: a fixed 513-point waveform at `0x2053748`, smooth but irregular (two shallow dips to 0.70
+  and 0.73, one deep dip to 0, flat at 1 for the last quarter), a wow curve;
+- `delay = depth x (line length - 2) x LFO`, read with the 4-point cubic of the Chorus;
+- before the line: the Chorus's input colour (`tanh(0.1 x + 0.1)`), then the **bit depth** cut by a knob `b` = 0..20
+  (`b` least significant bits of a 23-bit word cleared), a filter, and a crossfade from clean to reduced of
+  `(1 - sin(2 pi (0.25 + 0.025 b))) / 2` (0 at `b` = 0, 1 at `b` = 20), with a make-up gain of `b/3` dB (up to 5 dB at
+  `b` = 15, back to 0 at 20).
+
+**Phaser and Univibe** (blocks 12 and 16, the coefficient designer `f_01c08b7a` and the section runner `f_01c05e2c`
+read): **not all-pass stages but peaking EQs**, a model of a phaser's response:
+- 3 sections (a switch: 5), each an RBJ-style peaking biquad (`A = 10^(dB/40)`, `alpha` from `1 / (2Q)`);
+- centres **245, 550, 1234 Hz** (5 sections: **200, 319, 550, 950, 1640 Hz**), all multiplied together by
+  `1 + 3 x LFO` (a sweep of two octaves), the LFO one of the five shapes;
+- gains and Qs blended by a knob between two sets: notch/peak/notch **-16 / +11.5 / -16 dB, Q 2 / 0.6 / 2** and
+  **-3 / +15 / -3 dB, Q 0.4 / 4 / 0.4** (5 sections: -16, +11.5, -17, +10.5, -16 and -3, +21, -3, +20, -3);
+- the coefficients glide to their new values every 16 samples;
+- the Univibe uses the same tables with **the gains' sign inverted** (`f_02030986`: `-0.08305` against `+0.08305`, so
+  peaks become notches) and its own LFO routine.
+
+### 11.2 The drives' shared clipper
+
+`f_01c0549a` (GOLD, OCD, RAT, MUFF), read in full:
+1. the bias glides to its target;
+2. up 2x and 3x, then `f_01c07e10` on the 96 samples, an **asymmetric rational clipper with two knees**:
+   - `s = (x + bias) x g`; below the upper knee `T1` the sample passes;
+   - above it `y = (x + bias) x k2 + c2 - 1 / (s x k3 + d1)`;
+   - below the lower knee `-T2`, `y = (x + bias) x k2 - c3 - 1 / (y x k4 - d2)`;
+   - ten constants per drive (`g, k2, k3, d1, c2, T1, k4, d2, c3, T2`), one division a sample;
+3. down 3x and 2x;
+4. optional, by flag: a one-pole **DC blocker** (`f_01c07e92`) and a one-pole **low-pass** (`f_01c07edc`).
+
+The ten constants and the filters come from each drive's knob functions, which are **circuit fits**, not tables:
+- MW-808: `2.6104`, `0.1149`, 17.8 kHz and 22 kHz poles, `6.94`, `189.2`, `21.07`, `210.26`;
+- MW-OCD: a tone table of 8 points (103 Hz 32.7 dB, 257 Hz 36.3 dB, 132 Hz 33.7 dB, 89 Hz 27.3 dB ...), `173.78`,
+  `-12.99`;
+- MW-RAT: `3.65`, `1.876`, `4.123`, `1.758`, `-11.52`, `27.13`, `7.45`, `13.62`;
+- MW-MUFF: `2.49`, `1.061`, 250 Hz and 525 Hz (`1570.8` and `3298.7` rad/s), `40.5`, `-26.6`, `0.8`, 350 Hz;
+- MW-FACE: two **5th-order polynomials** of the knob (`3909 - 23084 k + 52295 k^2 - 50424 k^3 + 18304 k^4`, and
+  `0.7345 - 4.364 k + 9.830 k^2 - 9.386 k^3 + 3.285 k^4`), the shape of a Fuzz Face's pots (**likely**).
+
+### 11.3 Hall and Cloud, before the core
+
+**Hall** (block 1 and its set-up `f_0202ec0c`, read): lengths are given at 44.1 kHz and scaled by `0.5002` to the
+22,059 Hz of the reverbs.
+- A line of 2,470 samples (112 ms) read at **17 taps**: 2036, 2357, 2397, 2555, 2722, 2893, 2924, 3266, 3496, 3639,
+  3873, 3887, 4250, 4268, 4479, 4649, 4937 (44.1 kHz samples: 46..112 ms).
+- Each tap has its own signed gain (0.022, 0.056, -0.032, 0.079, -0.089, 0.112, -0.126, -0.112, 0.112, 0.079, -0.178,
+  0.126, -0.089, -0.178, -0.141, -0.089, -0.178).
+- Each tap feeds **its own all-pass of 114 samples (44.1 kHz), gain 0.75**; the 17 outputs are summed into the core.
+- When every tap is longer than the block, the block is done tap by tap (a fast path); otherwise sample by sample.
+
+**Cloud** (block 5, read in outline): two sine LFOs; two modulated lines read with Hermite; cross gains in dB steps
+(0.891, -0.944, 0.841, 0.798, 0.891, -0.708, 0.631); then the four modulated lines of `f_01c0804c` (fixed 4th-order
+low-pass each); `x 0.707`; `asinh` on both outputs; the same post as the others. Lengths: a 5,224 line tapped at 862,
+1126, 2326, 2913, 3169; a 3,969 line; all-passes of 328, 990, 1384, 2042, 2455.
+
+### 11.4 The AM kernels (overlay B), `LMT` and `BEND`
+
+**Overlay B** holds the `AM` models' code (section 8.4 corrected).
+
+**The per-sample GRU** (`0x1C22340`, read):
+- the input is converted to Q21;
+- **three jobs on the FFT block** (`0x1EE0400`: a job word `2721`, `CON = 0x149`, wait for bit 7, clear with bit 6)
+  compute the 16 x 16 recurrent products;
+- four CPU routines do the gates;
+- the output is converted back (`x 2^-21`).
+
+The stock firmware uses the FFT block as a matrix-vector engine **for its GRU**, the same trick as OpenPocket's NAM.
+
+**The AM4/AM5 stage** (`0x1C224D0`, read): the input FIR, then the GRU per sample, then the output FIR.
+- **Warm-up after loading**: for the first 1,102 samples the GRU is fed a decaying exponential and its output is
+  muted (`x 1e-16`). The last output is kept as the model's DC offset and subtracted from then on.
+- **With `LMT`**:
+  - an envelope follower on the input (smoothed by `0.0183`) sets a gain applied around the network;
+  - two filters are designed at 2 kHz and 3 kHz;
+  - the init adds a first-order high-pass at 15 Hz and a first-order filter at 500 Hz;
+  - a set routine (`f_020302e2`) maps three knob bytes to `0..3`, `-6..0 dB` and `-24..0 dB`;
+  - the `LMT` weights are a second 16-weight output row; their dot product with the first is precomputed.
+  - So `LMT` is a level-dependent stage (a limiter or a level-dependent tone); its exact law was not reduced to a
+    formula.
+
+**`BEND`**:
+- 72 floats: one triplet for each of the 23 A2-Lite layers and one for the head;
+- each triplet is converted to Q20 and copied to **every channel of its layer**;
+- the triplets are per-layer parameters of the activation (**likely**; the kernel that reads them is in overlay A and
+  was not followed).
+
+### 11.5 The tuner
+
+`f_0200f0ca` sets it up: the overlay window released, a pitch detector with `A = 440 Hz`, 0.01 thresholds, a window
+from the sine table. `tuner_task` (`f_0202bc8c`, priority 3, 512-word stack) reads the 3 kHz ring of section 7.2.
+**Read in outline**:
+1. a 2,048-sample frame, windowed;
+2. a spectrum through the FFT helpers; the magnitude squared (`re^2 + im^2`) of each bin;
+3. the peak bin, refined with a 3-point interpolation;
+4. **nine refinement passes** of a single-frequency DFT (sums of `x sin` and `x cos` at the candidate frequency)
+   around the peak;
+5. the result folded into an octave (doubled or halved until it fits);
+6. the cents: `1200 x log2(f / ref)`, with a window of `2^(+-1/24)` (a quarter tone) around the note.
+
+### 11.6 Settings, tails, loopback, battery
+
+**The settings page** (`f_0200de68`) reads a struct whose bytes are the `GLB1` record:
+- byte 4: MIDI channel (`CH n` or `OMNI`);
+- byte 5: **BT** ON/OFF;
+- byte 6: **Loopback** ON/OFF;
+- the **input gain** (`%s%d dB`, signed): a state byte.
+
+**The tails** (one state byte, set by `f_0200de08`): bit 0 Delay Tail, bit 1 Reverb Tail, bits 2 and 3 their mode;
+each is **Off, Auto or Force** (strings at `0x204FF24`); a mode bit is refused without its on bit.
+
+**Loopback**: the audio interrupt has two output mixers, `f_02029ede` and `f_02029b50` (USB record and playback paths),
+chosen by a switch. What Loopback routes was not followed to the register.
+
+**Battery**: the "Low Battery" screen is built by `f_0201adb0`. The level comes from the SDK's `adc_scan` /
+`sys_power` services, not from application code; no threshold was found in the app.
+
+### 11.7 The preset's order bytes
+
+`f_020031f0` copies the six order bytes to the slots' categories (`state + 1010 + i`), then initialises each slot from
+the category it holds. So **order[i] is the category that runs in slot i**: the chain runs slot 0 to 5, and the
+default `0,1,2,3,4,5` is gate/drive, amp, mod, delay, reverb, cab. A preset with `0,1,5,2,3,4` would put the cabinet
+before the modulation (**likely** as the editor offers it; the check `f_02001d74` only requires a permutation).
+
+### 11.8 M-VAVE's SysEx protocol
+
+**Read** (`f_02025b12` assembles `F0 .. F7` from USB or BLE MIDI; `f_02025100` handles it).
+
+A message, between `F0` and `F7`:
+
+| Byte | What |
+| --- | --- |
+| 0, 1 | `00 59` (the header) |
+| 2 | command |
+| 3..5 | payload length, 24-bit little endian |
+| 6.. | payload |
+| last | checksum: `~(sum of the payload bytes)`, 8 bits |
+
+The total must equal the length + 7. The payload is **8-bit**, not packed to 7 bits.
+
+| Command | What |
+| --- | --- |
+| `0x11` | identify: the reply carries 27 bytes, the name `BlackBox_021` |
+| `0x12` | a 6-byte status reply (all zero) |
+| `0x15` | stream bytes into a ring buffer and wake `midi_route` (a data channel) |
+| `0x21` | object `payload[0]` (0..7), 32-bit argument: its handler 0 |
+| `0x22` | object, 24-bit address: its handler 2, then an 8-byte reply |
+| `0x23` | object, 24-bit address, up to 1,024 bytes: its handler 1, reply with the data |
+| `0x30` | address and data: copied into a buffer and **written by the flash task** (`f_0205ca82`), with a busy handshake |
+
+Errors get an 8-byte reply with status 1. The eight object handlers are registered at run time (`0x1C1B66C`); which
+object is which (preset, global, model slot...) was not followed.
+
+### 11.9 What is still not done after this pass
+
+- The exact law of `LMT`, and which kernel reads `BEND`'s triplets.
+- The coefficient formulas behind each drive's knobs (the constants are above, not the circuits).
+- Cloud and the Phaser's designer in full detail; the tuner's thresholds.
+- Loopback's routing; the battery threshold (in the SDK's power service); the SysEx object list.
+- The 12 KB `usr` file.

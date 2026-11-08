@@ -313,7 +313,9 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   without biases, a 256-tap FIR; `AM4`/`AM5`: 512 taps, the GRU with biases; GRU weights in Q21 fixed point), behind a
   soft knee at 0.5 and before a 3-band tone stack whose frequencies and ranges come from the model's header.
 - **Its NAM type is A2-Lite** (read: the 23-layer kernel/dilation table is in the firmware, 1 871 weights), in fixed
-  point from a 7 KB RAM overlay that the tuner page's pitch detector shares (**likely**).
+  point from a 7 KB RAM overlay (A). The `AM` models' GRU kernels are a second overlay (B) in the same window, and
+  the GRU's three 16 x 16 matrix-vector products a sample run **on the FFT block as a vector unit**, as OpenPocket's NAM
+  does (read, `STOCK-FIRMWARE.md` 11.4).
 - **Its cabinets:** 20 IRs of 1 024 taps (files, signed 24-bit), 64-frame partitions.
 - **MIDI:** Program Change loads a preset; CC 0..5 switch the six units, 20..27 are the footswitches, 28 the tuner,
   40..42 tap tempo, 48..53 choose each unit's model, 54..89 set the 36 parameters (`54 + 6 x unit + param`, 0..127 to
