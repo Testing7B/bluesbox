@@ -912,3 +912,79 @@ is read).
 - The address spaces `0x0..0x2`, `0x8`, `0xA` and `0xF` of object 5, and the exact content of object 4's stream.
 - Loopback's two USB rings down to their DMA (a measurement would settle it).
 - The SDK's power service beyond the boot check (no other threshold was found in the application).
+
+## 13. Eighth pass: the SysEx address map, the USB record path, the power module
+
+### 13.1 The full SysEx address map
+
+**Read** (the main-loop engine `f_02013260`; request types 2..5, then a jump table on the top nibble of the address).
+Object 5 queues types 2 (read) and 3 (write); object 4 queues types 4 (read) and 5 (write).
+
+**Object 5: storage.**
+
+| Space | Read | Write |
+| --- | --- | --- |
+| `0x0` | the `usr` file, 12 KB | yes (the staging buffer and journal of 12.5) |
+| `0x1` | the header of the **amp model now loaded** (60 bytes: name, blend, tone-stack bands...), through `f_0201150c` | yes, applied live (the slot's set routine is called) |
+| `0x2` | the header of the **cabinet now loaded** (20 bytes) | yes, applied live |
+| `0x7` | the `pd40j` file by offset (12.2) | yes, each model validated |
+| `0x8` | the **names of the 20 cabinets**: 20 x 14 bytes, bytes 4..17 of each `CAB` file (`f_02009cfc`: `pd40j + 0x28000 + i x 4 KB`) | — |
+| `0x9` | the **names of the 20 amp models**, 14 bytes each (`f_02002d18`) | — |
+| `0xA` | — | a **one-byte command**: 1, 2 or 3 starts a commit from the staging buffer (1 = an 8 KB amp model) |
+| `0xD` | the `PMV1` map descriptor | — |
+| `0xE` | `0x300` `PDB1` status, `0x4xx` radio record, `0x500..0x6FF` buffer, `0x700` task statistics; `0x100`, `0x200` and `0x400` are other small blocks | — |
+| `0xF` | one status byte (`0x1C0B4A4`) | up to 511 bytes: **install a model into a slot** (the address's low byte is the slot 0..19, bit 8 picks amp (8 KB) or cabinet (4 KB)); the model is validated (`f_0200216e`, types 2, 4 or 16 for amps) before it is written |
+
+So every model in the stock firmware is a **14-byte-named file**: the name sits at bytes 4..17 of the header (`AM`,
+`NAM` and `CAB` alike), right after the four-byte magic.
+
+**Object 4: the live state.**
+
+| Space | Read | Write |
+| --- | --- | --- |
+| `0x0` | the **whole preset bank**, 7,370 bytes (12.5 of `pd40j` at `0x3C000`) | yes |
+| `0x1` | the **current preset**, 92 bytes (`state + 4076`, or the edited copy at `+ 4260`) | yes: the preset as edited |
+| `0x2` | the **settings record**, 7 bytes (the `GLB1` record of 10.4, `state + 1046`) | yes |
+| `0x7` | sub-spaces by bits 20..27: `7` = the tails byte and two values (`f_02012274`); `8` = a live block (input gain...) | yes |
+| `0xD` | one byte, Loopback (`state + 1052`) and other flags | yes |
+| `0xE`, `0xF` | — | other live controls (not followed one by one) |
+
+That is the whole protocol of M-VAVE's app: **every preset, setting and model is read and written as memory**, through
+two objects and an address space; there is no other command set.
+
+### 13.2 The USB record path, and Loopback
+
+**Read.** The USB Audio class's callbacks are a table at `0x205505C`. In it, `f_0202ad78` is the **record callback**:
+- it reads the **1,024-frame record ring** at `0x1C18BC0` (stereo, packed 24-bit, 6 bytes a frame; write index
+  `state + 118`, read index `state + 120`);
+- it resamples by a fraction to follow the host's clock: below 256 frames of fill it slows down, above 768 it speeds
+  up, by at most 48 steps at a time;
+- `f_0202af5e` empties the ring.
+
+The audio interrupt fills that ring through `f_0202978c`:
+- with a volume from a 101-entry table (`0x204FF30`, index 0..100);
+- overruns are counted at `state + 2092`.
+
+The output mixer `f_02029ede` sends a block to the ring at **two possible points**:
+- **before** the computer's playback is mixed into the pedal's output (`0x2029FC4`, modes 1 and 2);
+- or **after** the mix, from a copy (`0x202A0DA`), chosen by the mode byte (Loopback) and two stream flags (bytes 8 and
+  9 of the routing struct).
+
+So Loopback chooses **whether the computer records the pedal alone or the pedal plus its own playback**. The mixer's
+code decides it. Which flag combination gives which in practice was not settled from the code alone; recording one
+second each way would settle it.
+
+### 13.3 The power module
+
+**Read.** The SDK's module table (`0x2080A10`) pairs each module with an "idle?" query used before sleep:
+- `adc_scan` → `0x2020E0E` (is a conversion running);
+- `sys_power` → `0x2030E7A` (one flag).
+
+Neither holds a voltage threshold. With 12.4 that settles the battery: the only thresholds are the boot check (3.4 V)
+and the icon's 21 %; the hardware LVD (`VLVD = 4`) is the only cut-off; the "Low Battery" label is never shown.
+
+### 13.4 What is left
+
+- Object 4's spaces `0xE` and `0xF` and object 5's `0xE0000100/200/400`, one by one.
+- Loopback's two flag bytes in practice (a recording on the pedal settles it).
+- Nothing else of the list in 9, 10.7, 11.9 and 12.6 remains open.

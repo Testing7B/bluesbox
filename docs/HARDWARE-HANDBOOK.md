@@ -321,8 +321,11 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   charging on GPIO 151; at boot a supply below 3.4 V changes a power setting; hardware LVD level `VLVD=4`.
 - **Uploads (read):** a model is staged in the 12 KB `usr` file (`0xBA000`) with a `P4JR` journal record (CRC-32) at
   `0xBC000`, and copied into its `pd40j` slot at boot: power-cut safe.
-- **SysEx (read):** `F0 00 59 cmd len24 payload ~sum F7`, 8-bit payload; object 5 is a memory-mapped file service
-  (`0x7xxxxxxx` = `pd40j` offsets, `0xD0000000` = a `PMV1` map descriptor, `0xE00003xx` = a `PDB1` status block).
+- **SysEx (read):** `F0 00 59 cmd len24 payload ~sum F7`, 8-bit payload. Everything is memory access through two
+  objects: object 5 = storage (`pd40j` by offset, `usr`, the loaded models' headers, model names, install command),
+  object 4 = live state (preset bank, current preset, settings, flags). Full map in `STOCK-FIRMWARE.md` 13.1.
+- **USB record (read):** a 1,024-frame packed 24-bit ring at `0x1C18BC0`, drained by the class callback with a
+  fractional resampler that follows the host clock (slows below 256 frames of fill, speeds up above 768).
 - **MIDI:** Program Change loads a preset; CC 0..5 switch the six units, 20..27 are the footswitches, 28 the tuner,
   40..42 tap tempo, 48..53 choose each unit's model, 54..89 set the 36 parameters (`54 + 6 x unit + param`, 0..127 to
   0..100). The channel (or OMNI) and the input gain (-10..+10 dB) are kept in the `GLB1` log.
