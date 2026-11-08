@@ -49,6 +49,8 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 
 Full list of models, presets and controls: [docs/SOUNDS-AND-CONTROLS.md](docs/SOUNDS-AND-CONTROLS.md).
 Development notes (how the audio path was found, what changed in each version): [docs/AUDIO-SDK.md](docs/AUDIO-SDK.md).
+What the stock BlackBox firmware does on the audio side, and what OpenPocket can take from it:
+[docs/STOCK-FIRMWARE.md](docs/STOCK-FIRMWARE.md).
 
 ## Install
 
