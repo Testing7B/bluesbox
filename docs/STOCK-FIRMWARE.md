@@ -36,7 +36,8 @@ Named tasks (table at `0x208CF00`): `wet_audio`, `tuner_task`, `USB-Audio`, `bt_
 
 What it means for OpenPocket's Bluetooth: in the stock firmware the radio's interrupts sit **below** the audio
 interrupt (2 against 4) on the same core, so audio always preempts the radio and never the other way round.
-**Likely:** the heavy DSP runs in the `wet_audio` task rather than in the audio interrupt itself. In our v37 attempt
+**Read (third pass, section 7):** the dry chain runs inside the audio interrupt itself; only the delay and the reverb
+run in the `wet_audio` task, one block behind. In our v37 attempt
 the radio's work could hold up the audio block, which fits the "BYP 150%" we saw. Any return of Bluetooth should keep
 that order: audio interrupt highest, radio below it, radio work on the core that
 does not run the network.
@@ -79,10 +80,15 @@ gains above; when they are the same, only one runs. No mute, no click.
 
 ### Time effects run at half rate
 
-**Read** (`f_01c05350`, `f_01c0b0f6`, `f_01c0b02a`). The modulation and time effects take the block, sum it to mono,
+**Read** (`f_01c05350`, `f_01c0b0f6`, `f_01c0b02a`). The delays and the reverbs take the block, sum it to mono,
 **decimate it 2:1** with a polyphase IIR half-band filter (two all-pass sections per branch), run the effect on
-**32 samples at 24 kHz**, and **interpolate 1:2** back, with the crossfade gain applied in the interpolator. A chorus,
-a delay or a reverb loses nothing audible above 12 kHz, and costs half.
+**32 samples at 24 kHz**, and **interpolate 1:2** back, with the crossfade gain applied in the interpolator. A delay or
+a reverb loses nothing audible above 12 kHz, and costs half.
+
+**Correction (third pass, read):** the modulation effects do **not** go through this wrapper. Their process functions
+(`0x1C059E6`..`0x1C05A04`) all call `f_01c05924`, which runs the effect at full rate on 64 samples, once per channel
+with two states (left, right), and mixes it with the dry signal (`f_01c08d08`, the mix ramped by a one-pole of
+0.0183 a block).
 
 ### The amp: 6x oversampled, one division per sample
 
@@ -187,8 +193,138 @@ unchanged bit for bit. Moving the effects' code into RAM as well would need the 
 between flash and RAM code (out of the CPU's call range): left for when the per-block times on the pedal (the tuner
 page's footer, v38) show the effects are worth it.
 
-## 7. Not done yet
+## 7. Third pass: from the audio interrupt to the effects
+
+This pass followed the audio from the I2S interrupt to each effect, instruction by instruction, instead of starting
+from the effects. It corrects section 2 (where the DSP runs) and section 4 (the modulation's rate).
+
+### 7.1 The whole dry chain runs in the audio interrupt
+
+**Read.** `request_irq(11, 4, 0x202A230, CPU0)` is the only audio interrupt (`f_02023a20`, at `0x2024B62`). Its
+handler, for each 64-frame block:
+
+1. copies the 128 words out of ALNK0 (`f_01c06f1e`), sign-extends the 24-bit samples with an input shift (x1, x2 or x4)
+   and keeps peak meters (`f_01c06f2c`, `f_01c06f6e`, `f_01c06fba`);
+2. calls `f_01c01364(in, out, 64)`, which is either a plain copy (effects off) or **`f_02001326`, the effect engine**;
+3. mixes in the computer's and the phone's audio: USB playback comes in through a ring of 1,024 packed 24-bit frames
+   at `0x1C17FC0`, written by the USB side with a linear-interpolation resampler (`f_0202ab58`) and read in the
+   interrupt (`f_020296bc`, `f_020298d8`); Bluetooth (A2DP) through a ring of 6,144 16-bit samples at `0x1F29EE0`
+   (`f_02029a6e`), each with its own gain; several weak hooks in this path are linked to address 0 (unused here);
+4. times itself: it reads the free-running timer at `0x1EEF0F0` at the start and at the end, and keeps the sum and the
+   maximum over 512 blocks (`0x1C1AF50 + 620..660`, the average at `+2060`, the maximum at `+2064`), plus the early and
+   late counters of section 3.
+
+`f_02001326`, inside the interrupt:
+
+- converts the block to float, **two planar channels of 64** (`0x1C14320`: left, then right at `+256`, `f_01c0b2e2`);
+- applies the volume with a **linear ramp over the block** when it changes (step `(new - old) / 64` a sample);
+- runs a small state machine for mute, bypass and the tuner (states 0..6 at `0x1C1AF50 + 53/54`), whose fades follow a
+  256-entry curve (`0x1C0EC0C`, 0 to 1);
+- runs the chain in two calls, `f_0200126a` (the slots before a split point) and `f_0200127e` (the rest);
+- converts back to 24-bit with round-to-even (`f_01c0b31c`, a hardware loop of 24 cycles per stereo pair).
+
+### 7.2 The chain runner
+
+**Read** (`f_02000d4c`, data at `0x1C1AF50`):
+
+- six slots, each with a category (`+1010 + i`), an on flag (`+1004 + i`), an instance (`+1428 + 4i`), a descriptor
+  (`+1084 + 4i`) and its parameters (`+2528 + 12i`, six 16-bit values); the active slots are listed in order at
+  `+1016` before each block;
+- each slot runs through `f_01c0130e(instance, buffer, 64, process, ...)`, in place;
+- when a slot is switched on or off, its output is **crossfaded over 320 samples** (`f_0200088a`: a linear ramp of
+  `1/320` a sample, about 7 ms), never cut;
+- the slots of category 3 (delay) and 4 (reverb) are not run here (section 7.3);
+- the same function also feeds the tuner: the block is decimated by 16 with a 26-tap symmetric FIR (13 coefficient
+  pairs) into a 1,024-sample ring, about 3 kHz, read by `tuner_task`.
+
+### 7.3 The delay and the reverb run beside the chain, one block late
+
+**Read.** This is how the stock firmware keeps its time effects from ever making the dry sound late:
+
+- at a delay or reverb slot, the interrupt calls `f_02000c36(lane, ...)`: lane 0 is the delay, lane 1 the reverb;
+- `f_01c00e32` does the exchange in one pass: the output is `dry x gain + the lane's wet output of the previous block`
+  (stereo, left at `+48` and right at `+304` of the lane's buffer), and the lane's next input is the **mono sum**
+  `(L + R) / 2` of this block. Two buffers a lane, used in turn;
+- then it posts a semaphore (`ctx + 920`, `f_0205ca82`) to wake **`wet_audio`**, a task at priority 24 with a
+  1.5 KB stack (`f_0205d870` at `0x2023606`, entry `0x202A910`);
+- `wet_audio` waits on that semaphore, runs each lane that has a block (`process(handle, out, in)`), swaps the buffers
+  (`f_02001b10`), and times each lane with the same timer (`ctx + 2700 + 4 x lane`: count, last, maximum);
+- **likely:** if a lane is not ready when the interrupt needs it, the block passes with the dry part only and a
+  counter goes up (`[lane + 28]`), instead of the whole output being late.
+
+So the wet sound comes 64 samples (1.3 ms) late, which no one hears in an echo or a reverb tail, and the delays and
+reverbs (at half rate, section 4) run in a task that the interrupt never waits for. The dry path (gate, drive, amp,
+modulation, cabinet) is the only thing that must finish inside the block.
+
+### 7.4 Presets and the effect catalogue
+
+**Read** (`f_02001efc` checks a preset, `f_02001e04` repairs one):
+
+| Offset | Size | What |
+| --- | --- | --- |
+| 0 | 2 | volume, 0..100 |
+| 2 | 6 | the order: a permutation of 0..5 (checked bit by bit, `f_02001d74`); the default is 0,1,2,3,4,5 |
+| 8 | 6 | on / off, one byte a slot |
+| 14 | 6 | the model in each slot |
+| 20 | 72 | six 16-bit parameters a slot, each clamped to its descriptor's min and max (0..100 in the UI) |
+
+92 bytes, then a "changed" flag. The categories (table of six pointers at `0x2054EDC`, entry `{index, count, list,
+single descriptor}`):
+
+| Category | Models | Descriptor(s) |
+| --- | --- | --- |
+| 0 | 10 | Noise Gate++, Boost, Compress, AI Gate MS, MW-808, MW-GOLD, MW-OCD, MW-RAT, MW-MUFF, MW-FACE (list `0x2046E30`) |
+| 1 | 20 | one AMP descriptor (`0x2046D38`) for all 20 amps, the model passed to its init |
+| 2 | 7 | Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter (`0x204F81C`) |
+| 3 | 5 | Analog, Duck, dTape, Dual, Lofi (`0x204F5E8`) |
+| 4 | 6 | Room, Hall, Swell, Spring, Shimmer, Cloud (`0x2046FEC`) |
+| 5 | 20 | one CAB descriptor (`0x2046DB0`) for all 20 cabinets (Lvl, Lcut, Hcut) |
+
+### 7.5 Shared tables and curves
+
+**Read** (RAM data, values checked):
+
+- `0x1C0E408`: `tanh(i / 64)` for i = 0..511, linear interpolation between entries: the soft clip of the amp's input
+  and of five waveshaper curves (a table of five functions at `0x2054EB4`);
+- `0x1C0DE00` (square root of the mantissa, 0.707..1) and `0x1C0F414` (log2 of the mantissa, -1..0): together they make
+  `asinh(x) = ln(|x| + sqrt(x^2 + 1))` without a library call (`f_01c05a18`), another soft clipper;
+- the knobs go through small mapping functions (`f_01c05b52`..`f_01c05d32`), not straight multiplications.
+
+### 7.6 Every interrupt
+
+**Read** (all 20 `request_irq` calls; number, priority, core):
+
+| IRQ | Priority | Core | Handler | What, where read |
+| --- | --- | --- | --- | --- |
+| 11 | 4 | CPU0 | `0x202A230` | ALNK0, the audio (7.1) |
+| 9 | 6 | CPU0 | `0x20294EC` | USB device (works on `0x51000`) |
+| 62 | 5 | CPU1 | `0x2030AA8` | completion of a hardware job: clears `0x10800` bit 14, calls the job's callback |
+| 46 | 3 | CPU1 | `0x204303A` | a peripheral at `0x13D00` that posts a semaphore |
+| 123 | 6 | both | | software interrupt (scheduler) |
+| 124, 125 | 7 | CPU1, CPU0 | | software interrupts between the cores |
+| 44 | 2 | CPU0 | `0x2030DC2` | radio (section 2) |
+| 3, 5 | 1 | CPU0 | `0x205DF6E`, `0x2030C02` | timers |
+| 2, 6, 16, 24, 28, 49, 50 | 0..7 | CPU0 | | not traced |
+
+The audio interrupt is above everything that does real work on CPU0 except the timers (1) and the radio (2): the
+radio interrupt is short and its work is done in tasks.
+
+### 7.7 What OpenPocket can take from this
+
+1. **Take the delay and the reverb out of the critical path** (the largest gain for crackles). Today they run inside the
+   block that must finish before the next interrupt, in series. As in the stock firmware: send a mono copy at their slot,
+   return their wet output one block later, and let the dry path finish without them. A late wet block then costs an
+   echo's 2.9 ms, not a crackle. With a NAM amp, CPU1 already runs everything after the amp; the wet part could go to
+   whichever core has time left at the end of the block.
+2. **Time the interrupt the stock way:** sum and maximum over 512 blocks from a free-running timer, plus the wet task's
+   own times per lane. v38's footer shows the averages; the maximum is what predicts a crackle.
+3. **Ramp the volume over the block** (v38 glides it already) and **crossfade on/off over ~7 ms** (v38: 23 ms).
+4. **One `tanh` table for every soft clip**, as above, instead of polynomial approximations per sample.
+
+## 8. Not done yet
 
 - The ALNK clock registers were not traced to a written rate; 48 kHz rests on the effects' coefficient code.
 - The exact network behind the stock `NAM` type and the role of overlay B (possibly the SBC decoder for A2DP).
 - The 20 effect blocks after the overlays are mapped by address but not each named.
+- Which core `wet_audio` runs on (the task call does not pin it); the meaning of the order bytes (slot to category or
+  the reverse: the default is the identity, so it does not show).
