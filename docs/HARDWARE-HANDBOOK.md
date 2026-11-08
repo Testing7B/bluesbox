@@ -317,6 +317,12 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   the GRU's three 16 x 16 matrix-vector products a sample run **on the FFT block as a vector unit**, as OpenPocket's NAM
   does (read, `STOCK-FIRMWARE.md` 11.4).
 - **Its cabinets:** 20 IRs of 1 024 taps (files, signed 24-bit), 64-frame partitions.
+- **Dynamics (read):** every dynamics model and every MW drive has the same adaptive noise gate built in (default
+  threshold -60 dB, tracks the noise floor); Boost is 0..+10.8 dB (quadratic knob); Compress has ratio 1.5..10.5:1,
+  a soft knee and a +-10 dB first-order shelf.
+- **Cabinet filters (read):** Lcut = first-order high-pass 20..300 Hz, Hcut = first-order low-pass 5..18 kHz.
+- **Spring (read):** a 640-tap (29 ms at 22,059 Hz) spring impulse response convolved ahead of the reverb tank.
+- **Shimmer (read):** a two-tap rotating-delay pitch shifter with a 512-entry crossfade window, inside the FDN loop.
 - **Battery (read):** percentage from ADC channel 8, raw 528..635 mapped linearly to 0..100 %; icon red below 21 %,
   charging on GPIO 151; at boot a supply below 3.4 V changes a power setting; hardware LVD level `VLVD=4`.
 - **Uploads (read):** a model is staged in the 12 KB `usr` file (`0xBA000`) with a `P4JR` journal record (CRC-32) at

@@ -120,7 +120,8 @@ Where a `tanh` is needed it is a **512-entry table with linear interpolation** i
 
 ### Cabinets: partitioned FFT convolution, on the FFT block
 
-**Read** (`f_0202f844`, RAM library `f_01c04f9a`...). Cabinet IRs are convolved with a uniform partitioned FFT
+**Read** (`f_0202f844`, RAM library `f_01c04f9a`...; **corrected in the ninth pass, 14.5**: `f_0202f844` is the
+`AM2`/`AM3` amp stage, which uses the same convolution; the cabinet's own process is `f_0202bafa`). Cabinet IRs are convolved with a uniform partitioned FFT
 convolution: 64-frame partitions, FFT of 128, overlap-save, complex multiply-accumulate in float (`f_01c0a676`, two
 loads per complex product, unrolled). The FFTs themselves run either in software (radix routines in RAM for 32, 64
 and other sizes) or **on the chip's FFT block at `0x1EE0400`** (the same block OpenPocket's NAM uses as a vector unit):
@@ -988,3 +989,168 @@ and the icon's 21 %; the hardware LVD (`VLVD = 4`) is the only cut-off; the "Low
 - Object 4's spaces `0xE` and `0xF` and object 5's `0xE0000100/200/400`, one by one.
 - Loopback's two flag bytes in practice (a recording on the pedal settles it).
 - Nothing else of the list in 9, 10.7, 11.9 and 12.6 remains open.
+
+## 14. Ninth pass: the dynamics, the other delays, Shimmer, Swell, Spring, the cabinet's filters
+
+Read instruction by instruction where it says **read**; **read in outline** means the structure and the constants,
+not every line.
+
+### 14.1 The knobs of every delay and reverb
+
+**Read** (the descriptors' parameter tables):
+
+| Type | Knobs (defaults) |
+| --- | --- |
+| Analog | Time 43, Fb 20, Mix 12, **Phaser** 0, **Pitch** 0 |
+| Duck | Time 66, Fb 40, Mix 50, **Unpack** 50, Speed 50, Depth 50 |
+| dTape | Time 51, Fb 14, Mix 15, **Grit** 5, Speed 50, Depth 50 |
+| Dual | Time 64, Fb 30, Mix 50, **T-Mode** 7, Speed 50, Depth 50 |
+| Lofi | Time 58, Fb 25, Mix 15, **Grit** 5, Speed 50, Depth 50 |
+| Room, Hall | Decay 40, Mix 13, HPass 80, LPass 80, Depth 40 |
+| Swell | Decay 40, Mix 30, HPass 60, LPass 60, **RiseT** 50 |
+| Spring | Decay 40, Mix 13, HPass 80, LPass 80, **Combs** 40 |
+| Shimmer | Decay 75, Mix 25, **Tone** 75, **Pitch** 100, **Amt** 80 |
+| Cloud | Decay 40, Mix 30, HPass 60, LPass 60, **Diff** 50 |
+| Noise Gate++ | Gate 50 |
+| AI Gate MS | Gate 50, **Bias** 50 |
+| Boost | Gate 50, Gain 50 |
+| Compress | Gate 50, Sustain 50, Attack 50, Level 50 |
+
+The time knob of every delay is scaled by 9 (`900 / 100`): 0..900 ms, clamped to the type's maximum (478..790 ms,
+8.6).
+
+### 14.2 The gate inside every dynamics model (and every drive)
+
+**Read in outline.** Noise Gate++, AI Gate MS, Boost, Compress and the six MW drives all create the same gate object
+(`f_02009ed0`, run by `f_0200a384` → the RAM kernel `f_01c027ec`, 779 instructions). The "Gate" knob of each of them
+drives it. Every MW drive and every dynamics model therefore has a noise gate built in.
+
+**What the set routines give it** (read). With `g = Gate / 100`:
+- **amount** (`+460`) `= (2 - g) x g`: rises fast at first and is flat near the top;
+- **bias** (`+464`): Noise Gate++ `0.5 + 0.25 g`; **AI Gate MS** `b + 0.5 g (1 - b)` with `b = Bias / 100`, the one
+  difference between the two gates: the bias is a knob;
+- a threshold, default **-60 dB** (0.001), and an exponent clamped to 1..1.333 (`f_0200a292`). Boost passes
+  `1 + Gain / 300` there, the others 1.
+
+**The kernel** (outline):
+- a one-pole high-pass on the detector (~18 Hz, `0.99751`);
+- several envelope followers and a noise-floor estimate (counters up to 100 blocks, factors 0.65 and 0.4);
+- a state machine (`f_0200a426`) with hold counters;
+- gains computed in the log2 domain (`dB / 6.0206`), with constants of 14 dB, 22, -8, 0.12, 0.045, 0.05 and 0.06.
+
+It is an adaptive gate that tracks the noise floor and opens relative to it, not a fixed threshold; that is the
+**likely** meaning of "AI". The full state machine was not reduced to equations.
+
+### 14.3 Boost and Compress
+
+**Boost** (`f_0200aed6`, read):
+- gain = `2^(1.794e-4 x Gain^2)`: **0 dB at 0 to +10.8 dB at 100**, quadratic in the knob;
+- plus the gate;
+- the process applies the gain (`f_01c0942e`) and runs the gate.
+
+**Compress** (set `f_0200b25e` read; process `f_0200b38e` read in outline):
+- **ratio** `1.5 + 0.09 x Sustain`: 1.5:1 to 10.5:1;
+- a knee factor `1 / (1 + 5 S^4)` (`S = Sustain / 100`);
+- a time `80 + 0.5625 x (Attack - 100)`: 23.75..80, **likely** ms (the process turns times into one-pole coefficients
+  with `exp(-6,907.76 / (t x fs))`, i.e. -60 dB over `t` ms);
+- Level scaled by 0.014;
+- every parameter glides by 0.1 a block;
+- the gain computer works in dB with a **soft knee** (two thresholds at `T +- W/2`);
+- a **first-order high shelf** (`f_0200b080`) of `20 p - 10` dB (-10..+10 dB) on one of the parameters, a tone control;
+- plus the gate.
+
+### 14.4 The four other delays
+
+All five share the Dual's skeleton (8.6): the time glides (1.44e-4), the line is 16-bit, read with an integer-difference
+Hermite, and written saturated to 16 bits. What each adds:
+
+- **Analog** (block 6, **read**):
+  - the repeat goes through a two-pole low-pass (the bucket brigade's tone);
+  - then a blend between clean and **`tanh` saturated** (`tanh(1.122 x)`, the 512-entry table), by a smoothed amount,
+    before it is fed back;
+  - after the line, a **short modulated float delay** (sine LFO, `f_01c03562`, Hermite read) whose output can be
+    **phase-inverted** (a sign chosen by a flag): the **Phaser** knob;
+  - the **Pitch** knob **likely** sets that LFO's depth (its set routine scales it by `0.025` and by 22.059 samples per ms).
+- **Duck** (block 7, read):
+  - an envelope follower on the dry input; when the input is above **-30 dB** (`0.0316`) the echoes are pulled down to
+    **0.125 (-18 dB)**, otherwise back to 1, through a smoothed gain;
+  - **Unpack** sets the release (`x 7 + 1`, through `exp(-6,907.76 / ...)`);
+  - Speed and Depth modulate the line (`f_01c05098`).
+- **dTape** (block 8, read in outline):
+  - in the feedback, two one-poles (`0.98056`, `0.99028`) and a Butterworth section (`1 - 1/sqrt 2`, `sqrt 2 - 1`);
+  - **`asinh` saturation** driven by **Grit** (`asinh(Grit x)`, built from the sqrt and log2 tables, 7.5);
+  - the `tanh` table on the output (`x 71.81 / 64`);
+  - wow and flutter from Speed and Depth.
+- **Lofi** (block 10, 664 instructions, **read in outline**):
+  - the 8-band EQ curve of 8.6;
+  - `asinh` saturation (Grit);
+  - processing in pieces through a subroutine (`+0x5B4` in the block);
+  - the same LFO.
+
+### 14.5 Shimmer, Swell, Spring
+
+- **Shimmer's pitch shifter** (`f_02030500`, in the FDN's per-sample hook, **read**): a **two-tap rotating-delay
+  ("Doppler") shifter**.
+  - A 32-bit phase ramp moves a read point through a line.
+  - A second tap is 180° away (`phase ^ 0x80000000`); both are read with Hermite.
+  - Each tap is weighted by a **window from a 512-entry table** (`0x2050B8C`, the second tap 256 entries later), so
+    the two crossfade where the jump happens.
+  - The line is fed with the FDN's outputs x 0.235; the shifted sound goes back into the lines (Amt), so each pass
+    is shifted again: the shimmer's rising cascade.
+  - Pitch sets the ramp's speed.
+- **Swell** (set `f_02030850`, read):
+  - **RiseT** sets a rise of `(15.2 x RiseT + 0.8)` time units at the reverb's rate, turned into a one-pole that
+    reaches -60 dB over it (`1 - 6.908 / N`);
+  - the input envelope opens the reverb's input along it; Decay maps through `10^(-5 (1 - x))`.
+- **Spring** (`f_0202f080`, read):
+  - the impulse response is **640 taps at 22,059 Hz (29 ms)** in flash at `0x20579A0`, cut into **20 partitions of 32**,
+    each FFT'd (64 points) at init;
+  - its shape: it builds to a peak at 3 ms (tap 66, 0.051), decays slowly, and is faded out over its last partition;
+    136 zero crossings, a dispersive, chirpy spring;
+  - the convolution runs ahead of the tank, with lines of 5,440 and 12,592 and a 9.6 kHz filter (the Combs knob,
+    8.6).
+
+### 14.6 The cabinet's Lvl, Lcut and Hcut
+
+**Read** (set `f_02009e86`, process `f_0202bafa`):
+- **Lcut** = `20 + Lcut x 280 / 100` Hz: **20..300 Hz**, a **first-order high-pass** (`f_020084a2`);
+- **Hcut** = `5,000 + Hcut x 130` Hz rounded down to 100 Hz: **5..18 kHz**, a **first-order low-pass** (`f_020084f0`);
+- **Lvl** 0..100 (default 100);
+- defaults Lvl 100, Lcut 0 (20 Hz), Hcut 100 (18 kHz): flat;
+- the cabinet's process (`f_0202bafa`): level, the two filters, the partitioned convolution (`f_01c04f9a`).
+
+**Corrected**: `f_0202f844`, which section 4 called the cabinet, is the **`AM2`/`AM3` amp stage**: the AMP init installs
+it for those models (`0x2008D5C`). It convolves the model's FIR with the same library and adds two **first-order high
+shelves at 2 kHz and 3 kHz** whose gains come from the model.
+
+### 14.7 Earlier findings not yet written down
+
+- **Tap tempo** (`f_02006d26`, read):
+  - the tap period must be 1..3,000 ms;
+  - **DLY TAP** gives the period to the delay's descriptor function `+20`, which turns it into the Time value of the
+    delay's slot;
+  - **MOD TAP** gives `1,000,000 / period` (the rate in mHz) to the modulation's, which turns it into its Rate;
+  - **MOD+DLY TAP** does both;
+  - the preset is marked changed only if the value moved.
+- **The settings page's entries** (table at `0x2055014`): MIDI Ch, BT, Loopback, Input Gain, Delay Tail, Reverb Tail.
+- **The tuner page** (`f_0200f534`): `Tuner`, `Ref %dHz` (A = 440 by default), `Mode`: **Mute** or **Bypass** (the
+  output muted or passed while tuning).
+- **The amp names on screen** (`f_02007620`): `AMP nn`; `PC AMP` for an uploaded `AM` file; `PC NAN` (sic) for an
+  uploaded `NAM` file (**likely** from the strings and the type test).
+- **Saving a preset** (`f_020102e2`): the screen shows `Saving...`, `Swapping...` (moving a preset to another place) or
+  `Save failed`.
+- The UI keeps its resources in the flash file `pd40_ui` (`f_0200c236`); its content was not read.
+- **The tails** (`f_0200127e`, read):
+  - while the spill-over flag (`state + 2`) is set, the interrupt keeps exchanging blocks with the delay lane and/or
+    the reverb lane (bits 0 and 1 of `state + 3`) at their old places in the chain (`state + 172..175`: position and
+    lane of each);
+  - it does so before running the rest of the chain (from the split point `0x1C0B4A2`), so the echoes and the reverb
+    ring out across a preset change;
+  - Off, Auto and Force (11.6) decide when that flag is set (the deciding code was not followed).
+
+### 14.8 What is still not done
+
+- The gate kernel's state machine as equations (14.2) and the compressor's per-sample loop line by line.
+- Lofi's 664 instructions and dTape's tail line by line.
+- The `pd40_ui` file, USB descriptors, Bluetooth (A2DP, OTA), footswitch timing, the 020 / 021 difference (none of it
+  is effect DSP).
