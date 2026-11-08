@@ -98,9 +98,10 @@ a reverb loses nothing audible above 12 kHz, and costs half.
 with two states (left, right), and mixes it with the dry signal (`f_01c08d08`, the mix ramped by a one-pole of
 0.0183 a block).
 
-### The amp: 6x oversampled, one division per sample
+### The MW-808 drive (first taken for the amp): 6x oversampled, one division per sample
 
-**Read** (`f_0202d236`, the process function of the amp family). Per 16-frame sub-block:
+**Read** (`f_0202d236`). **Corrected in the fifth pass (section 10.2):** this is the process function of the **MW-808**
+drive (category 0), not of the amp; the amp's own process is `f_0202d7d8` (section 10.1). Per 16-frame sub-block:
 
 1. first-order input filter (`f_01c08cba`: `b0, b1, a1`, three multiply-adds a sample);
 2. the preamp stage (`f_01c05754`): input conditioning with a soft limiter (`fmin`/`fmax`), three more first-order
@@ -132,7 +133,7 @@ hardware only on CPU1.
 ### Captured models
 
 **Read** (the loader). The stock firmware loads models of six formats from its own flash: `CAB` (an IR), `AM2`,
-`AM3`, `AM4` (**guess**: its own amp captures, in several sizes), `NAM` (type 16, 1,871 float weights, 7.5 KB) and `LMT`. **Likely:**
+`AM3`, `AM4` (its own amp captures: **read in the fifth pass**, section 10.1, a FIR, a 16-unit GRU and a FIR), `NAM` (type 16, 1,871 float weights, 7.5 KB) and `LMT`. **Likely:**
 the model inference uses the integer kernels of the overlay window: overlay A is built of 64-bit integer
 multiply-accumulate loops with three to five accumulators, one input broadcast against a row of weights read with a
 stride (`r_acc += [w ++= stride] * x`, inside hardware loops), the shape of a dense or 1-D convolution layer; the
@@ -196,7 +197,7 @@ guessed):
 | `0x1C23F80` (1,456 B) | 0..5 | the six reverbs: Room, Hall, Swell, Spring, Shimmer, Cloud |
 | `0x1C24540` (2,244 B) | 6..10 | the five delays: Analog, Duck, dTape, Dual, Lofi |
 | `0x1C24E20` (980 B) | 11..17 | the seven modulations: Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter |
-| `0x1C25200` (1,172 B) | 18, 19 | two of the six amp set-ups (`f_0202cbfc`, `f_0202ce20`), with the 6x oversampling |
+| `0x1C25200` (1,172 B) | 18, 19 | the process routines of the MW-GOLD and MW-RAT drives (set up by `f_0202cbfc`, `f_0202ce20`; **corrected in the fifth pass**: these are drives, not amps, section 10.2) |
 
 Each block is one type's own routine: no test of the type inside the sample loop. **Read:** their reverbs keep their
 lines in 16 bits, as OpenPocket's do since v35.
@@ -298,11 +299,12 @@ single descriptor}`):
 
 **Read** (RAM data, values checked):
 
-- `0x1C0E408`: `tanh(i / 64)` for i = 0..511, linear interpolation between entries: the soft clip of the amp's input
-  and of five waveshaper curves (a table of five functions at `0x2054EB4`);
+- `0x1C0E408`: `tanh(i / 64)` for i = 0..511, linear interpolation between entries: the soft clip of the amp's input,
+  the chorus's input and one of the five LFO shapes at `0x2054EB4` (**corrected in the fifth pass**: those five functions
+  turn a 32-bit LFO phase into a 0..1 wave, sine, soft square and others; they are not waveshapers);
 - `0x1C0DE00` (square root of the mantissa, 0.707..1) and `0x1C0F414` (log2 of the mantissa, -1..0): together they make
   `asinh(x) = ln(|x| + sqrt(x^2 + 1))` without a library call (`f_01c05a18`), another soft clipper;
-- the knobs go through small mapping functions (`f_01c05b52`..`f_01c05d32`), not straight multiplications.
+- `f_01c05b52`..`f_01c05d32` are those five LFO shapes (above), not knob mappings as first written.
 
 ### 7.6 Every interrupt
 
@@ -367,7 +369,7 @@ slot's address through a pointer (the modulation's `f_01c05924` calls `[instance
 | 9 | Dual (type 14, max 478) | two heads (20 16-bit reads a pass) |
 | 10 | Lofi (type 15, max 782) | an 8-band EQ curve (615 Hz -8.4 dB, 738 -6.2, 749 +3.1, 1.6 k +2.4, 4.1 k -1.0, 6.2 k -5.5, 6.7 k -3.8, 7.2 k ...) |
 | 11..17 | Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter | full rate, two states (left, right), mixed by `f_01c08d08` |
-| 18, 19 | amp set-ups | the 6x oversampled stages (section 4) |
+| 18, 19 | MW-GOLD, MW-RAT drives | their oversampled clipping stages (section 10.2; first taken for amp set-ups) |
 
 All five delays share one init (`f_0201cc56`, the type 11..15 passed in, and a maximum time 478..790, **likely** in
 ms) and run at 22,059 Hz in 16-bit lines.
@@ -445,4 +447,171 @@ Hadamard FDN at half rate, a 16-bit delay line, Hermite reads. What the stock on
 - The meaning of the order bytes in a preset (slot to category or the reverse: the default is the identity).
 - The modulation blocks' per-sample routines (8.6 covers the reverbs and the delays), and Hall's and Cloud's front ends in
   full.
-- The six amp set-ups' circuits, and the `AM2` / `AM3` / `AM4` / `LMT` model formats.
+- ~~The six amp set-ups' circuits, and the `AM2` / `AM3` / `AM4` / `LMT` model formats.~~ Done in the fifth pass (sections
+  10.1 and 10.2): the six "amp set-ups" are the six MW drives, and the formats are read.
+
+## 10. Fifth pass: the amp, the model files, the drives, the mods, the flash, MIDI
+
+Read instruction by instruction unless marked **likely**. Two earlier claims were wrong and are corrected in place: the
+"6x oversampled amp" of section 4 is the **MW-808 drive**, and the "six amp set-ups" (table `0x205502C`) and code blocks
+18 and 19 are the **six MW drives**.
+
+### 10.1 The amp and its model files
+
+**The AMP descriptor** (`0x2046D38`; knobs Gain, Level, Bass, Middle, Treble) has init `f_02008692`, set `f_02009c66`,
+process `f_0202d7d8`. All 20 amps are **captured models read from the flash**: there is no circuit simulation of an amp
+in the firmware.
+
+**Process** (`f_0202d7d8`), per block:
+1. input gain, smoothed (`0.97 / 0.03` one-pole);
+2. a soft knee: `|x| <= 0.5` passes, above it `0.5 + 0.5 * tanh(2 * (|x| - 0.5))` (the 512-entry table), sign kept, so the
+   input never exceeds 1.0;
+3. three stage functions through pointers (`ctx+156/160/164`), filled by the init from the model's type; unused stages
+   point at an empty routine;
+4. a dry/processed blend from byte 18 of the model's header (0..100: below 50 the processed part is scaled by `2 x b/100`,
+   above it the dry part by `2 - 2 x b/100`); forced to 100 for NAM files;
+5. the tone stack (`f_02007d68` designs it with a shelf designer `f_02007abc` and a peak designer `f_02007c4e`, Q 0.707;
+   `f_01c057e4` runs it): three biquads (**likely** low shelf, mid peak, high shelf), each described by `{frequency, min dB, max dB}` **taken from the model's header** (bytes 24..59). The default, used for NAM
+   files, is `{150 Hz, -20, +20}`, `{425 Hz, -15, +15}`, `{1800 Hz, -10, +10}` (`0x205553C`);
+6. Level (`f_01c0942e`).
+
+**The model file validator** (`f_0200216e`) recognises five formats by their first four bytes; every float is checked
+for NaN and infinity. All have a 60-byte header:
+
+| Magic | Type | Body after the header | Size |
+| --- | --- | --- | --- |
+| `AM2`, `AM3` | 2 | 1,536 floats | 6,208 B, or 6,272 with an `LMT` trailer |
+| `AM4`, `AM5` | 4 | 1,952 floats | 7,872 B, or 7,936 with an `LMT` trailer |
+| `NAM` | 16 | 1,871 floats (A2-Lite, section 8) | 7,548 B, or 7,836 with a `BEND` trailer |
+| `CAB` | 32 | 1,024 taps in **signed 24-bit**, little endian, scaled by 2^-23, header 20 B, byte 18 = 1 or 2 | 3,092 B |
+
+**What `AM2`/`AM3`/`AM4`/`AM5` are** (the init's type-specific set-ups): a **Wiener-Hammerstein model with a small GRU** in
+the middle, run in fixed point.
+
+| Part | `AM2` / `AM3` | `AM4` / `AM5` |
+| --- | --- | --- |
+| input FIR | 256 taps | 512 taps |
+| GRU | 16 units, 1 input: 48 input weights, 3 x 16 x 16 recurrent, 16 output weights, **no biases** (832 floats) | the same with the two bias vectors (`b_ih`, `b_hh`, 3 x 16 each; 928 floats) |
+| output FIR | 256 taps | 512 taps |
+| more | three 64-tap filters (reversed, FFT'd) | — |
+
+The FIRs are turned into 64-frame FFT partitions (`f_02008098`) like the cabinets. The GRU's weights are converted to
+**Q21** (`x 2,097,151`) into rows of 17 words (`f_02008114`); the gate order is r, z, n (the n gate keeps `b_hn` apart,
+as PyTorch's GRU). The `LMT` trailer is `"LMT\0"` and 16 floats: `f_02008380` stores them as a second 16-weight output
+row and takes their dot product with the first (**likely** a limit or level head; its use was not followed further).
+An `AM4` with `LMT` gets one more stage (`f_020302e2`) and two filters at about 15 Hz and 500 Hz (`f_020084a2`,
+`f_020084f0`).
+
+**NAM's `BEND` trailer**: `"BEND"` and 72 floats, read as 24 triplets scaled by 2^20 into each layer's record (48-byte
+records). **Likely** per-layer fixed-point ranges (calibration); without it the init uses defaults.
+
+### 10.2 The drives (category 0)
+
+The ten models of category 0: Noise Gate++ (init `f_0200a18e`), Boost (`f_0200ae00`), Compress (`f_0200b1fa`), AI Gate
+MS (`f_0200acf4`), and six **MW drives**. Each drive's init is a stub calling `f_0201da90(i)`, which checks the RAM
+(module registry, below) and calls `0x205502C[i](44118.0)`; all six share the set function `f_02020790` and the process
+`f_02020b24`, which calls `0x204FD70[i]`:
+
+| i | Drive (knobs) | Set-up | Process | State |
+| --- | --- | --- | --- | --- |
+| 0 | MW-808 (4) | `f_0202cfd0` | `f_0202d236`: 2x then 3x up, a rational asymmetric diode curve, down (section 4) | 1,312 B |
+| 1 | MW-GOLD (4) | `f_0202cbfc` | code block 18 at `0x1C25200` | 2,560 B |
+| 2 | MW-OCD (6) | `f_0202c962` | `f_0202ca82` | 1,792 B |
+| 3 | MW-RAT (4) | `f_0202ce20` | code block 19 at `0x1C252AE` | 2,192 B |
+| 4 | MW-MUFF (4) | `f_0202d4d0` | `f_0202d60e` | 1,952 B |
+| 5 | MW-FACE (3) | `f_0202c874` | `f_0202c8de` → `f_01c0556c` | 3,904 B |
+
+GOLD, OCD, RAT and MUFF go through one oversampled shaper, `f_01c0549a`: up 2x (`f_01c0758a`) and 3x (`f_01c076d0`),
+three curves (`f_01c07e10`, `f_01c07e92`, `f_01c07edc`), down 3x and 2x; around it, biquads (`f_01c0944a`) and ramped
+gains (`f_01c0796c`). FACE has a chain of its own (`f_01c079c8`, `f_01c07a1e`, `f_01c07bbc`, `f_01c07d8c`). So every
+stock drive clips at **6x the rate (264.7 kHz)**. The circuits' coefficients were not tabulated.
+
+**The module registry** (`0x2050018`, 53 entries, checked by `f_0200210c` against `{44,118 Hz, 64 frames}`): the RAM
+each module needs, so the firmware can refuse a model it has no room for. Gates/dynamics 400..624 B; delays (ids 11..15)
+50..82 KB; reverbs (16..21) Room 56 KB, Hall 57 KB, Swell 51 KB, Spring 73 KB, Shimmer 63 KB, Cloud 79 KB; mods (38..44)
+Chorus 3.7 KB, Phaser 1.1 KB, Tremolo 0.7 KB, Flanger 1.6 KB, Vibrato 4 KB, Univibe 1.1 KB, Autofilter 128 B; drives
+(45..50) 1.7..4.3 KB; id 51 (**likely** NAM) 70 KB; id 24 (**likely** the cabinet) 133 KB.
+
+### 10.3 The modulations
+
+All seven run at full rate in stereo through one wrapper (`f_01c05924`): each channel is copied to a scratch buffer, run
+through the type's kernel (code blocks 11..17), and mixed with the dry signal by `f_01c08d08`. The **Mix** knob is
+smoothed (`0.0183` a block) and becomes **equal-sum gains**: below 50 % dry 1 and wet `2 x mix`; above it dry
+`2 - 2 x mix` and wet 1.
+
+**Chorus** (block 11, read in full):
+- a 32-bit phase accumulator LFO into a 512-entry sine table (`0x1C0F818`, linear interpolation);
+- depth smoothed per sample (`1.44e-4`), the delay position smoothed again (`0.0143`);
+- the line read with a 4-point cubic interpolation;
+- the input is coloured before it enters the line, as a bucket brigade would: `10 x tanh(0.1 x + 0.1) - 0.987`, a gentle
+  asymmetric saturation with its DC removed, then a two-pole low-pass;
+- the kernel outputs the wet signal only.
+
+**Phaser** (block 12): works in 16-sample chunks: LFO (`f_01c05dca`), all-pass stages (`f_01c05e2c`), coefficient tables
+chosen by the stage count (up to 4 tables at `0x2054870 + 1604`); a change of rate, depth or stages re-designs it
+(`f_020308fc`); two output filters. **Univibe** (block 16) is the same frame with its own LFO (`f_01c05eaa`), the
+classic four-stage phaser with an unequal, lamp-like sweep (**likely**). **Tremolo** (block 13) and **Autofilter**
+(block 17, with the table sine and cosine `f_02007992`, `f_02007a22`) are short kernels. **Flanger** (block 14)
+and **Vibrato** (block 15) are the long ones (284 and 260 instructions): modulated lines with feedback (Flanger: gains
+0.6..0.95, the five LFO shapes of `0x2054EB4`), Vibrato with the `tanh` input colour of the Chorus (`6.4`) and a
+512-entry table. They were not read line by line.
+
+### 10.4 What the stock firmware keeps in the flash
+
+**Read** (`f_02022e82`, at boot): the user data is in two files of the flash filesystem, **refused unless they sit at
+these addresses**:
+
+| File | Flash | Size | What |
+| --- | --- | --- | --- |
+| `EXT_RESERVED/usr` | `0xBA000` | 12 KB | not followed |
+| `EXT_RESERVED/pd40j` | `0xBF000` | 256 KB | the user area, below |
+
+Inside `pd40j`:
+
+| Offset | Size | What |
+| --- | --- | --- |
+| `0x00000` | 20 x 8 KB | the 20 amp models, each validated: only types 2, 4 or 16 (`AM2/3`, `AM4/5`, `NAM`) |
+| `0x28000` | 20 x 4 KB | the 20 cabinets, type 32 (`CAB`) |
+| `0x3C000` | 8 KB | the preset bank: 80 presets x 92 B (section 7.4), then `PATCHEND`: 7,370 B in all |
+| `0x3E000` | 4 KB | `GLB1`: the global settings, as a log |
+
+So the stock amps and cabinets are **files the user can replace** (the editor's "PC AMP", "PC NAN" and "PC CAB" pages
+name them); the firmware has no built-in amp or IR.
+
+**`GLB1`** (`f_0200c578`): the magic, then up to 511 records of 8 bytes appended one after the other (wear levelling);
+the last record that is not all `0xFF` wins. A record: byte 0 = 0; bytes 1 and 2 = two preset numbers 0..79 (**likely**
+the current preset and the other one of the A/B pair); byte 3 = 0/1; byte 4 = the input gain, -10..+10 dB (shown as
+`%s%d dB`); byte 5 = the MIDI channel 0..15, or 255 for OMNI; bytes 6 and 7 = 0/1, **likely** Delay Tail and Reverb Tail.
+
+### 10.5 MIDI
+
+**Read** (`f_02014dfe`, the `midi_route` task's handler): incoming messages wait in a 32-entry ring (3 bytes each, the
+channel already filtered by the OMNI/CH setting).
+- **Program Change n**: loads preset n (`f_0200c8d0`).
+- **Control Change**: the CC number indexes a 128-entry table (`0x2046704`, 12 bytes an entry: handler, name, argument),
+  the same table as the footswitch functions. The value goes to the handler.
+
+| CC | What | Value |
+| --- | --- | --- |
+| 0..5 | NS, AMP, MOD, DLY, REV, CAB on/off | toggles; as read, the handler acts only on value 0 |
+| 20..27 | virtual keys 0..7 (the footswitches) | non-zero = press, 0 = release |
+| 28 | tuner mode | |
+| 40, 41, 42 | MOD tap, DLY tap, MOD+DLY tap | |
+| 48..53 | NS, AMP, MOD, DLY, REV, CAB **model** | the model number, clamped to the category's count |
+| 54..89 | **effect parameters**: `54 + 6 x unit + param` (units NS, AMP, MOD, DLY, REV, CAB; params 0..5) | 0..127, scaled to 0..100 with rounding |
+
+### 10.6 Bluetooth, small things
+
+- The advertising data (`f_020155f6`) carries the flags, the **BLE-MIDI** service UUID and the 5 bytes `sinco` (**likely**
+  a maker tag: the string next to it is `sincoCAB`); the device name goes in the scan response (up to 29 bytes).
+- Tasks `bt_sbc_dec` and the string `JL_A2DP`: the stock firmware also **receives Bluetooth audio** (A2DP, SBC), mixed
+  into the output by the audio interrupt (section 9 of the handbook).
+- OTA file names are present (`ble_app_ota.bin`, `spp_app_ota.bin`): updates over BLE and over SPP.
+
+### 10.7 What remains not done
+
+- Flanger, Vibrato, Tremolo, Autofilter line by line; the drives' curves and filter values; Hall's and Cloud's front ends.
+- The `LMT` and `BEND` trailers' exact use; the third and fourth bytes of `GLB1`; the `usr` file.
+- The tuner's pitch algorithm (`tuner_task`, overlay B), the USB Audio loopback, the battery thresholds, the preset
+  order bytes.
+- The BLE app protocol beyond BLE-MIDI (SysEx used by M-VAVE's app).

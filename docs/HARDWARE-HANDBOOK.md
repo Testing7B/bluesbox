@@ -129,7 +129,9 @@ PCM ring at `0x1F29EE0`, inside the cache-way range above (**likely**: the stock
 | `0x04000..0xA3000` | the application area (the update loader rewrites only this) |
 | `0xA3000..0xFF000` | where the bootloader looks for update records: anything that ends like a record can be erased by an update, so user data there must be skipped by the loader (`loader/ldr_core.c`) |
 | `0xA5000` | stock "VM" (settings; holds the radio calibration records, VM 106..108, 187) |
+| `0xBA000..0xBD000` | stock file `EXT_RESERVED/usr` (12 KB) |
 | `0xBE000` | stock BTIF (Bluetooth pairing) |
+| `0xBF000..0xFF000` | stock file `EXT_RESERVED/pd40j` (256 KB): 20 amp models x 8 KB, 20 cabinets x 4 KB at `+0x28000`, the preset bank at `+0x3C000` (80 x 92 B + `PATCHEND`), the `GLB1` settings log at `+0x3E000` (`STOCK-FIRMWARE.md` 10.4). OpenPocket's own areas below reuse this range: installing OpenPocket overwrites the stock user data |
 | `0xC0000..0xE0000` | OpenPocket: NAM user models (16 x 8 KB) |
 | `0xE0000..` | update loader staging (5 x 4 KB) |
 | `0xF0000..0xF4000` | OpenPocket presets, A/B copies, header written last (sequence + CRC16), read back after writing; bytes `0xF00..0xF7F` of each sector left erased (the loader reads that area) |
@@ -302,14 +304,20 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   Six categories (gates/dynamics/drives 10, one AMP descriptor for 20 amps, modulation 7, delay 5, reverb 6, one CAB
   descriptor for 20 cabinets). Delays and reverbs run at **half rate** (22 059 Hz) behind a 2:1 polyphase
   decimator/interpolator.
-  Modulation runs at full rate, stereo. The amp runs 6x oversampled with a rational waveshaper. Cabinets are FFT
-  convolution on the FFT block.
+  Modulation runs at full rate, stereo, with an equal-sum Mix law. **The drives** (six MW models) clip at 6x the rate
+  (264.7 kHz, polyphase all-pass half-bands 2x then 3x). Cabinets are FFT convolution on the FFT block.
 - **Code placement:** every per-sample routine in RAM. Per-type effect code copied into one of four RAM slots when chosen
   (`f_0201c0a8`: 20 blocks; reverbs, delays, modulations, amp; the copy is checked against the flash), so the per-sample
   loop has no type test.
+- **The amp has no circuit model: all 20 amps are model files in the flash** (`AM2`/`AM3`: a 256-tap FIR, a 16-unit GRU
+  without biases, a 256-tap FIR; `AM4`/`AM5`: 512 taps, the GRU with biases; GRU weights in Q21 fixed point), behind a
+  soft knee at 0.5 and before a 3-band tone stack whose frequencies and ranges come from the model's header.
 - **Its NAM type is A2-Lite** (read: the 23-layer kernel/dilation table is in the firmware, 1 871 weights), in fixed
   point from a 7 KB RAM overlay that the tuner page's pitch detector shares (**likely**).
-- **Its cabinets:** 20 IRs of 1 024 taps, 64-frame partitions.
+- **Its cabinets:** 20 IRs of 1 024 taps (files, signed 24-bit), 64-frame partitions.
+- **MIDI:** Program Change loads a preset; CC 0..5 switch the six units, 20..27 are the footswitches, 28 the tuner,
+  40..42 tap tempo, 48..53 choose each unit's model, 54..89 set the 36 parameters (`54 + 6 x unit + param`, 0..127 to
+  0..100). The channel (or OMNI) and the input gain (-10..+10 dB) are kept in the `GLB1` log.
 - **`wet_audio` is not pinned to a core** (JieLi pins a task only when its name starts with `#C0`/`#C1`).
 - **Preset (92 bytes):** volume 0..100, the order (a permutation of 0..5), on[6], model[6], 6 x 6 parameters.
 - **Interrupt priorities:** audio 4, radio 2, timers 1, on CPU0. The **radio sits below the audio**, so audio always
@@ -357,4 +365,5 @@ What it took to get JieLi's controller (from the SDK's `btctrler.a` / `btstack.a
 
 - Whether CPU1's shared-RAM misreads depend on supply level, clock or temperature.
 - The code-cache cost of running the DSP from flash on both cores (suspected once, never measured in isolation).
-- The stock firmware's `AM2` / `AM3` / `AM4` / `LMT` model formats and the six amp set-ups' circuits.
+- The stock firmware's `LMT` and `BEND` trailers (the model formats themselves are read: `STOCK-FIRMWARE.md` 10.1), its
+  drives' curve values, its tuner's pitch algorithm.
