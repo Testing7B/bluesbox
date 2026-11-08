@@ -942,7 +942,7 @@ So every model in the stock firmware is a **14-byte-named file**: the name sits 
 
 | Space | Read | Write |
 | --- | --- | --- |
-| `0x0` | the **whole preset bank**, 7,370 bytes (12.5 of `pd40j` at `0x3C000`) | yes |
+| `0x0` | the **whole preset bank**, 7,370 bytes (`pd40j + 0x3C000`, 10.4) | yes |
 | `0x1` | the **current preset**, 92 bytes (`state + 4076`, or the edited copy at `+ 4260`) | yes: the preset as edited |
 | `0x2` | the **settings record**, 7 bytes (the `GLB1` record of 10.4, `state + 1046`) | yes |
 | `0x7` | sub-spaces by bits 20..27: `7` = the tails byte and two values (`f_02012274`); `8` = a live block (input gain...) | yes |
