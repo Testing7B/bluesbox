@@ -1603,7 +1603,7 @@ the controller answers with events.
 **What it means for the BlackBox**: Bluetooth is only a **receiver** of music (A2DP sink) and a **BLE-MIDI**
 peripheral; no remote control (AVRCP), no calls (HFP), no serial port (SPP). Its tasks (priorities 16..27) all run
 below the audio interrupts, but its radio work shares the CPU, which fits the extra load seen when Bluetooth is on
-(section 1).
+(section 2).
 
 ### 18.6 What is left
 
