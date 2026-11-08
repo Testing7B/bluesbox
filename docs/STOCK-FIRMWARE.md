@@ -129,6 +129,9 @@ A2-Lite's ~1,730, and at 48 kHz rather than 44.1. Which exact network the 1,871 
 
 ## 5. What OpenPocket can take from it
 
+v38 has taken items 1, 3 and 5 ([WHATS-NEW-v38.md](WHATS-NEW-v38.md)). Item 2 was measured first and left out: MOD and
+DELAY cost 1 to 3 % of the NAM network, so running them at half rate would free about 1 %.
+
 In order of value for the sound, with what it would cost.
 
 1. **Glide every parameter, crossfade every change.** Today `audio_apply` (`firmware/px_audio.h`) masks the audio

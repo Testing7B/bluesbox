@@ -75,7 +75,7 @@ static uint16_t ui_dark(uint16_t c)    /* a colour at ~1/3: the "off" version of
 static struct {
     int full, screen;                  /* screen: 0 PLAY, 1 EDIT */
     uint32_t preset, vol; char name[14];
-    int dirty, amp_t, cab_t, amp_on, cab_on, amp_m;
+    int dirty, amp_t, cab_t, amp_on, cab_on, amp_m, cab_m;
     uint8_t tile_on[PX_NBLK], tile_sel[PX_NBLK], tile_blk[PX_NBLK], tile_mv[PX_NBLK];
     int info_b, info_t, info_on;
     int blk, type, np, item, mode, on;
@@ -184,9 +184,13 @@ static void draw_play_top(int force)
         ft_box(94, P_NUM_Y + 4u, 142, ao ? an : "NO AMP", &FT_MD, ao ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
         uc.amp_t = at; uc.amp_on = ao; uc.amp_m = am;
     }
-    if (force || ct != uc.cab_t || co != uc.cab_on) {
-        ft_box(94, P_NUM_Y + 29u, 88, co ? px_type_name(PX_B_CAB, ct) : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
-        uc.cab_t = ct; uc.cab_on = co;
+    int cm = ct == PX_CAB_IR ? px_ir_slot(PRESET.p[PX_B_CAB][0]) : -1;   /* v38: a user IR shows its name */
+    if (force || ct != uc.cab_t || co != uc.cab_on || cm != uc.cab_m) {
+        char nm[12];
+        const char *cn = px_type_name(PX_B_CAB, ct);
+        if (cm >= 0) { px_ir_name(cm, nm); cn = nm; }
+        ft_box(94, P_NUM_Y + 29u, 88, co ? cn : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
+        uc.cab_t = ct; uc.cab_on = co; uc.cab_m = cm;
     }
     int d = ui_dirty();                                /* EDITED: the sound differs from its saved slot */
     if (force || d != uc.dirty) { ft_box(182, P_NUM_Y + 29u, 54, d ? "EDITED" : "", &FT_SM, UI_ACC, UI_BG, 2); uc.dirty = d; }

@@ -2,7 +2,7 @@
 
 ![OpenPocket screens](ui-v23.png)
 
-## The chain (12 blocks, 78 models)
+## The chain (12 blocks, 79 models)
 Default order: `GT → CMP → PIT → SFX → SYN → DRV → AMP → CAB → EQ → MOD → DLY → REV`
 
 Since v29 every preset has its own block order: **double-click PUSH** on the chain to grab the selected block, turn
@@ -45,9 +45,12 @@ a "bright" cap that fades as the gain goes up, a tone stack, presence, resonance
 sag (asymmetric triode curve, bias shift that follows your playing, sag that reaches the preamp too). All 8 amps are
 level-matched (±0.1 dB).
 
-### CAB — 7 cabinets (BODY, BRIGHT, MIC)
+### CAB — 7 cabinets (BODY, BRIGHT, MIC) and USER IR (v38: IR, LOW CUT, HIGH CUT)
 1x12 US OPEN (Jensen C12N) · 2x12 BLUE (Alnico Blue) · 4x12 GREEN (Greenback) · 4x12 T75 · 4x12 V30 (Vintage 30,
-fitted to measurements since v34) · 1x12 CREAM · DI (NO CAB).
+fitted to measurements since v34) · 1x12 CREAM · DI (NO CAB) · USER IR.
+**USER IR** (v38) plays a cabinet impulse response loaded from the web editor (8 slots, a `.wav` file each): its first
+23 ms (1024 samples at 44.1 kHz), convolved exactly (partitioned FFT), at the same loudness as the other cabinets. IR
+picks the slot (its name shows on the PLAY page), LOW CUT 20..400 Hz, HIGH CUT 20 kHz..2 kHz.
 Speaker resonance, presence dips and peaks taken from the makers' curves (the V30 from 8 measured amp / amp + cab
 pairs). **MIC** moves the mic from the edge (dark) to the centre (bright).
 Each cabinet also has a detail layer: the cone's breakup resonances between 1.2 and 6 kHz, the comb filtering of an

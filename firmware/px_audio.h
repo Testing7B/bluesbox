@@ -98,6 +98,16 @@ static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boo
 static volatile uint8_t a_mute;                      /* output zeros (a flash write is coming) */
 static volatile uint8_t a_tmute;                     /* v36: tuner open: the output fades to silence (5 ms) */
 static float a_mg = 1.0f;
+/* v38: changes without clicks. A change of type, order or NAM model fades the output out (a_xft 0), is applied, and fades
+ * it back in (~6 ms each way). Knob changes and blocks on / off are handed to the audio side (a_kp, a_kpend) and applied
+ * at the start of its next block, where they glide and fade (px_engine_knobs): the interrupt is never held off for them. */
+static volatile float a_xf = 1.0f;                     /* the change fade's gain now */
+static float a_gv = 0.64f;                             /* the volume as it glides */
+static volatile uint8_t a_xft = 1;                     /* where the change fade goes: 1 sound, 0 silence */
+static px_preset_t a_kp;
+static volatile uint8_t a_kpend;
+static uint8_t a_full;                                 /* the next apply must be a full one (a user model rewritten) */
+static void a_commit(void) { if (a_kpend) { px_engine_knobs(&g_eng, &a_kp); a_kpend = 0; } }
 static volatile uint8_t a_nan;                         /* engine output a NaN/Inf: needs a reset */
 static volatile uint32_t a_nan_count;
 static int a_running;
@@ -109,6 +119,7 @@ static void dsp_load(uint32_t t0, uint32_t lim);
 static void dsp_block(void)
 {
     uint32_t t0 = fm1_ticks();
+    a_commit();
     if (!a_bypass && !a_hold) {
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
             px_engine_process(&g_eng, a_in + o, a_out + o, PX_MAX_BLOCK);
@@ -137,10 +148,25 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
     }
     /* the output: a soft knee from 0.8 of full scale (the same slope there, then bending towards full scale, which it
      * never reaches) instead of a hard clip, whose corners crackle on the loudest notes */
-    const float g = a_gain;
+    {   /* v38: the change fade, linear, 256 samples (5.8 ms) each way */
+        const float tg = a_xft ? 1.0f : 0.0f;
+        float xf = a_xf;
+        if (xf != tg) {
+            const float st = tg > xf ? 1.0f / 256.0f : -1.0f / 256.0f;
+            for (uint32_t i = 0; i < A_FR; i++) {
+                xf += st;
+                if (st > 0.0f ? xf > 1.0f : xf < 0.0f) xf = tg;
+                a_out[i] *= xf;
+            }
+            a_xf = xf;
+        } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+    }
+    const float g = a_gain;                            /* v38: the volume glides there (~3 ms), no zipper */
+    float gv = a_gv;
     int clip = 0;
     for (uint32_t i = 0; i < A_FR; i++) {
-        float v = a_out[i] * g, m = v < 0.0f ? -v : v;
+        gv += (g - gv) * 0.008f;
+        float v = a_out[i] * gv, m = v < 0.0f ? -v : v;
         if (m > 0.8f) {
             float t = (m - 0.8f) * 5.0f;
             m = 0.8f + 0.2f * t / (1.0f + t);
@@ -149,6 +175,7 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
         }
         a_res[i] = (int32_t)(v * 8388607.0f);
     }
+    a_gv = gv;
     if (clip) a_clip++;
 }
 static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the safety bypass (over lim % 8 blocks running) */
@@ -207,6 +234,7 @@ static void pipe_job(uint32_t prev)
 static void dsp_pipe_run(int run)                      /* run: the engine on (else bypassed) */
 {
     const uint32_t prev = a_nbi ^ 1u;
+    a_commit();                                        /* (before CPU1 starts: the engine is all ours here) */
     a_prun = (uint8_t)run;
     if (run) pxn_srv_begin(a_late > 0 ? a_late : 0);
     const int job = fm1_cpu1_run(run ? pipe_job : post_job, prev);
@@ -341,15 +369,42 @@ static uint32_t ui_hash(void)                          /* hash of the whole pres
     for (uint32_t i = 0; i < sizeof(PRESET); i++) h = (h ^ b[i]) * 16777619u;
     return h;
 }
-static void audio_apply(void)                          /* coefficient recompute: outside the interrupt */
+static int a_wait(volatile uint8_t *v, uint8_t until, uint32_t ms)   /* 1 = *v reached until within ms */
+{
+    for (uint32_t t = 0; *v != until; t++) { if (t >= ms * 10u) return 0; fm1_delay_us(100); }
+    return 1;
+}
+static void audio_apply(void)                          /* the preset to the engine (main loop) */
 {
     px_preset_t pp;
     ui_to_px(&pp);
+    /* v38: knob changes and blocks on / off go to the audio side, which applies them at the start of a block */
+    const int live = a_running && !a_mute && a_wait(&a_kpend, 0, 50u);
+    if (live && !a_full) {
+        const int ch = px_engine_change(&g_eng, &pp);
+        if (ch == PX_CH_NONE) return;
+        if (ch == PX_CH_KNOBS) {
+            px_engine_prepare(&g_eng, &pp);            /* the cabinet's heavy part, here, while the audio plays */
+            a_kp = pp;
+            __asm__ volatile("" ::: "memory");          /* (a_kp and the cabinet store written before the flag) */
+            a_kpend = 1;
+            return;
+        }
+    }
+    a_full = 0;
+    /* anything else: the output fades out, the engine is set (the interrupt held off meanwhile: a late block now only
+     * repeats silence), and the output fades back in */
+    if (live) { a_xft = 0; for (uint32_t t = 0; a_xf != 0.0f && t < 400u; t++) fm1_delay_us(100); }   /* (40 ms at most) */
     if (a_running) fm1_irq_mask(FM1_IRQ_ALNK0);
     a_collect();                                       /* CPU1 must not process during the recompute */
     px_engine_set(&g_eng, &pp);
+    a_kpend = 0;
+#if DSP_CPU1
+    a_nbv = 0;                                         /* (the pipeline restarts from silence) */
+#endif
     a_bypass = 0; a_over = 0; a_peak = 0;
     if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
+    a_xft = 1;
 }
 static void audio_reset(void)                          /* after a NaN: engine reset, preset re-applied */
 {
@@ -359,6 +414,7 @@ static void audio_reset(void)                          /* after a NaN: engine re
     a_collect();
     px_engine_init(&g_eng, 44100.0f);
     px_engine_set(&g_eng, &pp);
+    a_kpend = 0; a_xf = 0.0f; a_xft = 1;               /* (back from silence) */
     a_nan = 0; a_nan_count++;
     if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
 }
@@ -545,11 +601,15 @@ static void audio_start(void)
 /* call from the main loop: applies preset changes (40 ms debounce) */
 static void audio_poll(uint32_t now)
 {
-    static uint32_t last_h, t_change, vol_shown = 1000u;
+    static uint32_t last_h, t_change, t_apply, vol_shown = 1000u;
     static int pending;
     if (a_nan) audio_reset();
     uint32_t h = ui_hash();
     if (h != last_h) { last_h = h; t_change = now; pending = 1; }
-    if (pending && now - t_change >= 40u) { pending = 0; audio_apply(); }
+    /* 40 ms after the last change; v38: while a knob turns, every 40 ms too (it glides: no need to wait for the end) */
+    if (pending && (now - t_change >= 40u ||
+                    (now - t_apply >= 40u && !a_kpend && px_engine_change(&g_eng, &PRESET) == PX_CH_KNOBS))) {
+        pending = 0; t_apply = now; audio_apply();
+    }
     if (master_vol != vol_shown) { vol_shown = master_vol; audio_volume(master_vol); }
 }

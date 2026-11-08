@@ -12,7 +12,7 @@ static const float AMP_LVL[PX_AMP_COUNT][11] = {
     {-13.95f, -14.69f, -16.58f, -17.36f, -17.30f, -16.95f, -16.45f, -15.83f, -14.94f, -14.50f, -14.15f}};
 static const float DRV_TRIM[PX_DRV_COUNT] = {0.064f, 0.102f, 0.071f, 0.032f};
 static const float DRV_DB[PX_DRV_COUNT] = {-9.03f, -5.23f, -11.89f, -12.62f};
-static const float CAB_DB[PX_CAB_COUNT] = {0.00f, -0.03f, -2.49f, 0.08f, 0.00f, -0.85f, 2.60f};
+static const float CAB_DB[PX_CAB_COUNT] = {0.00f, -0.03f, -2.49f, 0.08f, 0.00f, -0.85f, 2.60f, 0.00f};   /* (USER IR: v38, not measured) */
 static const float CMP_DB[PX_CMP_COUNT] = {-4.97f, -2.14f, -1.97f, 9.34f};
 static const float PIT_DB[PX_PIT_COUNT] = {0.54f, 0.34f, 2.96f, -0.58f, 1.49f};
 static const float SFX_DB[PX_SFX_COUNT] = {5.45f, 3.54f, 3.82f, -0.15f, 1.58f, -1.23f, -4.20f};
