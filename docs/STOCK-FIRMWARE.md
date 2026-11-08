@@ -1139,7 +1139,8 @@ shelves at 2 kHz and 3 kHz** whose gains come from the model.
   uploaded `NAM` file (**likely** from the strings and the type test).
 - **Saving a preset** (`f_020102e2`): the screen shows `Saving...`, `Swapping...` (moving a preset to another place) or
   `Save failed`.
-- The UI keeps its resources in the flash file `pd40_ui` (`f_0200c236`); its content was not read.
+- `pd40_ui` is **the name of the UI task**, not a file (**corrected in the tenth pass**): `f_0200c236` compares the
+  current task's name with it to decide whether it may take the UI lock directly.
 - **The tails** (`f_0200127e`, read):
   - while the spill-over flag (`state + 2`) is set, the interrupt keeps exchanging blocks with the delay lane and/or
     the reverb lane (bits 0 and 1 of `state + 3`) at their old places in the chain (`state + 172..175`: position and
@@ -1152,5 +1153,118 @@ shelves at 2 kHz and 3 kHz** whose gains come from the model.
 
 - The gate kernel's state machine as equations (14.2) and the compressor's per-sample loop line by line.
 - Lofi's 664 instructions and dTape's tail line by line.
-- The `pd40_ui` file, USB descriptors, Bluetooth (A2DP, OTA), footswitch timing, the 020 / 021 difference (none of it
-  is effect DSP).
+- USB descriptors, Bluetooth (A2DP, OTA), footswitch timing, the 020 / 021 difference: done in section 15.
+
+## 15. Tenth pass: keys, USB, the AI gate, the last SysEx spaces, 020 against 021
+
+### 15.1 The keys and the footswitches
+
+**Read** (`f_0200b9c2`, a system timer every **20 ms**, registered by the init with `f_02010b96(…, 20)`).
+
+**Inputs:**
+- GPIO bits from `0x501C4` and `0x50004`;
+- **three buttons on one ADC ladder** (channel 9). The raw value gives the combination pressed: below 430 = all
+  three (mask 7); below 490 = 5; below 525 = 6; below 590 = 3; below 680 = 4; below 720 = 1; below 820 = 2; above =
+  none. Each ladder bit must be seen on **3 successive scans (60 ms)** before it counts;
+- the eight MIDI virtual keys (CC 20..27, 10.5), merged into the same mask.
+
+**Each of 18 keys** runs a state machine:
+
+| Event | When | Code |
+| --- | --- | --- |
+| press | 1 scan after the key goes down | `key << 16 \| 1` |
+| **double press** | a press within **12 scans (240 ms)** of the last release | `key << 16 \| 2` |
+| **long press** | held **37 scans (740 ms)** | `key << 16 \| 3` |
+| repeat while held | every **7 scans (140 ms)** after that, counting up to 19 | `key << 16 \| 4..20` |
+| release | after a short press | `key << 16 \| 0` |
+| release | after a long press | `key << 16 \| (state + 20)` |
+
+**A two-key combination**: keys 0 and 1 together send their own event (`0x3000000`) and reset both keys' states:
+**likely** the tuner or bypass shortcut.
+
+Events go to the UI through `f_0200b8f0`.
+
+### 15.2 USB
+
+**Read** (descriptors in flash):
+- **Device**: USB 1.1, **VID `0x3654`, PID `0x7756`**, bcdDevice 1.00, 64-byte control endpoint, strings 1..3 (the
+  product name is `BlackBox`).
+- **Audio** (USB Audio Class 1), two streaming interfaces:
+  - **playback** (computer → pedal), endpoint `0x03` OUT, isochronous **adaptive**, 274-byte packets;
+  - **record** (pedal → computer), endpoint `0x83` IN, isochronous **asynchronous**, 270-byte packets (45 frames);
+  - both are **2 channels, 24-bit in 3-byte subframes, 44,100 Hz only**.
+- **MIDI**: a MIDI Streaming interface (class 1, subclass 3) with two bulk endpoints.
+- The tasks `USB-Audio` and `USB-Midi` serve them. The record path is in 13.2: a ring and a resampler that follows the
+  host clock, since the pedal runs at 44,118 Hz and the host at 44,100 Hz.
+
+### 15.3 The "AI" gate, decoded
+
+**Read** (`f_01c027ec` per sample, `f_0200a426` per analysis block).
+
+**What the kernel accumulates** while it gates, on the high-passed detector signal:
+- the sum and sum of squares of the signal and of its **first difference** (how bright or noisy it is);
+- the **intervals between zero crossings**: their count, sum and sum of squares, i.e. the mean and variance of the
+  period;
+- peak levels, kept as maxima.
+
+**What the analysis does with them** (`f_0200a426`):
+- the period is called **steady** when the variance is under 4 % of the squared mean (`x 1.04`);
+- a steady period is compared, within **1 %**, to **10.0 ms, 8.33 ms, 5.0 ms and 4.17 ms**: the **100, 120, 200 and
+  240 Hz** of rectified **50 and 60 Hz mains hum** (`0.01`, `0.00833`, `0.005`, `0.004167` times the rate, tolerances
+  `1e-4`, `8.3e-5`, `5e-5`, `4.2e-5`);
+- the level is then sorted into classes at **-50, -60 and -100 dB**;
+- the gate's open and close decisions use these, with hold counters (up to 100 blocks) and factors 0.65, 0.4, 0.97 and
+  0.7.
+
+So the "AI" gate **recognises steady mains hum and does not let it hold the gate open**, while a played note (not a
+mains period, or not steady) opens it. That is the difference from a threshold gate. The same object is in every
+dynamics model and every MW drive (14.2); AI Gate MS only exposes its bias.
+
+### 15.4 The last SysEx spaces
+
+**Read** (object 4, writes):
+
+| Space | Write |
+| --- | --- |
+| `0xD` | Loopback (1 byte): applied, and the settings record saved (`f_0200c6e4`) |
+| `0xE` | **load preset n** (the low byte, 0..79; `f_0200c8d0`) |
+| `0xF` | **save the current preset** (`f_020124f4`, the `PATCHEND` writer) |
+| `0x7`, sub-commands `0x300000`, `0x700001`, `0x800001` | preset-bank operations (`f_020122de`; **likely** the swap and copy behind `Swapping...`) |
+
+The `0xE` blocks of object 5 (`0x100`, `0x200`, `0x400`) are small read-only records next to `PDB1` (13.1).
+
+### 15.5 Bluetooth
+
+**Read**: BLE advertising with the BLE-MIDI service (10.6); the classic link's A2DP sink (`JL_A2DP`, `bt_sbc_dec`,
+SBC and mSBC), mixed into the output from a 6,144-sample 16-bit ring (7.x); the pairing records in the BTIF file.
+
+The `*_ota.bin` names (`ble_app_ota.bin`, `spp_app_ota.bin`, `edr_ota2.bin`, `nor_ota.bin`, `usb_hid_ota.bin`,
+`lcflash_ota.bin`, ...) are JieLi's generic list of update loaders, compiled in from the SDK. Which of them this
+product uses is decided by the update tool, not by the application.
+
+### 15.6 BlackBox_020 against BlackBox_021
+
+**Read** (the two application images, their strings and tasks):
+
+| | 020 | 021 |
+| --- | --- | --- |
+| Audio | JieLi's generic audio framework (`audio_server`, `audio_encoder`, `sbc_encoder`, opus, flac, cvsd, spdif, linein tasks) | its own interrupt-driven chain, and **the `wet_audio` task (the delay and reverb lanes) is new** |
+| Drives | none of the MW drives | **MW-808, GOLD, OCD, RAT, MUFF, FACE** added |
+| Models | `AMP %d` / `CAB %d` names | `AMP 00`, `PC AMP`, `PC NAN`; the `AM5` format and the NAM `BEND` trailer added |
+| Storage | `mnt/sdfile/app/usr` | `EXT_RESERVED/pd40j` + `usr` (the layout of 10.4), the `P4JR` upload journal, the `GLB1` settings log |
+| MIDI and keys | `midi_route` | the CC map and the footswitch functions (NS..CAB ON/OFF, VIRTUAL KEY 0..7, MOD/DLY TAP, TUNER MODE) |
+| Settings | — | MIDI Ch / OMNI, BT, Loopback, Input Gain, Delay Tail, Reverb Tail (Off / Auto / Force), "Auto-save on exit" |
+| Tasks | `screen_task`, `usr_app_task`, `usr_audio_task`, `eff_mute_task` | `pd40_ui`, `wet_audio`, `USB-Audio`, `USB-Midi`, `bt_sbc_dec`, `adc_scan` |
+| Messages | — | `Effect change failed`, `Save failed`, `Saving...`, `Swapping...` |
+
+Both have the same 41 effect names (gates, mods, delays, reverbs) and the tuner. So 021 is a **rewrite of the audio
+engine and of the system around the same effects**: what this document describes is 021 throughout.
+
+### 15.7 What is left
+
+Nothing of the effects, the models, the storage, the protocols, the keys, USB or the tasks is unread any more. What
+remains are details that change nothing for OpenPocket:
+- the compressor's per-sample loop and Lofi's 664 instructions line by line (their structure and constants are in
+  14.3 and 14.4);
+- the exact routing of Loopback's two flags (a recording on the pedal settles it, 13.2);
+- the drawing code of the screens.

@@ -317,6 +317,13 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   the GRU's three 16 x 16 matrix-vector products a sample run **on the FFT block as a vector unit**, as OpenPocket's NAM
   does (read, `STOCK-FIRMWARE.md` 11.4).
 - **Its cabinets:** 20 IRs of 1 024 taps (files, signed 24-bit), 64-frame partitions.
+- **Keys (read):** scanned every 20 ms; three footswitches on one ADC ladder (channel 9, combinations decoded,
+  60 ms debounce); long press 740 ms, double press within 240 ms, repeat every 140 ms.
+- **USB (read):** VID 0x3654 / PID 0x7756, USB 1.1; UAC1 playback (adaptive) and record (asynchronous), 2 ch 24-bit
+  44.1 kHz only; a MIDI Streaming interface.
+- **AI gate (read):** it measures the mean and variance of the zero-crossing period and treats a steady period of
+  100, 120, 200 or 240 Hz (+-1 %, rectified 50/60 Hz mains hum) as noise, so hum does not hold the gate open.
+- **020 to 021:** the wet_audio lanes, the MW drives, the CC map, the pd40j storage and most settings are new in 021.
 - **Dynamics (read):** every dynamics model and every MW drive has the same adaptive noise gate built in (default
   threshold -60 dB, tracks the noise floor); Boost is 0..+10.8 dB (quadratic knob); Compress has ratio 1.5..10.5:1,
   a soft knee and a +-10 dB first-order shelf.
