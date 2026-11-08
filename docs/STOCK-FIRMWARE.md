@@ -51,9 +51,17 @@ does not run the network.
 - Two counters, **early** and **late**, count blocks that arrive before or after the expected time: the stock firmware
   watches its own real-time margin the way our `LATE` counter (v37) now does.
 
-**Likely: 48 kHz.** Every effect's coefficient code computes with `fs = 48000.0` (and `1/48000`), in ten different
-setup functions (`f_0202c666`, `f_02020438`, ...). 44,100 appears only in the Bluetooth (SBC) and USB code. OpenPocket
-runs at 44.1 kHz with 128-frame blocks (2.9 ms); the stock firmware at 48 kHz with 64-frame blocks (1.33 ms).
+**Read (fourth pass, corrected): 44.1 kHz, not 48.** The ALNK0 set-up (`f_02023a20`, at `0x2024A6C`) clears bits 8..11
+of CLK_CON2 (`0x10014`), which selects the 44.1 kHz clock family (the JieLi driver sets bit 8 for 48 kHz), and writes
+the same dividers as the SDK's 44.1 kHz case (`ALNK0 + 0x0C`: bits [4:2] = 0, [7:5] = 4). Every model's set-up is
+then called with **fs = 44118** (`0x472C5600`, eleven places: the amp, gate, compressor, drives, reverbs, delays,
+modulation): the stock firmware takes its real rate to be 44,118 Hz, 0.04 % above 44,100 (**guess**: the audio clock is
+not an exact 44.1 kHz multiple, as 240 MHz / 5440 = 44,117.6 Hz would be). The `48000.0` seen earlier is a fast path:
+the coefficient functions accept 44,118, 44,100 or 48,000 and skip the table work when fs is 48,000. The delays and
+the reverbs run at half of it, 22,059 Hz (the constant is in their set-up). So the stock firmware and OpenPocket run at
+the same rate; the stock firmware uses 64-frame blocks (1.45 ms) where OpenPocket uses 128 (2.9 ms).
+- The DMA: LEN = 128 words (64 frames, 24-bit stereo), two 1 KB buffers at `0x1C20E20` (out) and `0x1C21220` (in),
+  channel 0 and 1 each set to 24-bit in CON1.
 
 ## 4. How the stock effects are built
 
@@ -131,7 +139,10 @@ stride (`r_acc += [w ++= stride] * x`, inside hardware loops), the shape of a de
 loader that swaps A and B is called from the model module's init (`f_02008692`). So the stock firmware runs its
 networks in **fixed point** from RAM, as OpenPocket does since v37. Its network is of the same order as A2-Lite: if
 each weight is used once per sample, as in a WaveNet, 1,871 weights are about 1,871 multiply-adds per sample, against
-A2-Lite's ~1,730, and at 48 kHz rather than 44.1. Which exact network the 1,871 weights describe is not settled.
+A2-Lite's ~1,730. **Read (fourth pass): it is A2-Lite.** The firmware holds the A2-Lite layer table at `0x2055A74`:
+kernel sizes 6 (x14), 15, 15, 6 (x7) and dilations 1, 3, 7, 17, 41, 101, 239 (twice), 1, 13, then 1..239 again,
+exactly the 23 layers OpenPocket's `engine/px_nam.c` runs, and 1,871 is A2-Lite's weight count. So the stock `NAM`
+type plays Neural Amp Modeler A2-Lite captures, in fixed point, at 44.1 kHz like OpenPocket.
 
 ## 5. What OpenPocket can take from it
 
@@ -161,7 +172,7 @@ In order of value for the sound, with what it would cost.
    point. OpenPocket already drives that block (`engine/px_nam.c`); the FFT mode is the same `CON`/`CADR` protocol
    with a different job word. This would let the pedal load user IRs (and the `CAB` files of the stock firmware).
 6. **Sample rate 48 kHz?** Most NAM captures, TONE3000 included, are made at 48 kHz; at 44.1 kHz they play about 1.5
-   semitones low (`docs/NAM.md`). The stock firmware runs its effects at 48 kHz. Moving OpenPocket to 48 kHz fixes the
+   semitones low (`docs/NAM.md`). (Corrected in section 8.1: the stock firmware runs at 44.1 kHz too.) Moving OpenPocket to 48 kHz fixes the
    user models without resampling, but costs 9% more CPU per second of audio and needs the factory models retrained
    (`tools/train_a2.py`). Worth it only together with items 1 to 3, which free more than that.
 7. **Smaller blocks later.** 64 frames at 48 kHz (1.33 ms) against our 128 at 44.1 (2.9 ms): lower latency, but the
@@ -177,12 +188,15 @@ at `0x2055DA0`), each linked to run at one of four RAM slots, and copied there w
 runs is always in RAM, and only the chosen types' code is there. Found by the slot address that makes each block's calls
 land on known functions:
 
+**Corrected in the fourth pass** (section 8: the loader and each block's caller were found, so this is read, not
+guessed):
+
 | RAM slot | Blocks | What they are |
 | --- | --- | --- |
-| `0x1C23F80` | 6 | modulation (**likely**: chorus, flanger and the like: a modulated line read with a cubic, a sine table) |
-| `0x1C24540` | 6 | **likely** the reverbs: 16-bit lines, 10 reads and 1 write a sample, decay times worked out with `1/ln 2` |
-| `0x1C24E20` | 6 | **likely** the delays and the pitch effects |
-| `0x1C25200` | 2 | the amp (calls the 6x oversampling routines of section 4) |
+| `0x1C23F80` (1,456 B) | 0..5 | the six reverbs: Room, Hall, Swell, Spring, Shimmer, Cloud |
+| `0x1C24540` (2,244 B) | 6..10 | the five delays: Analog, Duck, dTape, Dual, Lofi |
+| `0x1C24E20` (980 B) | 11..17 | the seven modulations: Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter |
+| `0x1C25200` (1,172 B) | 18, 19 | two of the six amp set-ups (`f_0202cbfc`, `f_0202ce20`), with the 6x oversampling |
 
 Each block is one type's own routine: no test of the type inside the sample loop. **Read:** their reverbs keep their
 lines in 16 bits, as OpenPocket's do since v35.
@@ -322,10 +336,63 @@ radio interrupt is short and its work is done in tasks.
 3. **Ramp the volume over the block** (v38 glides it already) and **crossfade on/off over ~7 ms** (v38: 23 ms).
 4. **One `tanh` table for every soft clip**, as above, instead of polynomial approximations per sample.
 
-## 8. Not done yet
+## 8. Fourth pass: the rate, the code blocks, the network, the overlays
 
-- The ALNK clock registers were not traced to a written rate; 48 kHz rests on the effects' coefficient code.
-- The exact network behind the stock `NAM` type and the role of overlay B (possibly the SBC decoder for A2DP).
-- The 20 effect blocks after the overlays are mapped by address but not each named.
-- Which core `wet_audio` runs on (the task call does not pin it); the meaning of the order bytes (slot to category or
-  the reverse: the default is the identity, so it does not show).
+### 8.1 The sample rate
+
+44.1 kHz (fs = 44,118 in the code), not 48: section 3. This corrects section 5's item 6, which rested on the 48,000
+constant: the stock firmware plays its captures at 44.1 kHz as OpenPocket does.
+
+### 8.2 How an effect's code gets into RAM (read)
+
+`f_0201c0a8(block)` loads block 0..20 into its slot: blocks 0..5 into slot 0, 6..10 into slot 1, 11..17 into slot 2,
+18..20 into slot 3. The slot table `{start, end}` is at `0x2055150` and the block table `{flash address, size}` at
+`0x2055DA0`, both reached from one base pointer (`0x2054870`), which is why no code holds their addresses. It skips the
+copy when the slot already holds that block (`0x1C0B3A8`, one byte a slot), checks the sizes and alignment, copies,
+`csync; ssync`, and compares the copy with the flash before it records the block (`memcmp`). Each effect's init
+calls it with its own block, so only the four chosen types' code is ever in RAM. The process function then runs the
+slot's address through a pointer (the modulation's `f_01c05924` calls `[instance + 8]`, set to `0x1C24E20`).
+
+| Block | Effect (init) | What its set-up shows |
+| --- | --- | --- |
+| 0 | Room (`f_0202e9cc`) | 8 all-passes of 29, 113, 209, 308, 68, 156, 254, 363 samples, gains alternately -0.6 and +0.6; one 5,132-sample line read at 16 taps (1,386..4,790), at 22,059 Hz (63..217 ms) |
+| 1 | Hall (`f_0202ec0c`) | **likely** the same structure: a line of 2,470 and 16 taps from 2,036 to 4,937 |
+| 2 | Swell (`f_0202eed8`) | an 8,196-sample buffer and the RiseT envelope (rates 22,059 / 441 / 17,647) |
+| 3 | Spring (`f_0202f080`) | lines of 5,440 and 12,592, two of 640, a 9.6 kHz filter: the "Combs" knob |
+| 4 | Shimmer (`f_0202f2a8`) | six short lines (111..220) and a 4,241-sample pitch-shifter line |
+| 5 | Cloud (`f_0202f46e`) | a 5,224 line tapped at 862..3,969, a 3,969 line, all-passes of 328, 990, 1,384, 2,042, 2,455 |
+| 6 | Analog (`f_0201d7e6`, type 11, max 781) | 32 Hz, 300 Hz, 1.2 kHz and 4 kHz filters (the bucket brigade's tone) |
+| 7 | Duck (type 12, max 789) | envelope times from `ln(0.001)` (the ducker) |
+| 8 | dTape (type 13, max 790) | wow and flutter (`Speed`, `Depth`), `Grit` |
+| 9 | Dual (type 14, max 478) | two heads (20 16-bit reads a pass) |
+| 10 | Lofi (type 15, max 782) | an 8-band EQ curve (615 Hz -8.4 dB, 738 -6.2, 749 +3.1, 1.6 k +2.4, 4.1 k -1.0, 6.2 k -5.5, 6.7 k -3.8, 7.2 k ...) |
+| 11..17 | Chorus, Phaser, Tremolo, Flanger, Vibrato, Univibe, Autofilter | full rate, two states (left, right), mixed by `f_01c08d08` |
+| 18, 19 | amp set-ups | the 6x oversampled stages (section 4) |
+
+All five delays share one init (`f_0201cc56`, the type 11..15 passed in, and a maximum time 478..790, **likely** in
+ms) and run at 22,059 Hz in 16-bit lines.
+
+### 8.3 The cabinet
+
+CAB init (`f_02009da6`): 20 models, IRs of 1,024 taps convolved in 64-frame partitions (the same sizes as OpenPocket's
+USER IR, v38), low cut from 20 Hz, high cut to 18 kHz.
+
+### 8.4 The two overlays
+
+Overlay A (7,232 B, the fixed-point kernels) is loaded by the AMP's init: the A2-Lite network (section 4). Overlay
+B (6,756 B) is loaded by `f_0200f0ca`, called from a screen handler (`f_0200f534`, in the table of screen handlers at
+`0x204F590`) that sets up a pitch detector with A = 440 Hz (`-440.0`), 0.01 thresholds and a decimation by 8,192 /
+44,118: **likely** the tuner page. The NAM kernels and the tuner then share the same 7 KB of RAM, swapped when the
+tuner opens (the output is muted there anyway).
+
+### 8.5 Which core runs `wet_audio`
+
+The task is created without a core: JieLi's task creation pins a task only when its name starts with `#C0` or `#C1`
+(`f_0205d0f6` reads the digit), and no task name in the firmware does (only `IDLE0` / `IDLE1` are per core). So
+`wet_audio` runs on whichever core is free: with the audio interrupt on CPU0, **likely** mostly CPU1.
+
+## 9. Not done yet
+
+- The meaning of the order bytes in a preset (slot to category or the reverse: the default is the identity).
+- Each effect block's per-sample routine, read line by line (8.2 gives their set-up only).
+- The six amp set-ups' circuits, and the `AM2` / `AM3` / `AM4` / `LMT` model formats.

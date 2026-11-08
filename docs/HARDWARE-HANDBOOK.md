@@ -182,7 +182,9 @@ window (`SFCENC_CON`, `fm1_flash.h`, `ble_vm.h`), not through `0x02xxxxxx`.
      [4:2] = 0 for both 44.1 and 48 kHz; [7:5] = 2 for 88.2/96, 1 for 176.4/192, 6 for 22.05/24, and [4:2] = 1 with
      [7:5] = 6 for 11.025/12. 8 kHz is refused.
   On the pedal `iis_set_sample_rate(44100)` gives 44.1 kHz (**measured**: the tuner reads notes in tune, and the NAM models
-  trained at 44.1 kHz play at their pitch). The stock firmware's rate was not traced to these bits.
+  trained at 44.1 kHz play at their pitch). **The stock firmware sets the same 44.1 kHz bits** (read: it clears bits 8..11
+  of `0x10014` and writes [7:5] = 4, [4:2] = 0), and passes **fs = 44 118** to every effect and model set-up: it takes
+  its real rate to be 44 118 Hz (0.04 % above 44 100; **guess**: the audio clock is not an exact 44.1 kHz multiple).
 - **Callback order (read in the driver):** `iis_irq_handler` walks the channels in order and calls the output
   callback for channel 0 (TX), then the input callback for channel 1 (RX), in the same interrupt.
 - **24-bit mode (read in the stock firmware, measured):** set each channel's 24-bit bit (`CON1 |= 1 << (4*ch + 2)`, the
@@ -192,8 +194,8 @@ window (`SFCENC_CON`, `fm1_flash.h`, `ble_vm.h`), not through `0x02xxxxxx`.
 - **[pedal]** I2S on IIS_PORTA: MCLK PA4, SCLK PA5, LRCK PA6, output DAT0 PA7 → external DAC → SGM8905 amp (enable PA9
   high), input DAT1 PA8 from an external ADC, guitar on the **left channel only** (the right one carries steady noise
   14 dB above the left floor; mixing L+R added it). The chip's internal DAC is not used on the pedal.
-- **Blocks:** OpenPocket uses 128 frames at 44.1 kHz (2.9 ms). The stock firmware uses **64-frame blocks**. Its
-  effects compute their coefficients with fs = 48 000 (**likely 48 kHz**: the ALNK rate was not traced to a register).
+- **Blocks:** OpenPocket uses 128 frames at 44.1 kHz (2.9 ms). The stock firmware uses **64-frame blocks** at the same
+  rate (its coefficient code also has a 48 kHz fast path, which misled an earlier reading).
 - **Real-time accounting:** time every block with TIMER4 against its budget (`frames / fs x 24 MHz`). Count blocks over
   100 % (`LATE`), blocks that reach the output clipper (`CLIP`), the peak load, and a per-effect time (v38 profiler). The
   stock firmware keeps the sum and the **maximum over 512 blocks** of its interrupt's time: the maximum is what predicts
@@ -298,11 +300,17 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   where our v39 came from.
 - **Effects:** module descriptors `{name, params {count, names, defaults, min, max}, funcs {init, set, process, ...}}`.
   Six categories (gates/dynamics/drives 10, one AMP descriptor for 20 amps, modulation 7, delay 5, reverb 6, one CAB
-  descriptor for 20 cabinets). Delays and reverbs run at **half rate** behind a 2:1 polyphase decimator/interpolator.
+  descriptor for 20 cabinets). Delays and reverbs run at **half rate** (22 059 Hz) behind a 2:1 polyphase
+  decimator/interpolator.
   Modulation runs at full rate, stereo. The amp runs 6x oversampled with a rational waveshaper. Cabinets are FFT
   convolution on the FFT block.
-- **Code placement:** every per-sample routine in RAM. Per-type effect code copied into one of four RAM slots when chosen,
-  so the per-sample loop has no type test.
+- **Code placement:** every per-sample routine in RAM. Per-type effect code copied into one of four RAM slots when chosen
+  (`f_0201c0a8`: 20 blocks; reverbs, delays, modulations, amp; the copy is checked against the flash), so the per-sample
+  loop has no type test.
+- **Its NAM type is A2-Lite** (read: the 23-layer kernel/dilation table is in the firmware, 1 871 weights), in fixed
+  point from a 7 KB RAM overlay that the tuner page's pitch detector shares (**likely**).
+- **Its cabinets:** 20 IRs of 1 024 taps, 64-frame partitions.
+- **`wet_audio` is not pinned to a core** (JieLi pins a task only when its name starts with `#C0`/`#C1`).
 - **Preset (92 bytes):** volume 0..100, the order (a permutation of 0..5), on[6], model[6], 6 x 6 parameters.
 - **Interrupt priorities:** audio 4, radio 2, timers 1, on CPU0. The **radio sits below the audio**, so audio always
   preempts the radio. A hardware-job completion interrupt (IRQ 62) runs on CPU1.
@@ -347,9 +355,6 @@ What it took to get JieLi's controller (from the SDK's `btctrler.a` / `btstack.a
 
 ## 12. Open questions
 
-- Which ALNK rate the stock firmware sets (the bits are known, section 5; 48 kHz for its effects is inferred from its
-  coefficient code).
-- Which core `wet_audio` runs on in the stock firmware.
 - Whether CPU1's shared-RAM misreads depend on supply level, clock or temperature.
 - The code-cache cost of running the DSP from flash on both cores (suspected once, never measured in isolation).
-- The stock `NAM` model format's exact network (1 871 float weights, type 16) and the role of overlay B.
+- The stock firmware's `AM2` / `AM3` / `AM4` / `LMT` model formats and the six amp set-ups' circuits.
