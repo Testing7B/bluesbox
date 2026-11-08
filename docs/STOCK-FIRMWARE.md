@@ -391,8 +391,58 @@ The task is created without a core: JieLi's task creation pins a task only when 
 (`f_0205d0f6` reads the digit), and no task name in the firmware does (only `IDLE0` / `IDLE1` are per core). So
 `wet_audio` runs on whichever core is free: with the audio interrupt on CPU0, **likely** mostly CPU1.
 
+### 8.6 The reverbs and the delays, read instruction by instruction
+
+**The reverb core, shared by five of the six reverbs** (`f_01c08260` in the RAM library, called through `f_01c05ae4`;
+set up by `f_0202e826`). Per sample, at 22,059 Hz, in float:
+
+1. one LFO: a 32-bit phase accumulator read through a 256-entry quarter-wave sine table (`0x1C0E204`), interpolated;
+   its depth is smoothed every sample (one-pole, 1.44e-4). Two offsets come out of it, `(1 + sin) x depth` and
+   `(1 - sin) x depth`;
+2. **eight delay lines**, each read at its length plus one of the two offsets (alternately), with a 4-point Hermite
+   (cubic) interpolation, and each followed by **its own Schroeder all-pass** (a gain per line): every line is
+   modulated and diffused, not only four;
+3. an optional per-sample hook on the eight outputs (`[ctx + 404]`): the Shimmer passes its pitch shifter here
+   (`f_02030500`), the others pass nothing;
+4. an **8 x 8 Hadamard** mix (fast Walsh-Hadamard butterflies, x 0.35355 = 1/sqrt 8);
+5. the outputs, **in stereo**: left = the sum of the eight, right = (first four) - (last four), both x 0.35355;
+6. each line is written with `input x its input gain + its mixed output x its feedback gain` (the decay).
+
+Each type puts its own front end before it and the same post after it (two one-pole filters a channel, high-pass then
+low-pass, `f_01c07f22`, set by HPass and LPass):
+
+| Type | Before the core |
+| --- | --- |
+| Room | a 5,132-sample line read at 16 taps with their own gains: 12 taps make one signal, 4 another; each goes through 4 all-passes (29, 113, 209, 308 and 68, 156, 254, 363, gains +-0.6, `f_01c07f8e`); their sum feeds the core, and is also added to both outputs (the early reflections) |
+| Hall | a pre-stage of its own (`f_01c081ca`, `f_020303c6`), then the core |
+| Swell | an input envelope (RiseT, `f_02030850`) and **two** cores |
+| Spring | the input **convolved with a spring impulse response** by the same partitioned FFT convolution as the cabinets (`f_01c04f9a`), then the core |
+| Shimmer | the core with the pitch shifter in its hook (above), three all-pass pairs |
+| Cloud | no core: four modulated lines read with a Hermite and a fixed 4th-order low-pass each (`f_01c0804c`), with `asinh` saturation (`f_01c05a18`) in the loop |
+
+**The delays** (block 9, Dual, read in full; the others call the same LFO, `f_01c05098`). Per sample at 22,059 Hz:
+
+1. each head's length moves to its target by a one-pole (1.44e-4 a sample): turning TIME never jumps;
+2. each head is read from a **16-bit** line with a 4-point Hermite whose differences are taken **in integers**
+   (`3 x (b - c) - ...` on the int16 samples) and only then converted to float; a read on a whole sample skips it;
+3. the heads are summed (0.9 and a set gain, x 1/32768) and **soft-clipped through the `tanh` table** (x 64.7, the
+   512-entry table of section 7.5): that is the wet output;
+4. the feedback goes through **two biquads** (the tone) and a short **modulated float delay** (Speed, Depth: the
+   LFO above, Hermite read): the wow sits inside the loop, so it builds up on each repeat;
+5. the line is written with `input x gain + feedback x gain`, scaled by 32768 and **saturated to 16 bits** (`sat16`).
+
+So the stock delays and reverbs are float DSP on 16-bit (delays) or float (reverbs) memory, at half rate, with
+every time and depth smoothed per sample and every read a cubic. OpenPocket's (v35) are of the same family: an 8-line
+Hadamard FDN at half rate, a 16-bit delay line, Hermite reads. What the stock ones do that OpenPocket's do not:
+
+- all eight lines modulated, each with a nested all-pass (OpenPocket: four modulated, diffusion only before the tank);
+- **stereo** reverb output (sum and difference); OpenPocket's output is mono on both channels;
+- the delay's output soft-clipped by `tanh` and a modulated delay inside the feedback loop;
+- the Spring as a convolution with a real spring's impulse response, ahead of the tank.
+
 ## 9. Not done yet
 
 - The meaning of the order bytes in a preset (slot to category or the reverse: the default is the identity).
-- Each effect block's per-sample routine, read line by line (8.2 gives their set-up only).
+- The modulation blocks' per-sample routines (8.6 covers the reverbs and the delays), and Hall's and Cloud's front ends in
+  full.
 - The six amp set-ups' circuits, and the `AM2` / `AM3` / `AM4` / `LMT` model formats.
