@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Editor, presetToJSON, presetFromJSON, filePresets, parsePresetFile, clonePreset } from "../docs/pxedit.js";
 import { parseNam, levelTrim, packModel, readDi, a2Run, KERNELS, DILATIONS, NW } from "../docs/pxnam.js";
+import { parseWav, prepareIr, packIr, irName, resample, IR_LEN } from "../docs/pxir.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SIM = process.env.EDSIM || join(ROOT, "build", "edsim");
@@ -55,7 +56,7 @@ let s = sim(["--dump", flash1]);
 await s.ready;
 let ed = new Editor(s.access);
 const info = await ed.connect();
-ok(info && info.proto === 2 && info.version === "v37" && info.identity === "PocketX_937", `INFO: ${info && `${info.version} ${info.identity}`}`);
+ok(info && info.proto === 3 && info.version === "v39" && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
 ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 12 blocks, 5 parameters, 52 slots, names of 13");
 const t0 = Date.now();
 const cat = await ed.catalog();
@@ -182,6 +183,56 @@ list = await ed.list();
   const bad = packModel(m.name, m.weights, lv); bad[64 + 100] ^= 0x55;           // a weight changed: the CRC no longer matches
   ok(await ed.namUpload(5, bad) === 1 && !(await ed.namList()).models[12 + 5].used, "NAM: a damaged model is refused, the slot stays empty");
   ok(await ed.namErase(4) === 0 && !(await ed.namList()).models[12 + 4].used, "NAM: the slot is cleared again");
+}
+// ---- 8. v38: cabinet IRs (a WAV file -> an IR slot -> the CAB block's USER IR type) ----
+{
+  const wav = (sr, bits, ch, frames) => {        // a WAV file of `frames` (arrays of channel samples, -1..1)
+    const bps = bits >> 3, n = frames.length, b = new ArrayBuffer(44 + n * ch * bps), v = new DataView(b);
+    const str = (o, t) => { for (let i = 0; i < 4; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + n * ch * bps, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true);
+    v.setUint16(20, bits === 32 ? 3 : 1, true); v.setUint16(22, ch, true); v.setUint32(24, sr, true);
+    v.setUint32(28, sr * ch * bps, true); v.setUint16(32, ch * bps, true); v.setUint16(34, bits, true);
+    str(36, "data"); v.setUint32(40, n * ch * bps, true);
+    frames.forEach((f, i) => f.forEach((x, c) => {
+      const o = 44 + (i * ch + c) * bps;
+      if (bits === 16) v.setInt16(o, Math.round(x * 32767), true);
+      else if (bits === 24) { const k = Math.round(x * 8388607); v.setUint8(o, k & 255); v.setUint8(o + 1, k >> 8 & 255); v.setInt8(o + 2, k >> 16); }
+      else v.setFloat32(o, x, true);
+    }));
+    return b;
+  };
+  let seed = 11;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed / 4294967296 - 0.5; };
+  const resp = (sr, ms) => Array.from({ length: Math.round(sr * ms / 1000) }, (_, i) => [i < 20 ? 0 : rnd() * Math.exp(-(i - 20) / (sr * 0.004)), 0]);
+  const w48 = parseWav(wav(48000, 24, 2, resp(48000, 200)));
+  ok(w48.sampleRate === 48000 && w48.channels === 2 && w48.bits === 24 && w48.x.length === 9600, "IR: a 24-bit stereo WAV at 48 kHz is read");
+  const ir = prepareIr(w48);
+  ok(ir.h.length === IR_LEN && Math.abs(ir.h[0]) > 0 && /48 kHz/.test(ir.note) && /23 ms/.test(ir.note) && Math.abs(ir.h[IR_LEN - 1]) < 1e-3,
+     `IR: from its onset, at 44.1 kHz, 1024 samples, faded (${ir.note})`);
+  const sine = Array.from({ length: 4800 }, (_, i) => Math.sin(2 * Math.PI * 1000 * i / 48000));
+  const rs = resample(sine, 48000, 1000), errs = rs.slice(100, 900).map((v, i) => v - Math.sin(2 * Math.PI * 1000 * (i + 100) / 44100));
+  ok(Math.max(...errs.map(Math.abs)) < 1e-3, "IR: the resampling keeps a 1 kHz tone (error below -60 dB)");
+  let bad = ""; try { parseWav(new ArrayBuffer(40)); } catch (e) { bad = e.message; }
+  ok(/not a WAV/.test(bad), "IR: a file that is not a WAV is refused, with the reason");
+  const f32 = prepareIr(parseWav(wav(44100, 32, 1, resp(44100, 10).map((f) => [f[0]]))));
+  ok(f32.note === "" && f32.h[1000] === 0, "IR: a short float WAV at 44.1 kHz is kept as it is (zeros after its end)");
+  let il = await ed.irList();
+  ok(il.length === 8 && il.every((x) => !x.used), "IR_LIST: 8 empty slots");
+  const name = irName("Mesa_4x12 V30.wav");
+  const rc = await ed.irUpload(2, packIr(name, ir.h));
+  il = await ed.irList();
+  ok(rc === 0 && name === "MESA 4X12 V" && il[2].used && il[2].name === name, `IR: written into slot 3 (${il[2].name})`);
+  await ed.catalog();
+  const cabB = cat.blocks.findIndex((b) => b.label === "CAB"), it = cat.blocks[cabB].types.findIndex((t) => t.name === "USER IR");
+  await ed.irTexts();
+  const texts = ed.cat.blocks[cabB].types[it].params[0].texts, kv = texts.indexOf("MESA 4X1");
+  ok(it === 7 && kv >= 0 && ed.cat.blocks[cabB].types[it].params.map((p) => p.name).join() === "IR,LOW CUT,HIGH CUT",
+     `IR: the CAB block's USER IR type offers it (knob ${kv})`);
+  await ed.setType(cabB, it);
+  ok(await ed.setParam(cabB, 0, kv) === kv && (await ed.state()).preset.type[cabB] === it, "IR: a sound uses it");
+  const dmg = packIr(name, ir.h); dmg[64 + 300] ^= 0x21;
+  ok(await ed.irUpload(3, dmg) === 1 && !(await ed.irList())[3].used, "IR: a damaged IR is refused, the slot stays empty");
+  ok(await ed.irErase(2) === 0 && !(await ed.irList())[2].used, "IR: the slot is cleared again");
 }
 ok(list[20].name === "STAGED A" && list[21].name === "STAGED B" && list[20].saved && !list[4].saved, "power cycle: the saved slots are still there");
 st = await ed.state();

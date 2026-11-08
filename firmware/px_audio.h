@@ -98,6 +98,20 @@ static volatile uint8_t a_bypass, a_over, a_hold;   /* a_hold: DSP held off (boo
 static volatile uint8_t a_mute;                      /* output zeros (a flash write is coming) */
 static volatile uint8_t a_tmute;                     /* v36: tuner open: the output fades to silence (5 ms) */
 static float a_mg = 1.0f;
+/* v38: changes without clicks. A change of type, order or NAM model fades the output out (a_xft 0), is applied, and fades
+ * it back in (~6 ms each way). Knob changes and blocks on / off are handed to the audio side (a_kp, a_kpend) and applied
+ * at the start of its next block, where they glide and fade (px_engine_knobs): the interrupt is never held off for them. */
+static volatile float a_xf = 1.0f;                     /* the change fade's gain now */
+static float a_gv = 0.64f;                             /* the volume as it glides */
+static volatile uint8_t a_xft = 1;                     /* where the change fade goes: 1 sound, 0 silence */
+static px_preset_t a_kp;
+static volatile uint8_t a_kpend;
+static uint8_t a_full;                                 /* the next apply must be a full one (a user model rewritten) */
+static void a_commit(void) { if (a_kpend) { px_engine_knobs(&g_eng, &a_kp); a_kpend = 0; } }
+/* v38: where the time goes, per block, over the last second: % of an audio block's time (index PX_NBLK: the NAM network;
+ * with a NAM amp the blocks after it run on the second core, beside the ones before it) */
+static uint8_t a_pf[PX_NBLK + 1];
+static uint32_t a_wcut;                                /* v39: wet blocks cut short so far (the footer, when not 0) */
 static volatile uint8_t a_nan;                         /* engine output a NaN/Inf: needs a reset */
 static volatile uint32_t a_nan_count;
 static int a_running;
@@ -109,6 +123,7 @@ static void dsp_load(uint32_t t0, uint32_t lim);
 static void dsp_block(void)
 {
     uint32_t t0 = fm1_ticks();
+    a_commit();
     if (!a_bypass && !a_hold) {
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
             px_engine_process(&g_eng, a_in + o, a_out + o, PX_MAX_BLOCK);
@@ -137,10 +152,25 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
     }
     /* the output: a soft knee from 0.8 of full scale (the same slope there, then bending towards full scale, which it
      * never reaches) instead of a hard clip, whose corners crackle on the loudest notes */
-    const float g = a_gain;
+    {   /* v38: the change fade, linear, 256 samples (5.8 ms) each way */
+        const float tg = a_xft ? 1.0f : 0.0f;
+        float xf = a_xf;
+        if (xf != tg) {
+            const float st = tg > xf ? 1.0f / 256.0f : -1.0f / 256.0f;
+            for (uint32_t i = 0; i < A_FR; i++) {
+                xf += st;
+                if (st > 0.0f ? xf > 1.0f : xf < 0.0f) xf = tg;
+                a_out[i] *= xf;
+            }
+            a_xf = xf;
+        } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+    }
+    const float g = a_gain;                            /* v38: the volume glides there (~3 ms), no zipper */
+    float gv = a_gv;
     int clip = 0;
     for (uint32_t i = 0; i < A_FR; i++) {
-        float v = a_out[i] * g, m = v < 0.0f ? -v : v;
+        gv += (g - gv) * 0.008f;
+        float v = a_out[i] * gv, m = v < 0.0f ? -v : v;
         if (m > 0.8f) {
             float t = (m - 0.8f) * 5.0f;
             m = 0.8f + 0.2f * t / (1.0f + t);
@@ -149,6 +179,7 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
         }
         a_res[i] = (int32_t)(v * 8388607.0f);
     }
+    a_gv = gv;
     if (clip) a_clip++;
 }
 static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the safety bypass (over lim % 8 blocks running) */
@@ -170,7 +201,21 @@ static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the 
  * if the 2nd core rejects a job or misbehaves (FM1_CPU1_FALLBACK 1, Felucca's fm1_cpu1.h). */
 static volatile uint8_t a_c1;                          /* 1 = DSP runs on the 2nd core */
 static uint8_t a_job;                                  /* a block is in progress on CPU1 */
+/* v39: the wet lanes (px_dsp.h px_wet_*, docs/STOCK-FIRMWARE.md 7.3): with the 2nd core on, the delay and the reverb make
+ * their sound beside the chain, two blocks late (their taps make up for it):
+ *  - one core's chain (no NAM amp): CPU1 runs the chain, CPU0 the lanes at the same time, in the interrupt (cut short,
+ *    and counted, if they ever reach 85 % of the block);
+ *  - a NAM amp on two cores: CPU1 runs the lanes first in its share (post_job), where the delay and the reverb ran in
+ *    v38; the network's sharing between the cores takes their time into account as before.
+ * v39.1: the lanes of a NAM preset no longer run after the block, in the time left before the next interrupt: there was
+ * too little of it (the network shares its work between the cores, so the lanes' time only half came back), they were
+ * cut short every block, and the echoes and the reverb came out chopped at the block rate (a whistle). */
+#ifndef OP_WET_LANES
+#define OP_WET_LANES 1                                 /* 0: the delay and the reverb in the chain, as in v38 */
+#endif
 #if DSP_CPU1
+#define A_WLAG (2 * (int)A_FR)
+static void a_c1_off(void) { a_c1 = 0; px_wet_mode(&g_eng, 0, 0); }   /* one core from now on: no lanes */
 static void dsp_job(uint32_t arg) { (void)arg; dsp_block(); }
 #endif
 #if DSP_CPU1
@@ -185,6 +230,7 @@ static float a_nb[2][A_FR];                            /* the network's output: 
 static uint8_t a_nbi, a_nbv, a_prun;                  /* a_nb[a_nbi] is this block's; a_nbv: the other one holds one */
 static void post_job(uint32_t prev)
 {
+    if (g_eng.wl_on) px_wet_run(&g_eng, 0u, 0);       /* v39.1: the lanes (the previous block's sends), first */
     if (a_prun && a_nbv) {
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
             px_engine_part(&g_eng, a_nb[prev] + o, a_out + o, PX_MAX_BLOCK, PX_PART_POST);
@@ -207,6 +253,7 @@ static void pipe_job(uint32_t prev)
 static void dsp_pipe_run(int run)                      /* run: the engine on (else bypassed) */
 {
     const uint32_t prev = a_nbi ^ 1u;
+    a_commit();                                        /* (before CPU1 starts: the engine is all ours here) */
     a_prun = (uint8_t)run;
     if (run) pxn_srv_begin(a_late > 0 ? a_late : 0);
     const int job = fm1_cpu1_run(run ? pipe_job : post_job, prev);
@@ -219,7 +266,7 @@ static void dsp_pipe_run(int run)                      /* run: the engine on (el
         px_engine_part(&g_eng, a_nb[a_nbi] + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_NAM);
     if (job) {
         if (run) pxn_srv_end();
-        if (fm1_cpu1_wait() < 0) { a_c1 = 0; post_job(prev); }   /* (dropped: here, and one core from now on) */
+        if (fm1_cpu1_wait() < 0) { a_c1_off(); post_job(prev); }   /* (dropped: here, and one core from now on) */
         else if (run) a_late += ((int32_t)(a_tpost - tpre) - a_late) / 4;
     }
     a_nbv = (uint8_t)run;
@@ -237,7 +284,7 @@ static void a_collect(void)                            /* collects the block in 
 #if DSP_CPU1
     if (a_job) {
         a_job = 0;
-        if (fm1_cpu1_wait() < 0) a_c1 = 0;             /* dropped: CPU0 takes over (this block is lost) */
+        if (fm1_cpu1_wait() < 0) a_c1_off();           /* dropped: CPU0 takes over (this block is lost) */
     }
 #endif
 }
@@ -290,7 +337,13 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
 {
     (void)priv;
     if (ch != 1u) return;
+#if DSP_CPU1
+    const uint32_t t_irq = fm1_ticks();
+#endif
     a_collect();                                       /* a_in must no longer be read by CPU1 */
+#if DSP_CPU1
+    if (g_eng.wl_on) px_wet_swap(&g_eng);              /* v39: nothing runs: the lanes' buffers change roles */
+#endif
     const uint32_t *s = (const uint32_t *)data;
     uint32_t n = (uint32_t)len / 8u;                   /* 2 32-bit words per frame */
     if (n > A_FR) n = A_FR;
@@ -312,10 +365,15 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
     /* a NAM amp on two cores (px_nam_dual): pipelined here (dsp_pipe), CPU1 its helper */
     if (a_c1 && !px_nam_dual(&g_eng)) {
         a_nbv = 0;
-        if (fm1_cpu1_run(dsp_job, 0)) { a_job = 1; return; }
-        a_c1 = 0;
+        a_commit();                                    /* v39: here, before the lanes run beside the chain */
+        if (fm1_cpu1_run(dsp_job, 0)) {
+            a_job = 1;
+            if (g_eng.wl_on) px_wet_run(&g_eng, t_irq + A_BUDGET * 85u / 100u, 0);   /* v39: the lanes, on CPU0 */
+            return;
+        }
+        a_c1_off();
     }
-    if (a_c1) { dsp_pipe(); return; }
+    if (a_c1) { dsp_pipe(); return; }                 /* (the lanes: in post_job) */
     a_nbv = 0;
 #endif
     dsp_block();
@@ -341,15 +399,42 @@ static uint32_t ui_hash(void)                          /* hash of the whole pres
     for (uint32_t i = 0; i < sizeof(PRESET); i++) h = (h ^ b[i]) * 16777619u;
     return h;
 }
-static void audio_apply(void)                          /* coefficient recompute: outside the interrupt */
+static int a_wait(volatile uint8_t *v, uint8_t until, uint32_t ms)   /* 1 = *v reached until within ms */
+{
+    for (uint32_t t = 0; *v != until; t++) { if (t >= ms * 10u) return 0; fm1_delay_us(100); }
+    return 1;
+}
+static void audio_apply(void)                          /* the preset to the engine (main loop) */
 {
     px_preset_t pp;
     ui_to_px(&pp);
+    /* v38: knob changes and blocks on / off go to the audio side, which applies them at the start of a block */
+    const int live = a_running && !a_mute && a_wait(&a_kpend, 0, 50u);
+    if (live && !a_full) {
+        const int ch = px_engine_change(&g_eng, &pp);
+        if (ch == PX_CH_NONE) return;
+        if (ch == PX_CH_KNOBS) {
+            px_engine_prepare(&g_eng, &pp);            /* the cabinet's heavy part, here, while the audio plays */
+            a_kp = pp;
+            __asm__ volatile("" ::: "memory");          /* (a_kp and the cabinet store written before the flag) */
+            a_kpend = 1;
+            return;
+        }
+    }
+    a_full = 0;
+    /* anything else: the output fades out, the engine is set (the interrupt held off meanwhile: a late block now only
+     * repeats silence), and the output fades back in */
+    if (live) { a_xft = 0; for (uint32_t t = 0; a_xf != 0.0f && t < 400u; t++) fm1_delay_us(100); }   /* (40 ms at most) */
     if (a_running) fm1_irq_mask(FM1_IRQ_ALNK0);
     a_collect();                                       /* CPU1 must not process during the recompute */
     px_engine_set(&g_eng, &pp);
+    a_kpend = 0;
+#if DSP_CPU1
+    a_nbv = 0;                                         /* (the pipeline restarts from silence) */
+#endif
     a_bypass = 0; a_over = 0; a_peak = 0;
     if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
+    a_xft = 1;
 }
 static void audio_reset(void)                          /* after a NaN: engine reset, preset re-applied */
 {
@@ -358,7 +443,11 @@ static void audio_reset(void)                          /* after a NaN: engine re
     if (a_running) fm1_irq_mask(FM1_IRQ_ALNK0);
     a_collect();
     px_engine_init(&g_eng, 44100.0f);
+#if DSP_CPU1
+    px_wet_mode(&g_eng, a_c1 && OP_WET_LANES, A_WLAG);   /* (the init cleared it) */
+#endif
     px_engine_set(&g_eng, &pp);
+    a_kpend = 0; a_xf = 0.0f; a_xft = 1;               /* (back from silence) */
     a_nan = 0; a_nan_count++;
     if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
 }
@@ -517,9 +606,11 @@ static void audio_start(void)
 #endif
     op_stage(ST_ENG_INIT, "ENGINE INIT...");
     px_engine_init(&g_eng, 44100.0f);
+    px_clock = b_ticks;                                /* v38: each block's time (the tuner page shows it) */
     op_stage(ST_ENG_SET, "ENGINE SET...");
 #if DSP_CPU1
     a_c1 = fm1_cpu1_on;                                /* started by app_main at the very start (fm1_cpu1_start) */
+    px_wet_mode(&g_eng, a_c1 && OP_WET_LANES, A_WLAG);   /* v39: the wet lanes, with the 2nd core */
 #endif
     audio_volume(master_vol);
     audio_apply();
@@ -542,14 +633,38 @@ static void audio_start(void)
     gpio_direction_output(G_AMP_EN, 1);                /* amp ON (after I2S: no "pop") */
 }
 
+static void audio_prof(uint32_t now)                    /* (main loop) once a second: px_engine.pf -> a_pf */
+{
+    static uint32_t t_last, b_last;
+    if (now - t_last < 1000u) return;
+    const uint32_t nb = a_blocks - b_last;
+    t_last = now; b_last = a_blocks;
+    for (int i = 0; i <= PX_NBLK; i++) {
+        uint32_t t = g_eng.pf[i];
+        g_eng.pf[i] = 0;
+        if (i == PX_B_DELAY || i == PX_B_REVERB) {     /* v39: with the lanes, their time beside the chain */
+            const int L = i == PX_B_REVERB;
+            t += g_eng.wl_pf[L]; g_eng.wl_pf[L] = 0;
+        }
+        const uint32_t den = A_BUDGET * nb / 100u;      /* (32-bit: the pedal has no 64-bit division) */
+        const uint32_t pc = den ? t / den : 0u;
+        a_pf[i] = (uint8_t)(pc > 255u ? 255u : pc);
+    }
+    a_wcut = g_eng.wl_late;
+}
 /* call from the main loop: applies preset changes (40 ms debounce) */
 static void audio_poll(uint32_t now)
 {
-    static uint32_t last_h, t_change, vol_shown = 1000u;
+    audio_prof(now);
+    static uint32_t last_h, t_change, t_apply, vol_shown = 1000u;
     static int pending;
     if (a_nan) audio_reset();
     uint32_t h = ui_hash();
     if (h != last_h) { last_h = h; t_change = now; pending = 1; }
-    if (pending && now - t_change >= 40u) { pending = 0; audio_apply(); }
+    /* 40 ms after the last change; v38: while a knob turns, every 40 ms too (it glides: no need to wait for the end) */
+    if (pending && (now - t_change >= 40u ||
+                    (now - t_apply >= 40u && !a_kpend && px_engine_change(&g_eng, &PRESET) == PX_CH_KNOBS))) {
+        pending = 0; t_apply = now; audio_apply();
+    }
     if (master_vol != vol_shown) { vol_shown = master_vol; audio_volume(master_vol); }
 }

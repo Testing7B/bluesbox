@@ -53,8 +53,8 @@
 
 static uint8_t nor[0x100000];
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && (uint32_t)(n) <= (hi) - (uint32_t)(off))
-#define OP_VERSION "v37"
-static const char *FELUCCA_ID_PTR = "PocketX_937";
+#define OP_VERSION "v39"
+static const char *FELUCCA_ID_PTR = "PocketX_939";
 
 static uint32_t ms_now(void)
 {
@@ -73,8 +73,9 @@ static uint32_t ota_crc16(const uint8_t *p, uint32_t n, uint32_t c)   /* as ota.
     return c;
 }
 
-/* ---- flash (only the preset store and, v37, the NAM model slots may be written, as FL_RANGE_OK on the pedal) ---- */
-#define ED_FL_OK(off, n) (FL_IN(off, n, 0xF0000u, 0xF4000u) || FL_IN(off, n, 0xC0000u, 0xE0000u))
+/* ---- flash (only the preset store, v37 the NAM model slots and v38 the IR slots may be written, as FL_RANGE_OK on the pedal) ---- */
+#define ED_FL_OK(off, n) (FL_IN(off, n, 0xF0000u, 0xF4000u) || FL_IN(off, n, 0xC0000u, 0xE0000u) || \
+                          FL_IN(off, n, 0xF4000u, 0xFC000u))
 static int writes_ok = 1;
 static int flash_dirty;
 static int ota_fread(uint32_t off, void *p, uint32_t n) { if (off + n > sizeof nor) return -1; memcpy(p, nor + off, n); return 0; }
@@ -116,6 +117,8 @@ static int bat_mv = 3920, bat_usb_mv = 0;
 static int32_t bat_raw[5] = {612, 1, 0, 3, 91};   /* bat_read's raw values (the tuner page shows them) */
 static int bat_pct = -1;                /* (-1: the gauge from bat_mv) */
 static int a_level_db(int ch) { return ch ? -84 : -62; }
+static uint8_t a_pf[PX_NBLK + 1] = {0};   /* v38: CPU per block (the tuner's footer) */
+static uint32_t a_wcut;                    /* v39: wet blocks cut short */
 static volatile uint8_t a_tmute;
 static float tuner_hz;
 #include "../firmware/px_midi.h"          /* (ui.h's MIDI page, #10) */
@@ -146,6 +149,8 @@ static int ota_wire_send(const uint8_t *p, uint32_t n)
 #include "../firmware/px_store.h"
 #include "../firmware/px_models.h"
 static void nm_changed(uint32_t s) { (void)s; }
+#include "../firmware/px_irs.h"
+static void ir_changed(uint32_t s) { (void)s; }
 #if OP_BLE_TEST
 #include "../firmware/ble/ble_diag.h"
 #define ED_DIAG_LINES 4u
@@ -448,6 +453,7 @@ int main(int argc, char **argv)
     st_ok = 1;
     st_load();
     nm_scan();
+    ir_scan();
     cur_preset = st_last;
     load_preset(cur_preset);
     uc.screen = -1;

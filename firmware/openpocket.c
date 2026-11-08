@@ -306,7 +306,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PH_DIR  (*(volatile uint32_t *)0x501C8u)
 #define ENC_MASK 0x3u      /* PC0=A, PC1=B */
 #ifndef OP_VERSION_NUM                  /* a test channel build (firmware/build.sh, OP_CHANNEL) sets its own number and tag */
-#define OP_VERSION_NUM "37"
+#define OP_VERSION_NUM "40"
 #endif
 #ifndef OP_TAG
 #define OP_TAG ""
@@ -540,12 +540,20 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
 #include "px_models.h"      /* v37: the NAM user models in flash */
+#include "px_irs.h"         /* v38: the user cabinet IRs in flash */
 #if !AUDIO_PROBE
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
 static void nm_changed(uint32_t s)   /* v37: a user model was written or erased: the engine reloads it if it plays it */
 {
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
+    a_full = 1;                                        /* v38: the same knobs, another network: a full apply */
+    audio_apply();
+}
+static void ir_changed(uint32_t s)   /* v38: a user IR was written or erased: the engine reloads it if it plays it */
+{
+    if (g_eng.ir_slot == (int)s) g_eng.ir_slot = -1;
+    a_full = 1;
     audio_apply();
 }
 #if OP_BLE_TEST             /* the log channel (firmware/ble/ble_diag.h): only this image answers DIAG, the normal firmware does not change */
@@ -705,6 +713,7 @@ static void app_main(void)
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
     nm_scan();                           /* v37: the NAM user models (names, levels) */
+    ir_scan();                           /* v38: the user cabinet IRs (names) */
 #if DSP_CPU1
     px_nam_helper(a_hrun, a_hwait);      /* v37: CPU1 can take a part of the NAM network */
 #endif

@@ -18,6 +18,7 @@ static int a_bypass, a_tmute, a_nan;
 
 void *memcpy(void *d, const void *s, unsigned long n) { char *a = d; const char *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { char *a = d; while (n--) *a++ = (char)c; return d; }
+int memcmp(const void *x, const void *y, unsigned long n) { const unsigned char *a = x, *b = y; for (; n; n--, a++, b++) if (*a != *b) return *a < *b ? -1 : 1; return 0; }   /* (v38) */
 
 #define EXPORT(name) __attribute__((export_name(#name)))
 
@@ -25,7 +26,12 @@ EXPORT(px_input) float *px_input(void) { return a_in; }
 EXPORT(px_output) float *px_output(void) { return a_out; }
 EXPORT(px_preset) px_preset_t *px_preset(void) { return &preset; }
 EXPORT(px_factory) void px_factory(int idx) { px_preset_factory(&preset, idx); }
-EXPORT(px_apply) void px_apply(void) { px_engine_set(&g_eng, &preset); }
+EXPORT(px_apply) void px_apply(void)                  /* v38: as the pedal: knobs glide, anything else is set */
+{
+    const int ch = px_engine_change(&g_eng, &preset);
+    if (ch == PX_CH_KNOBS) { px_engine_prepare(&g_eng, &preset); px_engine_knobs(&g_eng, &preset); }
+    else if (ch == PX_CH_FULL) px_engine_set(&g_eng, &preset);
+}
 EXPORT(px_reset) void px_reset(void) { px_engine_init(&g_eng, 44100.0f); px_engine_set(&g_eng, &preset); a_nan = 0; }
 EXPORT(px_volume) void px_volume(int vol) { float v = (float)vol * 0.01f; a_gain = v * v; }
 EXPORT(px_bypass) void px_bypass(int on) { a_bypass = on; }

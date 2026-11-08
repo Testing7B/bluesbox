@@ -1,8 +1,8 @@
 # OpenPocket editor protocol (SysEx over USB-MIDI)
 
 The web editor (`docs/editor.html`, `docs/pxedit.js`) talks to the pedal with this protocol. The firmware side is
-`firmware/px_editor.h`; `tests/edsim.c` runs the same code on a PC for the tests. Protocol version 2 (OpenPocket v37; version 1: v32 to v36,
-the same without the NAM commands 19..22).
+`firmware/px_editor.h`; `tests/edsim.c` runs the same code on a PC for the tests. Protocol version 3 (OpenPocket v38: the cabinet IR commands 24..27; version 2: v37, without them;
+version 1: v32 to v36, also without the NAM commands 19..22).
 
 ## Framing
 
@@ -48,6 +48,10 @@ The 12 blocks, by index: 0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 
 | 21 NAM_COMMIT | slot (0..15) | slot, rc (0 ok, 1 invalid: header, a weight that is not a number, CRC; 2 flash). Checks the pieces received and writes them to the user slot |
 | 22 NAM_ERASE | slot (0..15) | slot, rc (0 ok, 1 invalid, 2 flash). Empties the user slot |
 | 23 DIAG | — | n (5), then n strings: this boot, the last boot, the status line, the link, the trace. Read only. Only the Bluetooth test image answers: other firmware gives no reply. `docs/BLE-TEST.md`, "Reading the pedal from a computer" |
+| 24 IR_LIST | — | slots (8), then per slot: present (0/1), name string (11 characters at most; an empty slot reads "IR3 EMPTY") |
+| 25 IR_WRITE | piece (2 bytes), 128 packed bytes | the 2 piece bytes, rc (0 ok, 1 invalid). As `NAM_WRITE`: piece i holds bytes 112 i .. 112 i + 111 of an IR (2112 bytes, 19 pieces). Stored in RAM only (the same buffer as `NAM_WRITE`: one upload at a time) |
+| 26 IR_COMMIT | slot (0..7) | slot, rc (0 ok, 1 invalid: header, CRC; 2 flash). Checks the pieces received and writes them to the slot |
+| 27 IR_ERASE | slot (0..7) | slot, rc (0 ok, 1 invalid, 2 flash). Empties the slot |
 
 ### NAM models (protocol 2)
 
@@ -76,7 +80,32 @@ level trim so that every model plays at -20 LUFS on that clip, then sends 68 `NA
 A1 models (the older "standard" / "lite" / "feather" WaveNets) and other architectures are refused: the pedal's CPU
 runs A2-Lite only.
 
-Writing the flash (`SLOT_PUT` with bit 1, `COMMIT`, `SAVE`, `NAM_COMMIT`, `NAM_ERASE`) mutes the sound for a moment, as
+### Cabinet IRs (protocol 3)
+
+The CAB block's eighth type, `USER IR`, plays a cabinet impulse response (`engine/px_dsp.c`: uniform partitioned FFT
+convolution, 1024 taps at 44.1 kHz). Its settings: IR (the slot, 0..7), LOW CUT (20..400 Hz), HIGH CUT (20 kHz..2 kHz).
+The 8 slots are in the pedal's flash (`firmware/px_irs.h`, 0xF4000..0xFC000, kept by firmware updates). `TEXTS` of CAB
+type 7, parameter 0 gives each value's IR name.
+
+An IR is 2112 bytes, little endian: a 64-byte header, then 1024 samples as int16 (sample k = s[k] / 32767 x scale).
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 4 | magic `0x5249504F` ("OPIR") |
+| 4 | 2 | version, 1 |
+| 6 | 2 | samples, 1024 |
+| 8 | 12 | name, ASCII, 0-ended (11 characters at most) |
+| 20 | 4 | scale, float32 (the samples' full scale; above 0) |
+| 24 | 2 | CRC16 of the samples (polynomial 0x1021, initial value 0) |
+| 26 | 38 | 0 |
+
+The editor (`docs/pxir.js`) reads a WAV file (PCM 8 / 16 / 24 / 32-bit or float, any rate, mono or stereo: the first
+channel), drops the silence before its onset, resamples it to 44.1 kHz (windowed sinc), keeps 1024 samples (a 64-sample
+fade at the end when the response is longer), then sends 19 `IR_WRITE` and one `IR_COMMIT`. The pedal sets the level
+itself: every IR plays at the energy of the modelled cabinets.
+
+Writing the flash (`SLOT_PUT` with bit 1, `COMMIT`, `SAVE`, `NAM_COMMIT`, `NAM_ERASE`, `IR_COMMIT`, `IR_ERASE`) mutes
+the sound for a moment, as
 saving on the pedal does. A whole import sends `SLOT_PUT` without
 bit 1 for every slot, then one `COMMIT`.
 

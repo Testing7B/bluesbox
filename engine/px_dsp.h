@@ -51,7 +51,12 @@ enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX
 #define PX_NAM_NUSER  16
 #define PX_NAM_N      (PX_NAM_NFACT + PX_NAM_NUSER)
 enum { PX_CAB_112JN, PX_CAB_212BLUE, PX_CAB_412GB, PX_CAB_412T75, PX_CAB_412V30, PX_CAB_112CREAM, PX_CAB_DI,
-       PX_CAB_COUNT };
+       PX_CAB_IR, PX_CAB_COUNT };      /* v38: USER IR, a cabinet impulse response loaded from the editor */
+/* v38: user cabinet IRs. PX_IR_N slots (the firmware keeps them in flash: firmware/px_irs.h); the engine plays the first
+ * PX_IR_LEN taps (23 ms at 44.1 kHz) by uniform partitioned FFT convolution, 64-frame partitions. Its settings: IR (the
+ * slot), LOW CUT, HIGH CUT. */
+#define PX_IR_N   8
+#define PX_IR_LEN 1024
 enum { PX_SYN_ORGAN, PX_SYN_CHURCH, PX_SYN_STRINGS, PX_SYN_CHOIR, PX_SYN_MONO, PX_SYN_PWM, PX_SYN_BASS,
        PX_SYN_12STR, PX_SYN_ACOUSTIC, PX_SYN_SITAR, PX_SYN_BARI, PX_SYN_COUNT };
 enum { PX_EQ_5BAND, PX_EQ_GEQ, PX_EQ_PARAM, PX_EQ_COUNT };
@@ -102,17 +107,29 @@ int         px_nam_name(int model, char *buf12);         /* 1 = the model exists
  * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */
 int         px_nam_user(int slot, char *name12, float *level_db, float *w);
 void        px_preset_factory(px_preset_t *p, int idx);
+/* v38: the IR slots, provided by the firmware (px_dsp.c has a weak, empty stand-in): 1 = the slot holds an IR; its name
+ * (11 chars max); h (PX_IR_LEN floats at 44.1 kHz) only if h != 0 */
+int         px_ir_user(int slot, char *name12, float *h);
+int         px_ir_slot(int v);                          /* the IR knob (0..100) -> slot 0..PX_IR_N-1 */
+int         px_ir_knob(int slot);
+int         px_ir_name(int slot, char *buf12);          /* 1 = the slot holds an IR ("IR3 EMPTY" otherwise) */
 
 /* ---------------------------------------------------------------- state --- */
 typedef struct { float b0, b1, b2, a1, a2, z1, z2; } px_bq;
 typedef struct { float b0, b1, a1, z; } px_op;      /* first-order section (RC) */
+typedef struct { float x[6], y[6]; } px_hb;           /* v38: a half-band filter's all-pass sections (x2 up or down) */
 
 #define PX_PS_N 2048                   /* pitch shifter buffer (46 ms) */
 #define PX_SYN_CB 1024                 /* SYN: ensemble / doubler / body reflections (23 ms) */
-#define PX_DLY_N 89600                 /* 2.03 s of delay (16-bit: 175 KB) */
+#define PX_DLY_N 45056                 /* v40: 2.04 s of delay at half rate (22.05 kHz, 16-bit: 88 KB), as the stock */
 #define PX_RV_M 16384                  /* reverb memory: one 16-bit ring (32 KB) at half rate, laid out per type */
 #define PX_CABM 6                      /* cabinet detail: cone breakup modes (2-pole resonators) */
 #define PX_CABT 8                      /* cabinet detail: sparse taps (mic comb, back wave) */
+typedef struct {                       /* cabinet detail: its taps, breakup resonators and gain (v38: one struct, so */
+    float tg[PX_CABT], m[PX_CABM][3], dg;   /* that a new set can be made away from the engine) */
+    uint8_t ti[PX_CABT]; int nt;
+} px_cabd;
+#define PX_GL_MAX 64                   /* v38: the most settings that glide (px_dsp.c: GL_F) */
 
 typedef struct {
     float sr;
@@ -134,12 +151,12 @@ typedef struct {
     float sfx_a, sfx_b, sfx_c, sfx_d, sfx_mix, sfx_qd;
     int   sfx_pat, crush_n, crush_k; float crush_v, crush_q;
     px_bq sfx_f1, sfx_f2;
-    /* oversampling (set A: amp, or drive + amp together; set B: a drive that is not right before the amp) */
-    px_bq os_up, os_up2, os_dn, os_dn2;
-    px_bq osb_up, osb_up2, osb_dn, osb_dn2;
-    px_bq osc_up, osc_up2, osc_dn, osc_dn2;          /* v37: set C, x2 (a drive before a NAM amp) */
+    /* oversampling (set A: amp, or drive + amp together; set B: a drive that is not right before the amp; set C: x2, a
+     * drive before a NAM amp). v38: polyphase IIR half-band filters (two all-pass branches, one multiply a section), in
+     * two x2 stages: per set the state of stage 1 up, stage 2 up, stage 2 down, stage 1 down */
+    px_hb os_a[4], os_b[4], os_c[4];
     int drv_os;                                       /* the drive's oversampling: PX_OVERSAMPLE, or 2 before a NAM amp */
-    struct { int32_t x1, x2, y1, y2; } fq_cab[8], fq_os[3][4];   /* v37: the integer filters' state (px_fx_int) */
+    struct { int32_t x1, x2, y1, y2; } fq_cab[8];    /* v37: the integer filters' state (px_fx_int) */
     uint8_t ord[PX_NBLK];
     /* synth / instrument block (v29) */
     float syn_buf[PX_PS_N]; int syn_w;                 /* shifter source (organ, strings...); sitar: string combs */
@@ -176,8 +193,10 @@ typedef struct {
     /* cabinet */
     px_bq cab[8]; float cab_g; int cab_n;
     /* fine structure (v27: same response as v25's 128-tap FIR, ~4x cheaper): sparse taps + breakup resonators */
-    float cab_rb[64], cab_tg[PX_CABT], cab_m[PX_CABM][3], cab_ms[PX_CABM][2], cab_dg;
-    uint8_t cab_ti[PX_CABT]; int cab_rw, cab_nt, cab_firon;
+    float cab_rb[64], cab_ms[PX_CABM][2];
+    px_cabd cd; int cab_rw, cab_firon;
+    int   ir_slot;                                     /* v38: the IR loaded (-1: none; its spectra: px_dsp.c) */
+    px_bq ir_lo, ir_hi;                                /* its LOW CUT and HIGH CUT */
     /* eq */
     px_bq eq[5]; int eq_n;
     /* modulation */
@@ -187,7 +206,10 @@ typedef struct {
     float ph_z[4], ph_fb, ph_lo, ph_hi, uv_k[4], uv_lamp, uv_up, uv_dn, trem_g, trem_att, trem_rel;
     float rot_h, rot_d, rot_hs, rot_ds, rot_ht, rot_dt, rot_hk, rot_dk, rot_bal;
     /* delay */
-    int16_t dly_buf[PX_DLY_N]; int dly_w, dly_type, dly_heads, rev_start, rev_cnt;
+    /* v40: the line runs at half rate (22.05 kHz) like the stock firmware's delays: one tick every two samples (the two
+     * inputs averaged in), the output interpolated between the last two ticks; times and depths below are in ticks */
+    int16_t dly_buf[PX_DLY_N]; int dly_w, dly_type, dly_heads, rev_start, rev_cnt, dly_tick;
+    float dly_xa, dly_y0, dly_y1, dly_dp;              /* the input kept for the tick, the last two outputs, the last tap */
     float dly_len, dly_tgt, dly_fb, dly_mix, dly_ph, dly_ph2, dly_inc, dly_inc2, dly_wow, dly_flut, dly_mod;
     float dly_sat, dly_satn, dly_q, dly_hn, dly_hf, rev_xf, dly_env, dly_rq;
     px_bq dly_lp, dly_hp;
@@ -211,16 +233,59 @@ typedef struct {
     float sp_z[6], sp_a;
     float sh_buf[PX_PS_N]; int sh_w; float sh_ph, sh_out, sh_lp, sh_k, rv_shim, sh_hp, sh_hk;
     px_bq rv_tone, rv_hp;
+    /* v38: changes without clicks. A knob's new values glide there over PX_GLIDE_TICKS blocks (gl_t: where to, gl_left:
+     * blocks to go); a block switched on or off fades in or out (bf: its gain now, bfa: at the start of this block, bfd:
+     * +1 / -1 while it fades). run: the preset the processing plays, cur with the blocks still fading out kept on. */
+    float gl_t[PX_GL_MAX]; int gl_left;
+    float bf[PX_NBLK], bfa[PX_NBLK]; int8_t bfd[PX_NBLK];
+    px_preset_t run;
+    uint32_t pf[PX_NBLK + 1];                          /* v38: time spent per block, [PX_NBLK] the NAM network (px_clock ticks) */
+    /* v39: the wet lanes (px_wet_mode below): lane 0 the delay, 1 the reverb, two buffers each (px_dsp.c: px_wl), used
+     * in turn. wl_b: the buffer the chain uses this block (it reads its wet out and writes its sends in); wl_n: how many
+     * samples a buffer holds, wl_w: 1 once they are wet; wl_rd: wet samples the chain may read this block, wl_p: where
+     * it is in the buffer; wl_dlag: the lag, in samples (the delay's taps read that much less far back) */
+    uint8_t wl_on, wl_b, wl_w[2][2];
+    uint16_t wl_n[2][2], wl_rd[2], wl_p[2];
+    float wl_dlag;
+    uint32_t wl_late, wl_pf[2];                        /* wet blocks cut short (out of time); wet time per lane (ticks) */
 } px_engine;
 int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two cores: process it on the job-giving core */
 
 void px_engine_init(px_engine *e, float sr);
 void px_engine_set(px_engine *e, const px_preset_t *p);
+/* v38: changes without clicks.
+ * px_engine_change: what going from the engine's preset to p takes: PX_CH_NONE; PX_CH_KNOBS (settings and blocks on or
+ *   off only: px_engine_knobs, between two blocks, no stop); PX_CH_FULL (another type, order or NAM model: px_engine_set,
+ *   the caller fading the output out and back in round it).
+ * px_engine_knobs: the new settings glide in over ~23 ms, blocks switched on or off fade. Light (only the blocks whose
+ *   settings changed are recomputed), so the audio side can call it at the start of a block.
+ * px_engine_prepare: the heavy part of px_engine_knobs (the cabinet's normalisation) made ahead, from any thread: it reads
+ *   only p and writes only its own store, which px_engine_knobs then uses when it matches. */
+enum { PX_CH_NONE, PX_CH_KNOBS, PX_CH_FULL };
+int  px_engine_change(const px_engine *e, const px_preset_t *p);
+void px_engine_knobs(px_engine *e, const px_preset_t *p);
+void px_engine_prepare(const px_engine *e, const px_preset_t *p);
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
 enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engine_part's stages (see px_dsp.c) */
 void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);
 extern int px_fx_int;                   /* v37: 1 = the cabinet and drive filters in integer arithmetic (off: slower) */
 extern int px_fx_hand;                  /* v37: their loop by hand (checked at start-up) */
+extern uint32_t (*px_clock)(void);      /* v38: set by the firmware: px_engine.pf counts each block's time */
+/* v39: wet lanes, as in the stock firmware (docs/STOCK-FIRMWARE.md 7.3). With them on, the DELAY and REVERB blocks no
+ * longer process in the chain: at their place the chain sends its signal to the lane and mixes in the lane's wet output
+ * of two blocks before (PX_WL_N frames a block); px_wet_run makes that wet output, on whichever core has time, outside
+ * the chain's own deadline. The delay's taps read wl_dlag samples less far back, so its echoes keep their time to the
+ * sample; the reverb starts lag samples later (5.8 ms at 2 x 128 frames).
+ *   px_wet_mode(e, on, lag): on or off (the lanes emptied); lag: the frames between a send and its wet output.
+ *   px_wet_swap(e): at each block boundary, nothing running: the buffers change roles.
+ *   px_wet_run(e, deadline, stop): makes the wet output of the other buffer's sends, 16 frames at a time. It stops
+ *     early (the rest of that block's wet is silence, wl_late counts it) once px_clock() passes deadline (0: none) or
+ *     *stop is set (0: none). Returns 1 when it got through. Off the chain's deadline: it may run on the other core
+ *     while the chain runs. */
+#define PX_WL_N 128
+void px_wet_mode(px_engine *e, int on, int lag);
+void px_wet_swap(px_engine *e);
+int  px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop);
 
 #ifdef __cplusplus
 }

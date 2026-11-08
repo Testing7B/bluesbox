@@ -80,7 +80,7 @@ startSim(["--dump", join(TMP, "flash.bin")]);
 await sleep(200);
 await page.click("#connect");
 await page.waitForSelector("#ui:not([hidden])", { timeout: 20000 });
-ok(/PocketX · OpenPocket v37/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
+ok(/PocketX · OpenPocket v39/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
 ok(await page.locator("#list .row").count() === 52, "52 presets listed");
 ok(await page.inputValue("#name") === "TWIN CLEAN" && await page.textContent("#num") === "01", "header: 01 TWIN CLEAN");
 ok(await page.locator("#tiles .tile").count() === 12, "12 tiles");

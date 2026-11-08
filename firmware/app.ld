@@ -3,6 +3,10 @@
 /* Memory map of a standalone FM-1 app: code and constants run in place from XIP
  * (app.bin offset 0 = 0x02000120); .data is copied to RAM by fm1_cstart, and so is .ram_text (code that runs
  * while the flash is busy: the flash driver) into RAMTEXT, the guard's RAM code window.
+ * v40: the audio path runs from RAM too, as the stock firmware's does (tools/ramcode.py moves its functions into
+ * .ram_text.dsp.*). RAMTEXT sits at the top of the free SRAM, high enough to be inside the call instruction's
+ * +-4 MiB of all the flash code (0x02000120..0x0205E000): the flash and the audio path call each other directly.
+ * The delay line at half rate (v40) left the room for it in the old POOL; 0x01C00000..0x01C08000 is free.
  * The ble build (OP_BLE=1) adds the JieLi controller's own sections: .*_code and .*_const (XIP), .*_data, .*_bss (RAM).
  * Stacks sit above the RAM with 256-byte guard bands; NOINIT survives resets.
  * 0x01C7FD50.. is reserved (boot info, mailbox, vector table). */
@@ -10,9 +14,9 @@ PROVIDE(op_guard_stack = 1);   /* build.sh passes --defsym op_guard_stack=0 with
 MEMORY
 {
     XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
-    RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
-    POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000   /* free SRAM (like CLIPPER): DSP engine */
+    POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x3E000   /* free SRAM (like CLIPPER): DSP engine (v40: was 0x54000) */
+    RAMTEXT (rwx): ORIGIN = 0x01C5E000, LENGTH = 0x16000   /* v40: the RAM code, audio path included (was 24 KB at 0x01C00000) */
     NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
 }
 SECTIONS
@@ -34,5 +38,9 @@ SECTIONS
      * this link fails instead of the pedal crash-looping. Empty in the normal firmware. */
     ASSERT(op_guard_stack == 0 || _ble_stack_lo == _ble_stack_hi || (_ble_stack_lo >= _ustack_lo && _ble_stack_hi <= _sstack_top),
            "BLE task stacks lie outside the stack-guard window while the stack guard is enabled")
+    /* v40: the flash code and the RAM code must stay within the call instruction's reach of each other (+-4 MiB: the
+     * linker would refuse a call out of it, naming one) */
+    ASSERT(_etext - ORIGIN(RAMTEXT) < 0x400000 && 0x02000120 - (ORIGIN(RAMTEXT) + LENGTH(RAMTEXT)) < 0x400000,
+           "the flash code has grown out of the RAM code's call range: move RAMTEXT up (firmware/app.ld)")
     /DISCARD/ : { *(.comment) *(.note*) }
 }

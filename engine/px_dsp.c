@@ -13,13 +13,15 @@
  */
 #include "px_dsp.h"
 #include "px_nam.c"                                     /* v37: NAM A2-Lite (one translation unit: every build gets it) */
-/* The engine runs from the flash (XIP), as in v36: a direct call between the flash (0x02xxxxxx) and the RAM code
- * (0x01C0xxxx) is out of the CPU's call range, so code in RAM may call nothing in the flash and the reverse, except
- * through a pointer (FL_FAR in fm1_flash.h). Only the NAM layer routine is in RAM (px_nam.c, called through a
- * pointer). */
+/* v40: on the pedal the audio path runs from RAM, as the stock firmware's does: firmware/build.sh compiles this file with
+ * -ffunction-sections and tools/ramcode.py moves the per-block functions (px_engine_part, the delay and reverb loops,
+ * the NAM network, the oversampling, the IR...) and the hand-written routines into the RAM code window, which sits
+ * within call range of the flash (firmware/app.ld). Nothing to mark here: the code is the compiler's, unchanged. */
 #define PX_HOT
 #define PX_INL
+#define PX_AINL __attribute__((always_inline))
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 #define PI_F 3.14159265f
@@ -114,6 +116,7 @@ static void bq_block2(px_bq *p, px_bq *q, float *b, int n)
  * are converted each call (they may change between calls); 0 = a coefficient out of range: not run (use bq_block). */
 typedef struct { int32_t x1, x2, y1, y2; } px_fq;      /* (laid out as int32_t[4]) */
 int px_fx_int = 0;
+uint32_t (*px_clock)(void);                            /* v38: a clock for the per-block times (px_engine.pf), or none */
 int px_fx_hand;                                         /* the integer filter loop by hand (px_fx_check) */
 #define FQ_CB 29                                       /* coefficient fraction bits */
 #define FQ_SB 26                                       /* signal fraction bits (+-32) */
@@ -454,6 +457,7 @@ static const cab_v CV[PX_CAB_COUNT] = {
     {"4x12 V30", 165.7f, 14.37f, 101.6f, 11.95f, 1558.0f, -5.565f, 5034.0f, 1.745f, 2868.0f, 9.288f, 5017.0f, 12.0f, 7097.0f, 0.5f},  /* fitted: 8 amp / amp+cab capture pairs (Phillipe P, GPL) */
     {"1x12 CREAM", 80, 8,  90, 4,  1500,-2,    0, 0,  2500, 4, 4500, 3,  6000},
     {"DI (NO CAB)", 0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},
+    {"USER IR", 0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},    /* v38: an impulse response (px_ir_*) */
 };
 
 /* ================================================================== EQ ===== */
@@ -502,6 +506,7 @@ static const tdef T_REV[PX_REV_COUNT] = {
 static const char *const PN_AMP[] = {"GAIN", "BASS", "MID", "TREBLE", "PRESENCE"};
 static const char *const PN_NAM[] = {"MODEL", "GAIN", "BASS", "MID", "TREBLE"};
 static const char *const PN_CAB[] = {"BODY", "BRIGHT", "MIC"};
+static const char *const PN_CABIR[] = {"IR", "LOW CUT", "HIGH CUT"};   /* v38 */
 
 const char *px_block_label(int b) { return (b >= 0 && b < PX_NBLK) ? BLK_LABEL[b] : "?"; }
 const char *px_block_name(int b)  { return (b >= 0 && b < PX_NBLK) ? BLK_NAME[b] : "?"; }
@@ -551,7 +556,7 @@ const char *px_param_name(int b, int t, int k)
     if (k < 0 || k >= px_nparams(b, t)) return "";
     if (b == PX_B_DRIVE) return ROLE_NAME[DV[t].role[k]];
     if (b == PX_B_AMP) return t == PX_AMP_NAM ? PN_NAM[k] : PN_AMP[k];
-    if (b == PX_B_CAB) return PN_CAB[k];
+    if (b == PX_B_CAB) return t == PX_CAB_IR ? PN_CABIR[k] : PN_CAB[k];
     return tdef_of(b, t)->pn[k];
 }
 
@@ -614,6 +619,9 @@ int px_type_v34(int blk, int old)
     return old;
 }
 
+/* v38: USER IR's LOW CUT 20..400 Hz and HIGH CUT 20 kHz (0: off) .. 2 kHz, logarithmic */
+static float ir_lo_hz(int v) { return 20.0f * powf(20.0f, (float)v * 0.01f); }
+static float ir_hi_hz(int v) { return 20000.0f * powf(0.1f, (float)v * 0.01f); }
 int px_param_text(int b, int t, int k, int v, char *buf)
 {
     if (v < 0) v = 0;
@@ -629,6 +637,17 @@ int px_param_text(int b, int t, int k, int v, char *buf)
             buf[i++] = ' '; buf[i++] = 'D'; buf[i++] = 'B'; buf[i] = 0;
             return 1;
         }
+        break;
+    case PX_B_CAB:
+        if (t == PX_CAB_IR && k == 0) {                /* v38: the IR's name */
+            char nm[12];
+            px_ir_name(px_ir_slot(v), nm);
+            for (int i = 0; i < 9; i++) buf[i] = nm[i];
+            buf[8] = 0;
+            return 1;
+        }
+        if (t == PX_CAB_IR && k == 1) { put_int(buf, (int)(ir_lo_hz(v) + 0.5f), 0); return 1; }
+        if (t == PX_CAB_IR && k == 2) { put_int(buf, (int)(ir_hi_hz(v) + 0.5f), 0); return 1; }
         break;
     case PX_B_AMP:
         if (t == PX_AMP_NAM && k == 0) {               /* the model's name */
@@ -1084,6 +1103,7 @@ static void rc_drive(px_engine *e)
     e->drv_level = DRV_TRIM[t] * 2.0f * level * powf(10.0f, DRV_DB[t] * 0.05f);   /* (v36 trim: before the amp) */
 }
 
+static int px_may_load = 1;                            /* v38: 0 in px_engine_knobs (the audio side): no flash reads there */
 /* ---------------------------------------------------------------- NAM (v37) --- */
 #include "px_nam_factory.h"                            /* the factory models (tools/mk_nam_factory.py) */
 #if defined(__PI32V2__) && !defined(PX_NAM_POOL)       /* the pedal: the big piece in its "POOL" RAM region */
@@ -1193,7 +1213,7 @@ static void rc_nam(px_engine *e)
     int m = px_nam_model(q[0]);
     e->amp_n = 0;
     e->amp_nam = 1;
-    if (m != e->nam_idx || !px_nam_m.ready) {
+    if ((m != e->nam_idx || !px_nam_m.ready) && px_may_load) {   /* (v38: never on the audio side) */
         if (nam_load(m, &lv)) { e->nam_idx = -1; return; }
         e->nam_idx = m;
         e->nam_out_g = powf(10.0f, (lv + PX_NAM_REF_DB) * 0.05f);
@@ -1265,37 +1285,39 @@ static void rc_amp(px_engine *e)
 
 /* cabinet fine structure, one sample: sparse taps on a 64-sample ring + breakup resonators, h[k] = A dec^k sin(kw)
  * = b z^-1 / (1 - a1 z^-1 - a2 z^-2). The state is passed in so the level normalisation can run its own copy. */
-PX_INL static inline float cab_detail(const px_engine *e, float x, float *rb, int *rw, float (*ms)[2])
+PX_INL static inline float cab_detail(const px_cabd *c, float x, float *rb, int *rw, float (*ms)[2])
 {
     int w = (*rw - 1) & 63;
     float y = 0.0f, xp;
     *rw = w;
     rb[w] = x;
-    for (int k = 0; k < e->cab_nt; k++) y += e->cab_tg[k] * rb[(w + e->cab_ti[k]) & 63];
+    for (int k = 0; k < c->nt; k++) y += c->tg[k] * rb[(w + c->ti[k]) & 63];
     xp = rb[(w + 1) & 63];                              /* x[n-1] */
     for (int m = 0; m < PX_CABM; m++) {
-        float yn = e->cab_m[m][0] * ms[m][0] + e->cab_m[m][1] * ms[m][1] + e->cab_m[m][2] * xp;
+        float yn = c->m[m][0] * ms[m][0] + c->m[m][1] * ms[m][1] + c->m[m][2] * xp;
         ms[m][1] = ms[m][0]; ms[m][0] = yn;
         y += yn;
     }
-    return y * e->cab_dg;
+    return y * c->dg;
 }
 
-static void rc_cab(px_engine *e)
+/* a cabinet's whole set (v38: made away from the engine, so that the main loop can make it while the audio plays: its
+ * normalisation runs the impulse through 4608 samples, too long for the audio interrupt) */
+typedef struct { px_bq f[8]; int n; px_cabd cd; float g; } cab_set;
+static void cab_make(float sr, const px_preset_t *p, cab_set *o)
 {
-    const px_preset_t *p = &e->cur;
-    float sr = e->sr;
     int t = p->type[PX_B_CAB] % PX_CAB_COUNT;
     const cab_v *c = &CV[t];
 #ifdef PX_FIT
     if (px_fit_cab_on) c = &px_fit_cab;               /* the fitter's candidate (the type still sets open back) */
 #endif
     const uint8_t *q = p->p[PX_B_CAB];
-    if (t == PX_CAB_DI) { e->cab_n = 0; e->cab_firon = 0; return; }
-    px_bq f[8];
+    px_bq *f = o->f;
+    px_cabd *cd = &o->cd;
     int n = 0;
+    memset(o, 0, sizeof *o);
+    if (t == PX_CAB_DI || t == PX_CAB_IR) return;
     float body = (f01(q[0]) - 0.5f) * 10.0f, bright = (f01(q[1]) - 0.5f) * 10.0f, mic = 0.65f + f01(q[2]) * 0.7f;
-    for (int k = 0; k < 8; k++) f[k] = e->cab[k];
     bq_highpass(&f[n++], sr, (float)c->hp, (float)c->hpq10 * 0.1f);
     bq_peak(&f[n++], sr, (float)c->bump, 1.0f, (float)c->bump_db + body);
     if (c->d1) bq_peak(&f[n++], sr, (float)c->d1, 1.2f, (float)c->d1db);
@@ -1307,6 +1329,7 @@ static void rc_cab(px_engine *e)
         bq_lowpass(&f[n++], sr, (float)c->lp * mic, lq);
         bq_lowpass(&f[n++], sr, (float)c->lp * mic * 1.15f, lq * (0.8f / 0.9f));
     }
+    o->n = n;
     /* fine structure: what a real speaker adds to the smooth curve above. Sparse taps (direct sound, the mic's
      * off-axis comb, the back wave of open cabinets) + the cone's breakup modes as 2-pole resonators: the same
      * impulse response as v25's 128-tap FIR (A dec^k sin kw per mode), without its cost on the pedal. */
@@ -1319,18 +1342,18 @@ static void rc_cab(px_engine *e)
          * MIC 100 = cap centre (notch out of band), MIC 0 = cone edge (notch ~6 kHz) */
         float tau = (0.00002f + (1.0f - f01(q[2])) * 0.00006f) * sr;   /* notch from ~25 kHz (centre) to ~6 kHz (edge) */
         int ti = (int)tau; float tf = tau - (float)ti;
-        e->cab_ti[nt] = 0; e->cab_tg[nt++] = 0.80f;                  /* depth: at most -4.4 dB */
-        if (ti == 0) e->cab_tg[0] += 0.20f * (1.0f - tf); else { e->cab_ti[nt] = (uint8_t)ti; e->cab_tg[nt++] = 0.20f * (1.0f - tf); }
-        e->cab_ti[nt] = (uint8_t)(ti + 1); e->cab_tg[nt++] = 0.20f * tf;
+        cd->ti[nt] = 0; cd->tg[nt++] = 0.80f;                        /* depth: at most -4.4 dB */
+        if (ti == 0) cd->tg[0] += 0.20f * (1.0f - tf); else { cd->ti[nt] = (uint8_t)ti; cd->tg[nt++] = 0.20f * (1.0f - tf); }
+        cd->ti[nt] = (uint8_t)(ti + 1); cd->tg[nt++] = 0.20f * tf;
         /* open back: the rear wave comes round, inverted, ~0.8 ms later */
         if (t == PX_CAB_112JN || t == PX_CAB_212BLUE) {
             static const float BW[5] = {-0.01f, -0.025f, -0.03f, -0.025f, -0.01f};
             int d = (int)(0.0008f * sr);
             if (d > 61) d = 61;
-            for (int k = 0; k < 5; k++) { e->cab_ti[nt] = (uint8_t)(d - 2 + k); e->cab_tg[nt++] = BW[k]; }
+            for (int k = 0; k < 5; k++) { cd->ti[nt] = (uint8_t)(d - 2 + k); cd->tg[nt++] = BW[k]; }
         }
-        e->cab_nt = nt;
-        for (int k = 0; k < nt; k++) dc += e->cab_tg[k];
+        cd->nt = nt;
+        for (int k = 0; k < nt; k++) dc += cd->tg[k];
         /* cone breakup: narrow resonances between 1.2 and 6 kHz, fixed per speaker (seeded by the cab): the same 10
          * draws as v25, the PX_CABM strongest kept (the weakest, < 1 dB, were not worth their cost) */
         float mf[10], mq[10], mr[10];
@@ -1347,13 +1370,11 @@ static void rc_cab(px_engine *e)
             mf[b] = mf[m]; mq[b] = mq[m]; mr[b] = mr[m];
             float w = 2.0f * PI_F * fr / sr, dec = expf(-PI_F * fr / (Q * sr)), A = rel * 2.0f * PI_F * fr / (Q * sr);
             float a1 = 2.0f * dec * cosf(w), a2 = -dec * dec, bb = A * dec * sinf(w);   /* h[k] = A dec^k sin(kw) */
-            e->cab_m[m][0] = a1; e->cab_m[m][1] = a2; e->cab_m[m][2] = bb;
+            cd->m[m][0] = a1; cd->m[m][1] = a2; cd->m[m][2] = bb;
             dc += bb / (1.0f - a1 - a2);
         }
-        e->cab_dg = 1.0f / dc;                                  /* unity at low frequencies: the bass stays as above */
+        cd->dg = 1.0f / dc;                                     /* unity at low frequencies: the bass stays as above */
 #undef RND
-        if (!e->cab_firon) { memset(e->cab_rb, 0, sizeof e->cab_rb); memset(e->cab_ms, 0, sizeof e->cab_ms); e->cab_rw = 0; }
-        e->cab_firon = 1;
     }
     px_bq g[8];
     float en = 0.0f, rb[64], ms[PX_CABM][2];
@@ -1363,12 +1384,214 @@ static void rc_cab(px_engine *e)
     for (int i = 0; i < 4096 + 512; i++) {              /* energy normalisation (filters, then the detail): every */
         float x = (i == 0) ? 1.0f : 0.0f;               /* cab plays at the same level */
         for (int k = 0; k < n; k++) x = bq_run(&g[k], x);
-        float y = cab_detail(e, x, rb, &rw, ms);
+        float y = cab_detail(cd, x, rb, &rw, ms);
         en += y * y;
     }
-    e->cab_g = (en > 1e-12f) ? 1.0f / sqrtf(en * 2.0f) : 1.0f;
-    if (e->cab_n != n) for (int k = 0; k < n; k++) bq_reset(&f[k]);
-    for (int k = 0; k < n; k++) e->cab[k] = f[k];
+    o->g = (en > 1e-12f) ? 1.0f / sqrtf(en * 2.0f) : 1.0f;
+}
+/* ---- v38: USER IR, uniform partitioned convolution ----
+ * The IR's PX_IR_LEN taps in IR_P partitions of IR_B (= the engine's 64-frame block). Each partition's spectrum is kept
+ * (real FFT of 128: the partition, then 64 zeros); every block the last two blocks of input are transformed (overlap-
+ * save), the spectra of the last IR_P input blocks are multiplied with the partitions' and summed, and the last 64
+ * samples of the inverse transform are the output: no latency. A block: 2 FFTs of 128 and 16 x 65 complex multiply-adds
+ * (about 420 instructions a sample on the pedal).
+ * One IR at a time: its memory is here (like the NAM network's), 17 KB. */
+#define IR_B 64
+#define IR_F 128
+#define IR_P (PX_IR_LEN / IR_B)
+static float ir_H[IR_P][IR_F];                         /* the partitions' spectra (packed: [0] DC, [1] Nyquist, re/im) */
+static float ir_X[IR_P][IR_F];                         /* the last IR_P input blocks' spectra (a ring, newest at ir_pos) */
+static float ir_in[IR_F], ir_Y[IR_F];                  /* the last two input blocks; the sum of the products */
+static int ir_pos, ir_ok;
+static float fft_w[64];                                /* e^(2 pi i m / 64), m = 0..31: cos, sin */
+static float rft_c[33], rft_s[33];                     /* cos, sin of 2 pi k / 128, k = 0..32 */
+static uint8_t fft_rev[64];
+static int fft_ready;
+static void fft_init(void)
+{
+    for (int m = 0; m < 32; m++) { fft_w[2 * m] = cosf(2.0f * PI_F * (float)m / 64.0f); fft_w[2 * m + 1] = sinf(2.0f * PI_F * (float)m / 64.0f); }
+    for (int k = 0; k <= 32; k++) { rft_c[k] = cosf(2.0f * PI_F * (float)k / 128.0f); rft_s[k] = sinf(2.0f * PI_F * (float)k / 128.0f); }
+    for (int i = 0; i < 64; i++) { int r = 0; for (int b = 0; b < 6; b++) if (i >> b & 1) r |= 1 << (5 - b); fft_rev[i] = (uint8_t)r; }
+    fft_ready = 1;
+}
+static void fft64(float *z, float sg)                  /* in place, 64 complex (re, im): sg -1 forward, +1 inverse (unscaled) */
+{
+    for (int i = 0; i < 64; i++) {
+        const int r = fft_rev[i];
+        if (r > i) { float t = z[2 * i]; z[2 * i] = z[2 * r]; z[2 * r] = t; t = z[2 * i + 1]; z[2 * i + 1] = z[2 * r + 1]; z[2 * r + 1] = t; }
+    }
+    for (int len = 2, tw = 32; len <= 64; len <<= 1, tw >>= 1) {
+        const int h = len >> 1;
+        for (int j = 0; j < h; j++) {
+            const float wr = fft_w[2 * j * tw], wi = sg * fft_w[2 * j * tw + 1];
+            for (int i = j; i < 64; i += len) {
+                float *a = z + 2 * i, *b = z + 2 * (i + h);
+                const float tr = b[0] * wr - b[1] * wi, ti = b[0] * wi + b[1] * wr;
+                b[0] = a[0] - tr; b[1] = a[1] - ti;
+                a[0] += tr; a[1] += ti;
+            }
+        }
+    }
+}
+/* real FFT of 128 in place: x[0..127] -> [0] X0, [1] X64, [2k], [2k+1] Xk (k = 1..63) */
+static void rfft128(float *x)
+{
+    fft64(x, -1.0f);                                   /* Z = FFT of z[n] = x[2n] + i x[2n+1] */
+    const float z0r = x[0], z0i = x[1];
+    for (int k = 1; k < 32; k++) {
+        const int m = 64 - k;
+        const float ar = x[2 * k], ai = x[2 * k + 1], br = x[2 * m], bi = x[2 * m + 1];
+        const float er = 0.5f * (ar + br), ei = 0.5f * (ai - bi);       /* E = (Z[k] + conj Z[64-k]) / 2 */
+        const float orr = 0.5f * (ai + bi), oi = -0.5f * (ar - br);     /* O = (Z[k] - conj Z[64-k]) / 2i */
+        const float cr = rft_c[k], ci = -rft_s[k];                     /* W^k = e^(-2 pi i k / 128) */
+        const float tr = orr * cr - oi * ci, ti = orr * ci + oi * cr;
+        x[2 * k] = er + tr; x[2 * k + 1] = ei + ti;                    /* X[k] = E + W^k O */
+        x[2 * m] = er - tr; x[2 * m + 1] = ti - ei;                    /* X[64-k] = conj(E - W^k O) */
+    }
+    x[65] = -x[65];                                    /* X[32] = conj Z[32] */
+    x[0] = z0r + z0i; x[1] = z0r - z0i;
+}
+/* its inverse, times 128 (the factor is in the partitions' spectra) */
+static void irfft128(float *x)
+{
+    const float x0 = x[0], x64 = x[1];
+    for (int k = 1; k < 32; k++) {
+        const int m = 64 - k;
+        const float ar = x[2 * k], ai = x[2 * k + 1], br = x[2 * m], bi = x[2 * m + 1];
+        const float er = ar + br, ei = ai - bi;                        /* 2 E = X[k] + conj X[64-k] */
+        const float dr = ar - br, di = ai + bi;                        /* D = X[k] - conj X[64-k] */
+        const float cr = rft_c[k], ci = rft_s[k];                      /* conj W^k */
+        const float orr = dr * cr - di * ci, oi = dr * ci + di * cr;   /* 2 O = D conj W^k */
+        x[2 * k] = er - oi; x[2 * k + 1] = ei + orr;                   /* Z[k] = E + i O */
+        x[2 * m] = er + oi; x[2 * m + 1] = orr - ei;                   /* Z[64-k] = conj E + i conj O */
+    }
+    x[64] = 2.0f * x[64]; x[65] = -2.0f * x[65];       /* Z[32] = conj X[32] (x2, as the others) */
+    x[0] = x0 + x64; x[1] = x0 - x64;
+    fft64(x, 1.0f);                                    /* z = 64 x IFFT(Z): x[2n] = Re, x[2n+1] = Im */
+}
+/* the spectra of an IR (PX_IR_LEN taps), its level set as the modelled cabinets' (energy 1/2) */
+static void ir_load_h(const float *h)
+{
+    static float b[IR_F];
+    float en = 0.0f;
+    if (!fft_ready) fft_init();
+    for (int i = 0; i < PX_IR_LEN; i++) en += h[i] * h[i];
+    const float g = (en > 1e-12f ? 1.0f / sqrtf(en * 2.0f) : 0.0f) * (1.0f / 128.0f);
+    for (int q = 0; q < IR_P; q++) {
+        for (int i = 0; i < IR_B; i++) { b[i] = h[q * IR_B + i] * g; b[IR_B + i] = 0.0f; }
+        rfft128(b);
+        for (int i = 0; i < IR_F; i++) ir_H[q][i] = b[i];
+    }
+}
+static void ir_clear(void) { memset(ir_X, 0, sizeof ir_X); memset(ir_in, 0, sizeof ir_in); ir_pos = 0; }
+/* one block of 64, in place */
+PX_HOT __attribute__((noinline)) static void ir_run(float *xb)
+{
+    float *X = ir_X[ir_pos], *Y = ir_Y;
+    for (int i = 0; i < IR_B; i++) { ir_in[i] = ir_in[IR_B + i]; ir_in[IR_B + i] = xb[i]; }
+    for (int i = 0; i < IR_F; i++) X[i] = ir_in[i];
+    rfft128(X);
+    /* bin by bin, the sum over the partitions in registers: partition q meets the input block q blocks back, ring
+     * slot ir_pos - q (q = 0..ir_pos), then from the ring's end (slot IR_P - 1 down to ir_pos + 1) */
+    const int n1 = ir_pos + 1, n2 = IR_P - n1;
+    for (int k = 0; k < IR_F; k += 2) {
+        const float *A = &ir_X[ir_pos][k], *H = &ir_H[0][k];
+        float yr = 0.0f, yi = 0.0f;
+        if (k == 0) {                                  /* DC and Nyquist: real */
+            for (int q = 0; q < IR_P; q++) {
+                const float *a = &ir_X[q <= ir_pos ? ir_pos - q : IR_P - 1 - (q - n1)][0];
+                yr += a[0] * H[0]; yi += a[1] * H[1];
+                H += IR_F;
+            }
+            Y[0] = yr; Y[1] = yi;
+            continue;
+        }
+        for (int q = 0; q < n1; q++) {
+            const float ar = A[0], ai = A[1], hr = H[0], hi = H[1];
+            yr += ar * hr; yr -= ai * hi; yi += ar * hi; yi += ai * hr;
+            A -= IR_F; H += IR_F;
+        }
+        A = &ir_X[IR_P - 1][k];
+        for (int q = 0; q < n2; q++) {
+            const float ar = A[0], ai = A[1], hr = H[0], hi = H[1];
+            yr += ar * hr; yr -= ai * hi; yi += ar * hi; yi += ai * hr;
+            A -= IR_F; H += IR_F;
+        }
+        Y[k] = yr; Y[k + 1] = yi;
+    }
+    irfft128(Y);
+    for (int i = 0; i < IR_B; i++) xb[i] = Y[IR_B + i];
+    ir_pos = ir_pos + 1 < IR_P ? ir_pos + 1 : 0;
+}
+/* the slots: the firmware's (firmware/px_irs.h), or none */
+#ifndef PX_IR_USER_GIVEN                               /* (a test that includes this file gives its own) */
+__attribute__((weak)) int px_ir_user(int slot, char *name12, float *h) { (void)slot; (void)name12; (void)h; return 0; }
+#endif
+int px_ir_slot(int v) { if (v < 0) v = 0; if (v > 100) v = 100; return v * PX_IR_N / 101; }
+int px_ir_knob(int s)
+{
+    if (s < 0) s = 0;
+    if (s >= PX_IR_N) s = PX_IR_N - 1;
+    for (int v = 0; v <= 100; v++)
+        if (px_ir_slot(v) == s) { int w = v; while (w < 100 && px_ir_slot(w + 1) == s) w++; return (v + w) / 2; }
+    return 0;
+}
+int px_ir_name(int s, char *buf)
+{
+    if (s >= 0 && s < PX_IR_N && px_ir_user(s, buf, 0)) { buf[11] = 0; return 1; }
+    const char *e = " EMPTY";
+    int i = 0;
+    buf[i++] = 'I'; buf[i++] = 'R'; buf[i++] = (char)('1' + (s < 0 ? 0 : s % 9));
+    for (int k = 0; e[k] && i < 11; k++) buf[i++] = e[k];
+    buf[i] = 0;
+    return 0;
+}
+static void rc_cab_ir(px_engine *e)
+{
+    const uint8_t *q = e->cur.p[PX_B_CAB];
+    const float sr = e->sr;
+    const int s = px_ir_slot(q[0]);
+    e->cab_n = 0; e->cab_firon = 0;
+    if ((s != e->ir_slot || !ir_ok) && px_may_load) {  /* (a new slot is a full change: never on the audio side) */
+        char nm[12];
+        float *h = &ir_X[0][0];                        /* (scratch: cleared after) */
+        if (!fft_ready) fft_init();
+        ir_ok = px_ir_user(s, nm, h);
+        if (ir_ok) ir_load_h(h);
+        ir_clear();
+        e->ir_slot = s;
+    }
+    bq_highpass(&e->ir_lo, sr, ir_lo_hz(q[1]), 0.7071f);
+    const float hi = ir_hi_hz(q[2]);
+    if (hi >= sr * 0.45f) bq_ident(&e->ir_hi); else bq_lowpass(&e->ir_hi, sr, hi, 0.7071f);
+}
+
+/* px_engine_prepare's store: the last set made, and what it was made for */
+static cab_set px_cab_st;
+static struct { int ok; float sr; uint8_t type, q[3]; } px_cab_key;
+static int cab_key_is(float sr, const px_preset_t *p)
+{
+    return px_cab_key.ok && px_cab_key.sr == sr && px_cab_key.type == p->type[PX_B_CAB] &&
+           !memcmp(px_cab_key.q, p->p[PX_B_CAB], 3);
+}
+static void rc_cab(px_engine *e)
+{
+    const px_preset_t *p = &e->cur;
+    if (p->type[PX_B_CAB] % PX_CAB_COUNT == PX_CAB_IR) { rc_cab_ir(e); return; }
+    static cab_set o;                                  /* (off the stack: 400 bytes) */
+    const cab_set *c = &o;
+    if (cab_key_is(e->sr, p)) c = &px_cab_st; else cab_make(e->sr, p, &o);
+    const int n = c->n;
+    if (!n) { e->cab_n = 0; e->cab_firon = 0; return; }
+    if (!e->cab_firon) { memset(e->cab_rb, 0, sizeof e->cab_rb); memset(e->cab_ms, 0, sizeof e->cab_ms); e->cab_rw = 0; }
+    e->cd = c->cd;
+    e->cab_firon = 1;
+    e->cab_g = c->g;
+    for (int k = 0; k < n; k++) {                      /* new coefficients, the state kept (reset if the chain changed) */
+        px_bq f = c->f[k];
+        if (e->cab_n == n) { f.z1 = e->cab[k].z1; f.z2 = e->cab[k].z2; } else bq_reset(&f);
+        e->cab[k] = f;
+    }
     e->cab_n = n;
 }
 
@@ -1479,12 +1702,13 @@ static void rc_mod(px_engine *e)
 static void rc_delay(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
-    float sr = e->sr;
+    float sr = e->sr * 0.5f;                           /* v40: the line's rate (half rate, as the stock delays): ticks */
+    const float lpmax = 0.45f * sr;                    /* (the filters in the loop stay below its Nyquist) */
     const uint8_t *q = p->p[PX_B_DELAY];
     int t = p->type[PX_B_DELAY] % PX_DLY_COUNT;
     float len = dly_ms(t, q[0]) * 0.001f * sr;
-    if (len > (float)(PX_DLY_N - 1200)) len = (float)(PX_DLY_N - 1200);
-    if (e->dly_len < 2.0f || e->dly_type != t) { e->dly_len = len; e->rev_cnt = 0; e->rev_start = e->dly_w; }
+    if (len > (float)(PX_DLY_N - 600)) len = (float)(PX_DLY_N - 600);
+    if (e->dly_len < 1.0f || e->dly_type != t) { e->dly_len = len; e->rev_cnt = 0; e->rev_start = e->dly_w; }
     e->dly_type = t;
     e->dly_tgt = len;
     e->dly_fb = f01(q[1]) * 0.95f;
@@ -1492,32 +1716,34 @@ static void rc_delay(px_engine *e)
     e->dly_mix = f01(q[2]);
     e->dly_wow = 0.0f; e->dly_flut = 0.0f; e->dly_sat = 0.0f; e->dly_q = 0.0f; e->dly_mod = 0.0f;
     e->dly_inc = 0.7f / sr; e->dly_inc2 = 8.0f / sr;
-    float tone = f01(q[3]);
+    float tone = f01(q[3]), lp;
+    /* (depths in ticks: half the samples they were at the full rate, the same times) */
     switch (t) {
     case PX_DLY_DIGITAL: case PX_DLY_DUAL:
-        bq_lowpass(&e->dly_lp, sr, 3000.0f + tone * 13000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 40.0f, 0.7f); break;
+        lp = 3000.0f + tone * 13000.0f;
+        bq_lowpass(&e->dly_lp, sr, lp < lpmax ? lp : lpmax, 0.7f); bq_highpass(&e->dly_hp, sr, 40.0f, 0.7f); break;
     case PX_DLY_ANALOG:                                /* bucket brigade: dark repeats that saturate */
         bq_lowpass(&e->dly_lp, sr, 1500.0f + tone * 2000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 80.0f, 0.7f);
-        e->dly_sat = 1.0f; e->dly_mod = 1.5f; break;
+        e->dly_sat = 1.0f; e->dly_mod = 0.75f; break;
     case PX_DLY_MEMORY:                                /* analog with modulated repeats */
         bq_lowpass(&e->dly_lp, sr, 2800.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 80.0f, 0.7f);
-        e->dly_sat = 1.0f; e->dly_inc = (0.5f + f01(q[3]) * 4.5f) / sr; e->dly_mod = 2.0f + f01(q[4]) * 0.004f * sr; break;
+        e->dly_sat = 1.0f; e->dly_inc = (0.5f + f01(q[3]) * 4.5f) / sr; e->dly_mod = 1.0f + f01(q[4]) * 0.004f * sr; break;
     case PX_DLY_TAPE:                                  /* tape echo: wow 0.7 Hz + flutter 8 Hz */
         bq_lowpass(&e->dly_lp, sr, 4000.0f + tone * 4000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 120.0f, 0.7f);
-        e->dly_sat = 2.0f; e->dly_wow = 1.0f + f01(q[4]) * (len * 0.004f + 6.0f); e->dly_flut = f01(q[4]) * 3.0f; break;
+        e->dly_sat = 2.0f; e->dly_wow = 0.5f + f01(q[4]) * (len * 0.004f + 3.0f); e->dly_flut = f01(q[4]) * 1.5f; break;
     case PX_DLY_SPACE: {                               /* 3 playback heads 1:2:3 */
         static const uint8_t HM[7] = {1, 2, 4, 3, 6, 5, 7};
         int h = HM[(int)(tone * 6.99f)], nh = (h & 1) + ((h >> 1) & 1) + ((h >> 2) & 1);
         e->dly_heads = h; e->dly_hn = 1.0f / sqrtf((float)nh); e->dly_hf = 1.0f / (float)nh;
         bq_lowpass(&e->dly_lp, sr, 4500.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 150.0f, 0.7f);
-        e->dly_sat = 2.0f; e->dly_wow = 1.0f + f01(q[4]) * (len * 0.003f + 5.0f); e->dly_flut = f01(q[4]) * 2.5f;
+        e->dly_sat = 2.0f; e->dly_wow = 0.5f + f01(q[4]) * (len * 0.003f + 2.5f); e->dly_flut = f01(q[4]) * 1.25f;
     } break;
     case PX_DLY_REVERSE:
-        bq_lowpass(&e->dly_lp, sr, 9000.0f, 0.7f); bq_highpass(&e->dly_hp, sr, 60.0f, 0.7f);
+        bq_lowpass(&e->dly_lp, sr, 9000.0f < lpmax ? 9000.0f : lpmax, 0.7f); bq_highpass(&e->dly_hp, sr, 60.0f, 0.7f);
         e->rev_xf = 1.0f / (0.01f * sr); break;
     default:                                           /* lo-fi: few bits, narrow band, wobbly */
         bq_lowpass(&e->dly_lp, sr, 4000.0f - tone * 2000.0f, 0.9f); bq_highpass(&e->dly_hp, sr, 300.0f, 0.7f);
-        e->dly_q = powf(2.0f, 11.0f - tone * 6.0f); e->dly_wow = 4.0f + tone * 8.0f; e->dly_inc = 0.5f / sr; e->dly_sat = 1.5f; break;
+        e->dly_q = powf(2.0f, 11.0f - tone * 6.0f); e->dly_wow = 2.0f + tone * 4.0f; e->dly_inc = 0.5f / sr; e->dly_sat = 1.5f; break;
     }
     if (e->dly_sat > 0.0f) {                           /* saturating loop: tops out at 1.08 = self-oscillation, like the real units */
         e->dly_sat = 1.0f + e->dly_sat * 0.5f;         /* drive into the loop clipper */
@@ -1612,10 +1838,11 @@ static void rc_reverb(px_engine *e)
     e->rv_in = 0.25f;
     e->rv_out = v->out;
     e->rv_mix = f01(q[2]);
-    sr = e->sr;                                        /* the filters after the tank run at the full rate */
+    /* v40: the low cut after the tank runs at its rate (the stock reverbs' post too); TONE stays at the full rate */
+    bq_highpass(&e->rv_hp, sr, t == PX_REV_SPRING ? 120.0f : 50.0f, 0.7f);
+    sr = e->sr;
     if (t == PX_REV_SPRING) bq_lowpass(&e->rv_tone, sr, 2500.0f + tone * 2500.0f, 0.8f);
     else bq_lowpass(&e->rv_tone, sr, 3000.0f + tone * 9000.0f, 0.7f);
-    bq_highpass(&e->rv_hp, sr, t == PX_REV_SPRING ? 120.0f : 50.0f, 0.7f);
     e->sh_k = onepole_k(sr, 1.0f / (2.0f * PI_F * 5000.0f));
     e->sh_hk = onepole_k(sr, 1.0f / (2.0f * PI_F * 300.0f));
 }
@@ -1764,18 +1991,7 @@ static void px_recalc(px_engine *e)
     rc_dyn(e);
     rc_pitch(e);
     rc_sfx(e);
-    bq_lowpass(&e->os_up, osr, sr * 0.47f, 0.54f);    /* 4th-order Butterworth anti-alias (up and down) */
-    bq_lowpass(&e->os_up2, osr, sr * 0.47f, 1.31f);
-    bq_lowpass(&e->os_dn, osr, sr * 0.47f, 0.54f);
-    bq_lowpass(&e->os_dn2, osr, sr * 0.47f, 1.31f);
-    bq_lowpass(&e->osb_up, osr, sr * 0.47f, 0.54f);   /* set B: same filters, own state */
-    bq_lowpass(&e->osb_up2, osr, sr * 0.47f, 1.31f);
-    bq_lowpass(&e->osb_dn, osr, sr * 0.47f, 0.54f);
-    bq_lowpass(&e->osb_dn2, osr, sr * 0.47f, 1.31f);
-    bq_lowpass(&e->osc_up, sr * 2.0f, sr * 0.47f, 0.54f);   /* set C: x2, for a drive before a NAM amp */
-    bq_lowpass(&e->osc_up2, sr * 2.0f, sr * 0.47f, 1.31f);
-    bq_lowpass(&e->osc_dn, sr * 2.0f, sr * 0.47f, 0.54f);
-    bq_lowpass(&e->osc_dn2, sr * 2.0f, sr * 0.47f, 1.31f);
+    (void)osr;                                         /* (v38: the half-band filters have fixed coefficients) */
     /* v37: before a NAM amp the drive runs at x2 (the network does not alias; x4 cost 18% of the CPU) */
     e->drv_os = (e->cur.on[PX_B_AMP] && e->cur.type[PX_B_AMP] == PX_AMP_NAM) ? 2 : PX_OVERSAMPLE;
     rc_drive(e);
@@ -1805,16 +2021,146 @@ void px_engine_init(px_engine *e, float sr)
     e->dly_type = -1;
     e->syn_type = -1;
     e->nam_idx = -1;
+    e->ir_slot = -1;
     px_nam_m.ready = 0;
     px_preset_t p; px_preset_factory(&p, 0);
     px_engine_set(e, &p);
 }
+static void wl_clear(px_engine *e);
 void px_engine_set(px_engine *e, const px_preset_t *p)
 {
     e->cur = *p;
     if (px_order_valid(p->order)) for (int i = 0; i < PX_NBLK; i++) e->ord[i] = p->order[i];
     else px_order_default(e->ord);
     px_recalc(e);
+    e->run = e->cur;                                   /* v38: nothing gliding, nothing fading */
+    wl_clear(e);                                       /* v39: the lanes start empty (the output fades in) */
+    e->gl_left = 0;
+    for (int b = 0; b < PX_NBLK; b++) { e->bf[b] = e->bfa[b] = p->on[b] ? 1.0f : 0.0f; e->bfd[b] = 0; }
+}
+
+/* ---- v38: changes without clicks (px_dsp.h) ---- */
+#define PX_GLIDE_TICKS 16                              /* knobs: the new values in 16 blocks of 64 frames (23 ms) */
+#define PX_FADE_TICKS 16                               /* a block on / off: faded over the same time */
+/* the settings that glide: gains, mixes, depths, delay times (each a plain float used as it is in the processing; the
+ * filters' coefficients change at once, as they always did: a small step in a filter does not click) */
+#define GLF_(f) (uint32_t)offsetof(px_engine, f)
+static const uint32_t GL_F[] = {
+    GLF_(cmp_make), GLF_(cmp_mix), GLF_(cmp_k),
+    GLF_(oct_dry), GLF_(oct_s1), GLF_(oct_s2), GLF_(oct_up), GLF_(ps_dry), GLF_(ps_lvl[0]), GLF_(ps_lvl[1]),
+    GLF_(sfx_mix), GLF_(sfx_c), GLF_(sfx_d),
+    GLF_(syn_dry), GLF_(syn_out), GLF_(syn_d8), GLF_(syn_plvl), GLF_(syn_lvl[0]), GLF_(syn_lvl[1]), GLF_(syn_lvl[2]),
+    GLF_(drv_gain), GLF_(drv_level), GLF_(drv_blend), GLF_(drv_mix), GLF_(drv_shelf_lo),
+    GLF_(amp_g[0]), GLF_(amp_g[1]), GLF_(amp_g[2]), GLF_(amp_g[3]), GLF_(amp_out), GLF_(nam_in_g),
+    GLF_(cab_g),
+    GLF_(mod_mix), GLF_(mod_depth), GLF_(mod_fb), GLF_(mod_base), GLF_(mod_sweep), GLF_(mod_shape), GLF_(ph_lo),
+    GLF_(ph_hi), GLF_(rot_bal),
+    GLF_(dly_mix), GLF_(dly_fb),
+    GLF_(rv_mix), GLF_(rv_out), GLF_(rv_shim),
+    GLF_(patch_g),
+};
+#undef GLF_
+#define GL_N ((int)(sizeof GL_F / sizeof GL_F[0]))
+typedef char px_gl_room[GL_N <= PX_GL_MAX ? 1 : -1];
+#define GLP(e, i) ((float *)((char *)(e) + GL_F[i]))
+
+static int nam_model_of(const px_preset_t *p) { return px_nam_model(p->p[PX_B_AMP][0]); }
+int px_engine_change(const px_engine *e, const px_preset_t *p)
+{
+    const px_preset_t *c = &e->cur;
+    uint8_t od[PX_NBLK];
+    const uint8_t *o = p->order;
+    if (!px_order_valid(o)) { px_order_default(od); o = od; }
+    if (memcmp(o, e->ord, PX_NBLK)) return PX_CH_FULL;
+    int k = 0;
+    const int nam = c->type[PX_B_AMP] == PX_AMP_NAM;
+    for (int b = 0; b < PX_NBLK; b++) {
+        if (c->type[b] != p->type[b]) return PX_CH_FULL;
+        if (c->on[b] != p->on[b]) {
+            if (b == PX_B_AMP && nam) return PX_CH_FULL;    /* the NAM amp sets how the blocks share the two cores */
+            k = 1;
+        }
+        if (memcmp(c->p[b], p->p[b], PX_NPAR)) {
+            if (b == PX_B_AMP && nam && nam_model_of(c) != nam_model_of(p)) return PX_CH_FULL;   /* another network */
+            if (b == PX_B_CAB && c->type[b] == PX_CAB_IR && px_ir_slot(c->p[b][0]) != px_ir_slot(p->p[b][0]))
+                return PX_CH_FULL;                     /* another IR (read from the flash) */
+            k = 1;
+        }
+    }
+    return k ? PX_CH_KNOBS : PX_CH_NONE;
+}
+void px_engine_prepare(const px_engine *e, const px_preset_t *p)
+{
+    if (cab_key_is(e->sr, p)) return;
+    px_cab_key.ok = 0;
+    cab_make(e->sr, p, &px_cab_st);
+    px_cab_key.sr = e->sr; px_cab_key.type = p->type[PX_B_CAB]; memcpy(px_cab_key.q, p->p[PX_B_CAB], 3);
+    px_cab_key.ok = 1;
+}
+void px_engine_knobs(px_engine *e, const px_preset_t *p)
+{
+    float was[GL_N];
+    for (int i = 0; i < GL_N; i++) was[i] = *GLP(e, i);
+    const px_preset_t old = e->cur;
+    e->cur = *p;
+    px_may_load = 0;                                   /* (nothing read from the flash here: see px_engine_change) */
+    if (px_order_valid(p->order)) for (int i = 0; i < PX_NBLK; i++) e->ord[i] = p->order[i];
+    for (int b = 0; b < PX_NBLK; b++) {
+        if (!memcmp(old.p[b], p->p[b], b == PX_B_CAB ? 3 : PX_NPAR)) continue;   /* (CAB: 3 settings) */
+        switch (b) {
+        case PX_B_GATE: case PX_B_COMP: rc_dyn(e); break;
+        case PX_B_PITCH: rc_pitch(e); break;
+        case PX_B_SFX: rc_sfx(e); break;
+        case PX_B_DRIVE: rc_drive(e); break;
+        case PX_B_AMP: rc_amp(e); break;
+        case PX_B_CAB: rc_cab(e); break;
+        case PX_B_EQ: rc_eq(e); break;
+        case PX_B_MOD: rc_mod(e); break;
+        case PX_B_DELAY: rc_delay(e); break;
+        case PX_B_REVERB: rc_reverb(e); break;
+        default: rc_syn(e); break;
+        }
+    }
+    px_may_load = 1;
+    e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
+    int any = 0;
+    for (int i = 0; i < GL_N; i++) {                   /* from where they were (mid-glide too) to the new values */
+        float *v = GLP(e, i);
+        e->gl_t[i] = *v;
+        if (*v != was[i]) any = 1;
+        *v = was[i];
+    }
+    e->gl_left = any ? PX_GLIDE_TICKS : 0;
+    if (!any) for (int i = 0; i < GL_N; i++) *GLP(e, i) = e->gl_t[i];
+    for (int b = 0; b < PX_NBLK; b++) {                /* blocks switched on or off: they fade */
+        if (p->on[b] && (e->bfd[b] < 0 || !e->run.on[b] || e->bf[b] < 1.0f)) e->bfd[b] = 1;
+        else if (!p->on[b] && e->run.on[b]) e->bfd[b] = -1;
+    }
+    for (int b = 0; b < PX_NBLK; b++) {                /* run: cur, the blocks still fading out kept on */
+        uint8_t on = (uint8_t)(p->on[b] || e->bfd[b] < 0);
+        if (on && !e->run.on[b]) e->bf[b] = e->bfa[b] = 0.0f;
+        e->run.on[b] = on;
+    }
+    memcpy(e->run.p, p->p, sizeof p->p);
+    memcpy(e->run.type, p->type, sizeof p->type);
+    memcpy(e->run.order, p->order, sizeof p->order);
+}
+/* once per block, before it: the glides and the fades move on (called by the stage that runs first) */
+static void px_tick(px_engine *e)
+{
+    if (e->gl_left > 0) {
+        const float k = 1.0f / (float)e->gl_left;
+        for (int i = 0; i < GL_N; i++) { float *v = GLP(e, i); *v += (e->gl_t[i] - *v) * k; }
+        if (--e->gl_left == 0) for (int i = 0; i < GL_N; i++) *GLP(e, i) = e->gl_t[i];
+    }
+    for (int b = 0; b < PX_NBLK; b++) {
+        e->bfa[b] = e->bf[b];
+        if (!e->bfd[b]) continue;
+        float f = e->bf[b] + (float)e->bfd[b] * (1.0f / (float)PX_FADE_TICKS);
+        if (f >= 1.0f) { f = 1.0f; e->bfd[b] = 0; }
+        else if (f <= 0.0f) { f = 0.0f; e->bfd[b] = 0; e->run.on[b] = 0; }
+        e->bf[b] = f;
+    }
 }
 
 /* ========================================================== processing ===== */
@@ -1870,6 +2216,85 @@ PX_INL static inline float drive_run(px_engine *e, float x)   /* oversampled */
     if (e->drv_np & 4) d = bq_run(&e->drv_t3, d);
     return d * e->drv_level + x * e->drv_blend;
 }
+/* ---- v38: oversampling by polyphase IIR half-band filters (as the stock firmware does: two all-pass branches, each
+ * section y = c (x - y1) + x1, one multiply; the branches run at the lower rate). x4 = two x2 stages: stage 1 (44.1 <->
+ * 88.2 kHz) passes 0..20 kHz and stops 24.1..44.1 kHz by 78 dB with 6 sections; stage 2 (88.2 <-> 176.4 kHz) has 20..68.2
+ * kHz to turn and does it with 2 sections (66 dB). Coefficients: Laurent de Soras' design (HIIR), tools/halfband.py. The
+ * 4th-order Butterworth filters of v37 stopped 24..30 kHz by only 6..13 dB: that much of what the clipping made up there
+ * came back down as aliasing. */
+static const float HB1[6] = {0.062889286f, 0.224015205f, 0.424695820f, 0.616864442f, 0.782113520f, 0.927573355f};
+static const float HB2[2] = {0.132097462f, 0.574998436f};
+/* One branch at a time (each branch is a chain of its own: 3 sections in stage 1, 1 in stage 2), so that its state and
+ * coefficients stay in registers through the loop (on the pedal the FPU works in the 16 general registers) */
+static void hb_br3(float *xs, float *ys, float c0, float c1, float c2, const float *in, float *out, int n)
+{   /* out[2i] (stride 2) = the branch on in[2i] (stride 2): x2 up and down both take every other sample */
+    float x0 = xs[0], x1 = xs[1], x2 = xs[2], y0 = ys[0], y1 = ys[1], y2 = ys[2];
+    for (int i = 0; i < n; i++) {
+        float a = in[2 * i], t;
+        t = (a - y0) * c0 + x0; x0 = a; y0 = t; a = t;
+        t = (a - y1) * c1 + x1; x1 = a; y1 = t; a = t;
+        t = (a - y2) * c2 + x2; x2 = a; y2 = t;
+        out[2 * i] = t;
+    }
+    xs[0] = x0; xs[1] = x1; xs[2] = x2; ys[0] = y0; ys[1] = y1; ys[2] = y2;
+}
+static void hb_br1(float *xs, float *ys, float c0, const float *in, float *out, int n)
+{
+    float x0 = xs[0], y0 = ys[0];
+    for (int i = 0; i < n; i++) {
+        float a = in[2 * i], t = (a - y0) * c0 + x0;
+        x0 = a; y0 = t;
+        out[2 * i] = t;
+    }
+    xs[0] = x0; ys[0] = y0;
+}
+/* x2 up: in[n] -> out[2n]: the even branch (coefficients 0, 2, 4) makes out[2i], the odd one out[2i + 1], both from in[i]
+ * (state: s->x/y[0..2] the even branch, [3..5] the odd one); x2 down: in[2i + 1] through the even branch, in[2i] through
+ * the odd one, out[i] = their mean. The stride-2 reads and writes go through px_os_d. */
+static float px_os_d[4 * PX_MAX_BLOCK];
+static void hb1_up(px_hb *s, const float *in, float *out, int n)
+{
+    float *d = px_os_d;
+    for (int i = 0; i < n; i++) d[2 * i] = in[i];
+    hb_br3(s->x, s->y, HB1[0], HB1[2], HB1[4], d, out, n);
+    hb_br3(s->x + 3, s->y + 3, HB1[1], HB1[3], HB1[5], d, out + 1, n);
+}
+static void hb1_down(px_hb *s, const float *in, float *out, int n)
+{
+    float *d = px_os_d;
+    hb_br3(s->x, s->y, HB1[0], HB1[2], HB1[4], in + 1, d, n);
+    hb_br3(s->x + 3, s->y + 3, HB1[1], HB1[3], HB1[5], in, d + 1, n);
+    for (int i = 0; i < n; i++) out[i] = 0.5f * (d[2 * i] + d[2 * i + 1]);
+}
+static void hb2_up(px_hb *s, const float *in, float *out, int n)
+{
+    float *d = px_os_d;
+    for (int i = 0; i < n; i++) d[2 * i] = in[i];
+    hb_br1(s->x, s->y, HB2[0], d, out, n);
+    hb_br1(s->x + 1, s->y + 1, HB2[1], d, out + 1, n);
+}
+static void hb2_down(px_hb *s, const float *in, float *out, int n)
+{
+    float *d = px_os_d;
+    hb_br1(s->x, s->y, HB2[0], in + 1, d, n);
+    hb_br1(s->x + 1, s->y + 1, HB2[1], in, d + 1, n);
+    for (int i = 0; i < n; i++) out[i] = 0.5f * (d[2 * i] + d[2 * i + 1]);
+}
+#undef HB_SEC
+static float px_os_m[2 * PX_MAX_BLOCK];                /* (stage 1 <-> 2) */
+static void os_up(px_hb *st, const float *in, float *out, int n, int os)   /* os 2 or 4: st[0] stage 1, st[1] stage 2 */
+{
+    if (os == 2) { hb1_up(&st[0], in, out, n); return; }
+    hb1_up(&st[0], in, px_os_m, n);
+    hb2_up(&st[1], px_os_m, out, 2 * n);
+}
+static void os_down(px_hb *st, const float *in, float *out, int n, int os)   /* st[2] stage 2, st[3] stage 1 */
+{
+    if (os == 2) { hb1_down(&st[3], in, out, n); return; }
+    hb2_down(&st[2], in, px_os_m, 2 * n);
+    hb1_down(&st[3], px_os_m, out, n);
+}
+
 /* drive_run over n oversampled samples in place, stage by stage (the same operations as drive_run sample by sample);
  * the anti-denormal offset follows the base-rate sample (os samples each) */
 static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_h[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK];
@@ -2340,13 +2765,219 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
     }
 }
 
+/* ---- v38: the delay and the reverb over a block, each type's branches decided once for the block (on the pedal a taken
+ * branch costs about 8 cycles: the per-sample code had 6 to 10 of them). Each call with constants is its own copy of
+ * the loop; the operations and their order are the per-sample code's, so the output is the same, bit for bit. */
+PX_AINL static inline void dly_loop(px_engine *e, const float *xb, float *wo, int n, const int T, const int M, const int FL,
+                                    const int Q, const int S)
+{
+    /* v39: in a wet lane its output is heard lg frames late: the taps heard read lg frames less far back, the ones fed
+     * back keep the delay time (the repeats keep their spacing). v40: the line runs at half rate, as the stock delays
+     * (one tick every two samples), so lg is in ticks there */
+    const float lg = e->wl_dlag * 0.5f;
+    for (int k = 0; k < n; k++) {
+        float x = xb[k];
+        if (!e->dly_tick) {                            /* v40: the first sample of a pair: kept, the last output held */
+            e->dly_xa = x; e->dly_tick = 1;
+            wo[k] = e->dly_y1 * e->dly_mix;
+            continue;
+        }
+        x = 0.5f * (e->dly_xa + x);                    /* the tick's input: the pair averaged (a zero at 22.05 kHz) */
+            e->dly_len += (e->dly_tgt - e->dly_len) * 0.0008f;   /* time glides (no click); 0.0004 a sample before */
+            float rd = e->dly_len, d, fsrc;
+            if (M) {
+                e->dly_ph = wrap1(e->dly_ph + e->dly_inc);
+                rd += (e->dly_wow + e->dly_mod) * (1.0f + lfo_sin(e->dly_ph));
+                if (FL) { e->dly_ph2 = wrap1(e->dly_ph2 + e->dly_inc2); rd += e->dly_flut * (1.0f + lfo_sin(e->dly_ph2)); }
+            }
+            if (T == PX_DLY_REVERSE) {
+                int G = (int)e->dly_len;
+                if (e->rev_cnt >= G) { e->rev_cnt = 0; e->rev_start = e->dly_w; }
+                int rp = e->rev_start - 1 - e->rev_cnt; if (rp < 0) rp += PX_DLY_N;
+                float c = (float)e->rev_cnt, wg = c * e->rev_xf, w2 = (float)(G - e->rev_cnt) * e->rev_xf;
+                if (wg > w2) wg = w2;
+                if (wg > 1.0f) wg = 1.0f;
+                d = (float)e->dly_buf[rp] * (1.0f / DL_Q) * wg;
+                e->rev_cnt++;
+                fsrc = d;
+            } else if (T == PX_DLY_SPACE) {
+                float s = 0.0f;
+                if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f);
+                if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f);
+                if (e->dly_heads & 4) s += dly_tap(e, rd);
+                d = s * e->dly_hn; fsrc = s * e->dly_hf;   /* loop gain stays <= FDBK whatever the heads */
+                if (lg > 0.0f) {
+                    s = 0.0f;
+                    if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f - lg);
+                    if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f - lg);
+                    if (e->dly_heads & 4) s += dly_tap(e, rd - lg);
+                    d = s * e->dly_hn;
+                }
+            } else if (T == PX_DLY_DUAL) {
+                float a = dly_tap(e, rd), b = dly_tap(e, rd * 0.75f);
+                fsrc = a;
+                if (lg > 0.0f) { a = dly_tap(e, rd - lg); b = dly_tap(e, rd * 0.75f - lg); }
+                d = 0.6f * (a + 0.8f * b);
+            } else {
+                d = dly_tap(e, rd); fsrc = d;
+                if (lg > 0.0f) d = dly_tap(e, rd - lg);
+            }
+            if (Q) {
+                float v = fsrc * e->dly_q;
+                fsrc = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q;
+                if (lg > 0.0f) { v = d * e->dly_q; d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; }
+                else d = fsrc;
+            }
+            float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
+            if (S) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
+            float wv = x + fbk, av = px_abs(wv);
+            e->dly_env = av > e->dly_env ? av : e->dly_env * 0.9999f;   /* (0.99995 a sample before) */
+            e->dly_rq = e->dly_env < 2e-4f ? 0.0f : 0.5f;
+            e->dly_buf[e->dly_w] = dl_q(wv, e->dly_rq);
+            if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
+        {   /* v40: a gentle lift of the top (+1 dB at 5 kHz), for what the pair's average and the interpolation take off */
+            const float dl = 1.15f * d - 0.15f * e->dly_dp;
+            e->dly_dp = d; d = dl;
+        }
+        e->dly_y0 = e->dly_y1; e->dly_y1 = d; e->dly_tick = 0;
+        wo[k] = 0.5f * (e->dly_y0 + d) * e->dly_mix;   /* v39: the wet part only (wo may be xb: x is read first) */
+    }
+}
+static void dly_block(px_engine *e, const float *xb, float *wo, int n, int t)
+{
+    const int m = e->dly_wow > 0.0f || e->dly_mod > 0.0f, fl = e->dly_flut > 0.0f, q = e->dly_q > 0.0f, s = e->dly_sat > 0.0f;
+    switch (t) {                                       /* the combinations each type sets (rc_delay) */
+    case PX_DLY_DIGITAL: if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_DIGITAL, 0, 0, 0, 0); return; } break;
+    case PX_DLY_DUAL:    if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_DUAL, 0, 0, 0, 0); return; } break;
+    case PX_DLY_REVERSE: if (!m && !fl && !q && !s) { dly_loop(e, xb, wo, n, PX_DLY_REVERSE, 0, 0, 0, 0); return; } break;
+    case PX_DLY_ANALOG:  if (m && !fl && !q && s) { dly_loop(e, xb, wo, n, PX_DLY_ANALOG, 1, 0, 0, 1); return; } break;
+    case PX_DLY_MEMORY:  if (m && !fl && !q && s) { dly_loop(e, xb, wo, n, PX_DLY_MEMORY, 1, 0, 0, 1); return; } break;
+    case PX_DLY_TAPE:
+        if (m && !q && s) { if (fl) dly_loop(e, xb, wo, n, PX_DLY_TAPE, 1, 1, 0, 1); else dly_loop(e, xb, wo, n, PX_DLY_TAPE, 1, 0, 0, 1); return; }
+        break;
+    case PX_DLY_SPACE:
+        if (m && !q && s) { if (fl) dly_loop(e, xb, wo, n, PX_DLY_SPACE, 1, 1, 0, 1); else dly_loop(e, xb, wo, n, PX_DLY_SPACE, 1, 0, 0, 1); return; }
+        break;
+    case PX_DLY_LOFI:    if (m && !fl && q && s) { dly_loop(e, xb, wo, n, PX_DLY_LOFI, 1, 0, 1, 1); return; } break;
+    }
+    dly_loop(e, xb, wo, n, t, m, fl, q, s);                /* (anything else: decided per sample, as before) */
+}
+PX_AINL static inline void rv_loop(px_engine *e, const float *xb, float *wo, int n, const int ALG, const int SP, const int SH,
+                                   const int GT)
+{
+    for (int k = 0; k < n; k++) {
+        e->dn = (k & 1) ? 1e-15f : -1e-15f;
+        float x = xb[k];
+            float inr = x * e->rv_in + e->sh_out + e->dn;
+            if (SP) {                            /* spring dispersion: chirpy all-pass chain */
+                float a = e->sp_a;
+                for (int i = 0; i < 6; i++) { float y = -a * inr + e->sp_z[i]; e->sp_z[i] = inr + a * y; inr = y; }
+            }
+            float acc;
+            if (!e->rv_tick) { e->rv_xa = inr; e->rv_tick = 1; acc = e->rv_y1; }
+            else {                                     /* one tick of the tank every 2 samples */
+                float in2 = 0.5f * (e->rv_xa + inr);
+                float y = ALG ? rv_plate(e, in2) : rv_fdn(e, in2), aa = px_abs(y) + px_abs(in2);
+                e->rv_ptr = (e->rv_ptr - 1) & RV_MASK;
+                e->rv_env = aa > e->rv_env ? aa : e->rv_env * 0.9999f;
+                /* the last bits of a tail: fade it out over ~0.5 s, then let the ring empty itself (cut towards zero) */
+                if (e->rv_env < 5e-4f) e->rv_fade *= 0.9997f; else e->rv_fade = 1.0f;
+                e->rv_rq = e->rv_fade < 0.03f ? 0.0f : 0.5f;
+                y = bq_run(&e->rv_hp, y * e->rv_fade * e->rv_out);   /* v40: the low cut at the tank's rate, as the stock */
+                e->rv_y0 = e->rv_y1; e->rv_y1 = y; e->rv_tick = 0;
+                acc = 0.5f * (e->rv_y0 + y);
+            }
+            acc = bq_run(&e->rv_tone, acc);            /* (TONE at the full rate: it also takes the half rate's images down) */
+            if (SH) {                   /* octave-up shifter in the feedback loop */
+                e->sh_buf[e->sh_w] = acc;
+                float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
+                if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
+                e->sh_lp += (s - e->sh_lp) * e->sh_k;
+                e->sh_hp += (e->sh_lp - e->sh_hp) * e->sh_hk;   /* v35: only the upper octave goes round again */
+                e->sh_out = (e->sh_lp - e->sh_hp) * e->rv_shim;
+            } else e->sh_out = 0.0f;
+            if (GT) {
+                float a = px_abs(x);
+                e->rv_genv = a > e->rv_genv ? a : a + (e->rv_genv - a) * 0.999f;
+                if (e->rv_genv > 0.01f) e->rv_hold_n = (int)e->rv_hold;
+                float tg = 0.0f;
+                if (e->rv_hold_n > 0) { e->rv_hold_n--; tg = 1.0f; }
+                e->rv_gg += (tg - e->rv_gg) * (tg > e->rv_gg ? 0.05f : e->rv_gate_rel);
+                if (e->rv_gg < 1e-6f) e->rv_gg = 0.0f;
+                acc *= e->rv_gg;
+            }
+        wo[k] = acc * e->rv_mix * 1.4f;                /* v39: the wet part only; the dry part: x * (1 - 0.4 mix) */
+    }
+}
+static void rv_block(px_engine *e, const float *xb, float *wo, int n)
+{
+    const int alg = e->rv_alg != 0, sp = e->sp_on != 0, sh = e->rv_shim > 0.0f, gt = e->rv_gate != 0;
+    if (!alg && !sp && !sh && !gt) rv_loop(e, xb, wo, n, 0, 0, 0, 0);          /* room, hall, cathedral, ambient */
+    else if (alg && !sp && !sh && !gt) rv_loop(e, xb, wo, n, 1, 0, 0, 0);      /* plate */
+    else if (!alg && sp && !sh && !gt) rv_loop(e, xb, wo, n, 0, 1, 0, 0);      /* spring */
+    else rv_loop(e, xb, wo, n, alg, sp, sh, gt);                                 /* shimmer, gated (and anything else) */
+}
+
+/* ---- v39: the wet lanes (px_dsp.h). [lane][buffer][frame]: 2 KB of RAM ---- */
+static float px_wl[2][2][PX_WL_N];
+static void wl_clear(px_engine *e)
+{
+    e->wl_b = 0;
+    for (int L = 0; L < 2; L++) {
+        e->wl_rd[L] = e->wl_p[L] = 0;
+        for (int b = 0; b < 2; b++) { e->wl_n[L][b] = 0; e->wl_w[L][b] = 0; }
+    }
+}
+void px_wet_mode(px_engine *e, int on, int lag)
+{
+    wl_clear(e);
+    e->wl_late = 0;
+    e->wl_on = (uint8_t)(on != 0);
+    e->wl_dlag = on ? (float)lag : 0.0f;
+}
+void px_wet_swap(px_engine *e)
+{
+    const int b = e->wl_b ^ 1;                         /* the buffer made wet meanwhile: the chain's now */
+    e->wl_b = (uint8_t)b;
+    for (int L = 0; L < 2; L++) {
+        e->wl_rd[L] = e->wl_w[L][b] ? e->wl_n[L][b] : 0;
+        e->wl_w[L][b] = 0; e->wl_n[L][b] = 0; e->wl_p[L] = 0;
+    }
+}
+int px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop)
+{
+    const int b = e->wl_b ^ 1;                         /* the sends of the block before */
+    for (int L = 0; L < 2; L++) {
+        const int n = e->wl_n[L][b];
+        if (!n || e->wl_w[L][b]) continue;
+        const uint32_t t0 = px_clock ? px_clock() : 0u;
+        float *bw = px_wl[L][b];
+        const int dly_t = e->run.type[PX_B_DELAY] % PX_DLY_COUNT;
+        for (int o = 0; o < n; o += 16) {
+            if ((stop && *stop) || (deadline && px_clock && (int32_t)(px_clock() - deadline) > 0)) {
+                e->wl_n[L][b] = (uint16_t)o;           /* the rest: silence (the lines miss it too) */
+                e->wl_w[L][b] = 1;
+                e->wl_late++;
+                if (px_clock) e->wl_pf[L] += px_clock() - t0;
+                return 0;
+            }
+            const int m = n - o < 16 ? n - o : 16;
+            if (L) rv_block(e, bw + o, bw + o, m); else dly_block(e, bw + o, bw + o, m, dly_t);
+        }
+        e->wl_w[L][b] = 1;
+        if (px_clock) e->wl_pf[L] += px_clock() - t0;
+    }
+    return 1;
+}
+
 /* part: PX_PART_ALL, or (with a NAM amp: px_nam_dual) one stage of the two-core pipeline: PRE the blocks before the
  * amp (in -> out, the network's input), NAM the network and its tone stack (out in place), POST the blocks after it
  * (in: the network's output -> out). PRE and POST touch different blocks: they may run at once on the two cores. */
 PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int part)
 {
-    const px_preset_t *p = &e->cur;
-    const float osg = (float)PX_OVERSAMPLE, sr = e->sr;
+    if (part == PX_PART_ALL || part == PX_PART_PRE) px_tick(e);   /* v38: glides and fades move on, once a block */
+    const px_preset_t *p = &e->run;                    /* v38: with the blocks still fading out */
+    const float sr = e->sr;
     const int cmp_t = p->type[PX_B_COMP] % PX_CMP_COUNT;
     const int pit_t = p->type[PX_B_PITCH] % PX_PIT_COUNT;
     const int sfx_t = p->type[PX_B_SFX] % PX_SFX_COUNT;
@@ -2369,9 +3000,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     const float pg = e->patch_g;
     /* DRIVE right before AMP: one oversampled section for both (set A). Otherwise each its own: the amp keeps
      * set A, a drive elsewhere takes set B (set A when the amp does not oversample). */
-    const int pair = drv_on && amp_on && ip_amp == ip_drv + 1;
-    px_bq *dua = (pair || !amp_os) ? &e->os_up : &e->osb_up, *dub = (pair || !amp_os) ? &e->os_up2 : &e->osb_up2;
-    px_bq *dda = (pair || !amp_os) ? &e->os_dn : &e->osb_dn, *ddb = (pair || !amp_os) ? &e->os_dn2 : &e->osb_dn2;
+    const int pair = drv_on && amp_on && ip_amp == ip_drv + 1 &&
+                     e->bf[PX_B_DRIVE] == 1.0f && e->bfa[PX_B_DRIVE] == 1.0f && e->bf[PX_B_AMP] == 1.0f &&
+                     e->bfa[PX_B_AMP] == 1.0f;         /* v38: not while one of them fades (each fades on its own) */
     /* supply sag: slow (~11 ms), its two divisions once a block (divisions are slow on the pedal's FPU) */
     const float sag_pa = 1.0f / (1.0f + e->amp_sag * e->amp_sagk), sag_pre = 1.0f / (1.0f + e->amp_sag * e->amp_sagk * 0.3f);
 
@@ -2382,12 +3013,21 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         if (out != in) for (int k = 0; k < n; k++) out[k] = part == PX_PART_PRE ? in[k] : 0.0f;
         return;
     }
-    if (part == PX_PART_NAM) { nam_run(e, out, n, tr[ip_amp]); return; }
+    if (part == PX_PART_NAM) {
+        const uint32_t t0 = px_clock ? px_clock() : 0u;
+        nam_run(e, out, n, tr[ip_amp]);
+        if (px_clock) e->pf[PX_NBLK] += px_clock() - t0;
+        return;
+    }
     int s_lo = 0, s_hi = nam ? ip_amp : ns;
     const int p0 = part == PX_PART_POST, p1 = part == PX_PART_PRE ? 1 : nam ? 2 : 1;
     for (int pass = p0; pass < p1; pass++) {
     if (pass == 1) {
-        if (part == PX_PART_ALL) nam_run(e, e->nam_buf, n, tr[ip_amp]);
+        if (part == PX_PART_ALL) {
+            const uint32_t t0 = px_clock ? px_clock() : 0u;
+            nam_run(e, e->nam_buf, n, tr[ip_amp]);
+            if (px_clock) e->pf[PX_NBLK] += px_clock() - t0;
+        }
         s_lo = ip_amp + 1;
         s_hi = ns;
     }
@@ -2406,53 +3046,100 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     for (int s = s_lo; s < s_hi; s++) {
         const int sblk = st[s];
         const float strim = tr[s];
+        /* v38: a block fading in or out: its output mixed with its input, the mix ramped over the block */
+        const uint32_t pt0 = px_clock ? px_clock() : 0u;   /* v38: each block's time (px_clock: the firmware's) */
+        const float fa = e->bfa[sblk], fz = e->bf[sblk];
+        const int fading = p->on[sblk] && (fa < 1.0f || fz < 1.0f);   /* (GATE runs off too: not a fade) */
+        float dryb[PX_MAX_BLOCK];
+        if (fading) for (int k = 0; k < n; k++) dryb[k] = xb[k];
         if (sblk == PX_B_CAB) {                          /* cabinet: its filters one after the other over the block */
-            if (p->on[PX_B_CAB] && e->cab_n) {
+            if (p->on[PX_B_CAB] && p->type[PX_B_CAB] % PX_CAB_COUNT == PX_CAB_IR) {   /* v38: an impulse response */
+                if (ir_ok && n == IR_B) ir_run(xb);      /* (blocks of 64 as on the pedal; other sizes pass) */
+                bq_block2(&e->ir_lo, &e->ir_hi, xb, n);
+                for (int k = 0; k < n; k++) xb[k] *= strim;
+            } else if (p->on[PX_B_CAB] && e->cab_n) {
                 if (px_fx_int) fq_chain(e->cab, (px_fq *)e->fq_cab, e->cab_n, xb, n);
                 else bq_chain(e->cab, e->cab_n, xb, n);
                 for (int k = 0; k < n; k++) {
                     float x = xb[k];
-                    if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);
+                    if (e->cab_firon) x = cab_detail(&e->cd, x, e->cab_rb, &e->cab_rw, e->cab_ms);
                     xb[k] = x * e->cab_g * strim;
                 }
             } else for (int k = 0; k < n; k++) xb[k] *= strim;
-            continue;
+            goto faded;
         }
-        if (sblk == PX_B_DRIVE && (!pair || !amp_os)) {  /* drive without the fitted amp's stages, oversampled: stage by
-                                                            stage over the block (set A or B as the sample path picks; set
-                                                            C at x2 before a NAM amp) */
+        if (sblk == PX_B_DRIVE) {                        /* drive (+ the fitted amp's preamp when it comes right after:
+                                                            pair), oversampled, stage by stage over the block. Set A, or B
+                                                            when the amp oversamples on its own; set C at x2 before NAM */
             if (drv_on) {
-                const int os = e->drv_os == 2 ? 2 : PX_OVERSAMPLE, no = os * n;
-                const int set = os == 2 ? 2 : (pair || !amp_os) ? 0 : 1;
-                px_bq *fu = os == 2 ? &e->osc_up : dua, *fu2 = os == 2 ? &e->osc_up2 : dub;
-                px_bq *fd = os == 2 ? &e->osc_dn : dda, *fd2 = os == 2 ? &e->osc_dn2 : ddb;
-                float *ub = px_os_u;
-                const float g = (float)os;
+                const int both = pair && amp_os;
+                const int os = (!both && e->drv_os == 2) ? 2 : PX_OVERSAMPLE, no = os * n;
+                px_hb *set = os == 2 ? e->os_c : (pair || !amp_os) ? e->os_a : e->os_b;
+                float *ub = px_os_u, pre[PX_MAX_BLOCK];
                 for (int k = 0; k < n; k++) {
                     e->dn = (k & 1) ? 1e-15f : -1e-15f;
-                    const float x = drive_pre(e, xb[k]);
-                    ub[os * k] = x * g;
-                    for (int o = 1; o < os; o++) ub[os * k + o] = 0.0f;
+                    float x = drive_pre(e, xb[k]);
+                    if (both) { x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x); x *= sag_pre; }
+                    pre[k] = x;
                 }
-                px_fq *fs = (px_fq *)e->fq_os[set];
-                if (px_fx_int && fq_ok(fu) && fq_ok(fu2) && fq_ok(fd) && fq_ok(fd2)) {
-                    fq_to(px_fqbuf, ub, no);
-                    fq_block(fu, &fs[0], px_fqbuf, no);
-                    fq_block(fu2, &fs[1], px_fqbuf, no);
-                    fq_from(ub, px_fqbuf, no);
-                    drive_block(e, ub, no, os);
-                    fq_to(px_fqbuf, ub, no);
-                    fq_block(fd, &fs[2], px_fqbuf, no);
-                    fq_block(fd2, &fs[3], px_fqbuf, no);
-                    fq_from(ub, px_fqbuf, no);
-                } else {
-                    bq_block2(fu, fu2, ub, no);
-                    drive_block(e, ub, no, os);
-                    bq_block2(fd, fd2, ub, no);
-                }
-                for (int k = 0; k < n; k++) xb[k] = ub[os * k + os - 1] * strim;
+                os_up(set, pre, ub, n, os);
+                if (both) {                              /* drive and preamp sample by sample (bias: once a base sample) */
+                    for (int j = 0; j < no; j++) {
+                        e->dn = ((j >> 2) & 1) ? 1e-15f : -1e-15f;
+                        float u = drive_run(e, ub[j]);
+                        for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, (j & 3) == 0);
+                        ub[j] = u;
+                    }
+                } else drive_block(e, ub, no, os);
+                os_down(set, ub, xb, n, os);
+                for (int k = 0; k < n; k++) xb[k] *= strim;
             } else for (int k = 0; k < n; k++) xb[k] *= strim;
-            continue;
+            goto faded;
+        }
+        if (sblk == PX_B_DELAY || sblk == PX_B_REVERB) {   /* v38: over the block, each type's own loop */
+            if (p->on[sblk]) {
+                const int L = sblk == PX_B_REVERB;
+                if (e->wl_on && e->wl_p[L] + n <= PX_WL_N) {   /* v39: the lane: the send in, two blocks old wet out */
+                    const float dg = L ? 1.0f - 0.4f * e->rv_mix : 1.0f;
+                    float *bw = px_wl[L][e->wl_b] + e->wl_p[L];
+                    const int rd = (int)e->wl_rd[L] - (int)e->wl_p[L];
+                    for (int k = 0; k < n; k++) {
+                        const float x = xb[k], w = k < rd ? bw[k] : 0.0f;
+                        bw[k] = x;
+                        xb[k] = x * dg + w;
+                    }
+                    e->wl_p[L] = (uint16_t)(e->wl_p[L] + n);
+                    e->wl_n[L][e->wl_b] = e->wl_p[L];
+                } else {
+                    float wb[PX_MAX_BLOCK];
+                    if (L) {
+                        rv_block(e, xb, wb, n);
+                        const float dg = 1.0f - 0.4f * e->rv_mix;
+                        for (int k = 0; k < n; k++) xb[k] = xb[k] * dg + wb[k];
+                    } else {
+                        dly_block(e, xb, wb, n, dly_t);
+                        for (int k = 0; k < n; k++) xb[k] = xb[k] + wb[k];
+                    }
+                }
+            }
+            for (int k = 0; k < n; k++) xb[k] *= strim;
+            goto faded;
+        }
+        if (sblk == PX_B_AMP && !pair && amp_os) {       /* the fitted amp's own oversampled preamp (set A), over the block;
+                                                            its tone stack and power amp then sample by sample below */
+            float *ub = px_os_u, pre[PX_MAX_BLOCK];
+            for (int k = 0; k < n; k++) {
+                float x = bq_run(&e->amp_tight, xb[k]);
+                pre[k] = bq_run(&e->amp_bright, x) * sag_pre;
+            }
+            os_up(e->os_a, pre, ub, n, PX_OVERSAMPLE);
+            for (int j = 0; j < PX_OVERSAMPLE * n; j++) {
+                e->dn = ((j >> 2) & 1) ? 1e-15f : -1e-15f;
+                float u = ub[j];
+                for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, (j & 3) == 0);
+                ub[j] = u;
+            }
+            os_down(e->os_a, ub, xb, n, PX_OVERSAMPLE);
         }
         for (int k = 0; k < n; k++) {
         e->dn = (k & 1) ? 1e-15f : -1e-15f;
@@ -2592,51 +3279,7 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         case PX_B_SYN:
             x = syn_run(e, syn_t, x);
             break;
-        case PX_B_DRIVE:                               /* ---- drive (+ amp), oversampled ---- */
-            if (pair) {
-                float acc = 0.0f;
-                x = drive_pre(e, x);
-                if (amp_os) {
-                    x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
-                    x *= sag_pre;                      /* supply sag reaches the preamp too */
-                }
-                for (int o = 0; o < PX_OVERSAMPLE; o++) {
-                    float u = (o == 0) ? x * osg : 0.0f;
-                    u = bq_run(&e->os_up, u);
-                    u = bq_run(&e->os_up2, u);
-                    u = drive_run(e, u);
-                    if (amp_os) for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, o == 0);   /* (bias: once a sample) */
-                    u = bq_run(&e->os_dn, u);
-                    acc = bq_run(&e->os_dn2, u);
-                }
-                x = acc;
-            } else {
-                float acc = 0.0f;
-                x = drive_pre(e, x);
-                for (int o = 0; o < PX_OVERSAMPLE; o++) {
-                    float u = (o == 0) ? x * osg : 0.0f;
-                    u = bq_run(dub, bq_run(dua, u));
-                    u = drive_run(e, u);
-                    acc = bq_run(ddb, bq_run(dda, u));
-                }
-                x = acc;
-            }
-            break;
-        case PX_B_AMP:
-            if (!pair && amp_os) {                     /* the amp's own oversampled preamp */
-                float acc = 0.0f;
-                x = bq_run(&e->amp_tight, x); x = bq_run(&e->amp_bright, x);
-                x *= sag_pre;
-                for (int o = 0; o < PX_OVERSAMPLE; o++) {
-                    float u = (o == 0) ? x * osg : 0.0f;
-                    u = bq_run(&e->os_up, u);
-                    u = bq_run(&e->os_up2, u);
-                    for (int i = 0; i < e->amp_n; i++) u = amp_stage(e, i, u, o == 0);
-                    u = bq_run(&e->os_dn, u);
-                    acc = bq_run(&e->os_dn2, u);
-                }
-                x = acc;
-            }
+        case PX_B_AMP:                                 /* (its oversampled preamp: above, over the block) */
             if (amp_on && !e->amp_nam) {                 /* (NAM without its model: passes through) */
                 if (!amp_os) x = bq_run(&e->amp_tight, x);
                 x = bq_run(&e->ts_low, x);
@@ -2655,7 +3298,7 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             /* ---- cabinet ---- */
             if (p->on[PX_B_CAB] && e->cab_n) {
                 for (int c = 0; c < e->cab_n; c++) x = bq_run(&e->cab[c], x);
-                if (e->cab_firon) x = cab_detail(e, x, e->cab_rb, &e->cab_rw, e->cab_ms);   /* breakup, mic, back wave */
+                if (e->cab_firon) x = cab_detail(&e->cd, x, e->cab_rb, &e->cab_rw, e->cab_ms);   /* breakup, mic, back wave */
                 x *= e->cab_g;
             }
         break;
@@ -2740,101 +3383,17 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                 }
             }
         break;
-        case PX_B_DELAY:
-            /* ---- delay ---- */
-            if (p->on[PX_B_DELAY]) {
-                e->dly_len += (e->dly_tgt - e->dly_len) * 0.0004f;   /* time glides (no click) */
-                float rd = e->dly_len, d, fsrc;
-                if (e->dly_wow > 0.0f || e->dly_mod > 0.0f) {
-                    e->dly_ph = wrap1(e->dly_ph + e->dly_inc);
-                    rd += (e->dly_wow + e->dly_mod) * (1.0f + lfo_sin(e->dly_ph));
-                    if (e->dly_flut > 0.0f) { e->dly_ph2 = wrap1(e->dly_ph2 + e->dly_inc2); rd += e->dly_flut * (1.0f + lfo_sin(e->dly_ph2)); }
-                }
-                if (dly_t == PX_DLY_REVERSE) {
-                    int G = (int)e->dly_len;
-                    if (e->rev_cnt >= G) { e->rev_cnt = 0; e->rev_start = e->dly_w; }
-                    int rp = e->rev_start - 1 - e->rev_cnt; if (rp < 0) rp += PX_DLY_N;
-                    float c = (float)e->rev_cnt, wg = c * e->rev_xf, w2 = (float)(G - e->rev_cnt) * e->rev_xf;
-                    if (wg > w2) wg = w2;
-                    if (wg > 1.0f) wg = 1.0f;
-                    d = (float)e->dly_buf[rp] * (1.0f / DL_Q) * wg;
-                    e->rev_cnt++;
-                    fsrc = d;
-                } else if (dly_t == PX_DLY_SPACE) {
-                    float s = 0.0f;
-                    if (e->dly_heads & 1) s += dly_tap(e, rd * 0.33333f);
-                    if (e->dly_heads & 2) s += dly_tap(e, rd * 0.66667f);
-                    if (e->dly_heads & 4) s += dly_tap(e, rd);
-                    d = s * e->dly_hn; fsrc = s * e->dly_hf;   /* loop gain stays <= FDBK whatever the heads */
-                } else if (dly_t == PX_DLY_DUAL) {
-                    float a = dly_tap(e, rd), b = dly_tap(e, rd * 0.75f);
-                    d = 0.6f * (a + 0.8f * b); fsrc = a;
-                } else {
-                    d = dly_tap(e, rd); fsrc = d;
-                }
-                if (e->dly_q > 0.0f) {
-                    float v = d * e->dly_q;
-                    d = (float)(int)(v + (v >= 0.0f ? 0.5f : -0.5f)) / e->dly_q; fsrc = d;
-                }
-                float fbk = bq_run(&e->dly_hp, bq_run(&e->dly_lp, fsrc)) * e->dly_fb;
-                if (e->dly_sat > 0.0f) fbk = px_tanh(fbk * e->dly_sat) * e->dly_satn;   /* unity for small signals */
-                float wv = x + fbk, av = px_abs(wv);
-                e->dly_env = av > e->dly_env ? av : e->dly_env * 0.99995f;
-                e->dly_rq = e->dly_env < 2e-4f ? 0.0f : 0.5f;
-                e->dly_buf[e->dly_w] = dl_q(wv, e->dly_rq);
-                if (++e->dly_w >= PX_DLY_N) e->dly_w = 0;
-                x = x + d * e->dly_mix;
-            }
-        break;
-        case PX_B_REVERB:
-            /* ---- reverb ---- */
-            if (p->on[PX_B_REVERB]) {
-                float inr = x * e->rv_in + e->sh_out + e->dn;
-                if (e->sp_on) {                            /* spring dispersion: chirpy all-pass chain */
-                    float a = e->sp_a;
-                    for (int i = 0; i < 6; i++) { float y = -a * inr + e->sp_z[i]; e->sp_z[i] = inr + a * y; inr = y; }
-                }
-                float acc;
-                if (!e->rv_tick) { e->rv_xa = inr; e->rv_tick = 1; acc = e->rv_y1; }
-                else {                                     /* one tick of the tank every 2 samples */
-                    float in2 = 0.5f * (e->rv_xa + inr);
-                    float y = e->rv_alg ? rv_plate(e, in2) : rv_fdn(e, in2), aa = px_abs(y) + px_abs(in2);
-                    e->rv_ptr = (e->rv_ptr - 1) & RV_MASK;
-                    e->rv_env = aa > e->rv_env ? aa : e->rv_env * 0.9999f;
-                    /* the last bits of a tail: fade it out over ~0.5 s, then let the ring empty itself (cut towards zero) */
-                    if (e->rv_env < 5e-4f) e->rv_fade *= 0.9997f; else e->rv_fade = 1.0f;
-                    e->rv_rq = e->rv_fade < 0.03f ? 0.0f : 0.5f;
-                    y *= e->rv_fade;
-                    e->rv_y0 = e->rv_y1; e->rv_y1 = y; e->rv_tick = 0;
-                    acc = 0.5f * (e->rv_y0 + y);
-                }
-                acc *= e->rv_out;
-                acc = bq_run(&e->rv_hp, bq_run(&e->rv_tone, acc));
-                if (e->rv_shim > 0.0f) {                   /* octave-up shifter in the feedback loop */
-                    e->sh_buf[e->sh_w] = acc;
-                    float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
-                    if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
-                    e->sh_lp += (s - e->sh_lp) * e->sh_k;
-                    e->sh_hp += (e->sh_lp - e->sh_hp) * e->sh_hk;   /* v35: only the upper octave goes round again */
-                    e->sh_out = (e->sh_lp - e->sh_hp) * e->rv_shim;
-                } else e->sh_out = 0.0f;
-                if (e->rv_gate) {
-                    float a = px_abs(x);
-                    e->rv_genv = a > e->rv_genv ? a : a + (e->rv_genv - a) * 0.999f;
-                    if (e->rv_genv > 0.01f) e->rv_hold_n = (int)e->rv_hold;
-                    float tg = 0.0f;
-                    if (e->rv_hold_n > 0) { e->rv_hold_n--; tg = 1.0f; }
-                    e->rv_gg += (tg - e->rv_gg) * (tg > e->rv_gg ? 0.05f : e->rv_gate_rel);
-                    if (e->rv_gg < 1e-6f) e->rv_gg = 0.0f;
-                    acc *= e->rv_gg;
-                }
-                x = x * (1.0f - 0.4f * e->rv_mix) + acc * e->rv_mix * 1.4f;
-            }
-        break;
         default: break;
         }
         xb[k] = x * strim;
         }
+    faded:
+        if (fading) {
+            const float dg = (fz - fa) / (float)n;
+            float g = fa;
+            for (int k = 0; k < n; k++) { g += dg; xb[k] = dryb[k] + (xb[k] - dryb[k]) * g; }
+        }
+        if (px_clock) e->pf[sblk] += px_clock() - pt0;
     }
     if (nam && pass == 0) {
         float *d = part == PX_PART_PRE ? out : e->nam_buf;

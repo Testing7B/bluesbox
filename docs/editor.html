@@ -206,6 +206,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
       <div class="t3kcard" id="t3kcard" hidden></div>
       <div class="list namlist" id="namlist" hidden aria-label="NAM models"></div>
       <input type="file" id="namfile" accept=".nam,application/json" hidden>
+      <h2 id="irh" hidden>Cabinet IRs</h2>
+      <p class="note" id="irnote" hidden>The CAB block's <b>USER IR</b> type plays these impulse responses (pick one with its
+        IR setting). Load a cabinet IR from a <code>.wav</code> file: the pedal keeps its first 23 ms, at 44.1 kHz, and sets
+        its level like the other cabinets.</p>
+      <div class="list namlist" id="irlist" hidden aria-label="Cabinet IRs"></div>
+      <input type="file" id="irfile" accept=".wav,audio/wav,audio/x-wav,audio/wave" hidden>
     </aside>
 
     <main class="device">
@@ -249,6 +255,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
 <script type="module">
 import { Editor, presetToJSON, presetFromJSON, filePresets, parsePresetFile, clonePreset } from "./pxedit.js";
 import { parseNam, levelTrim, packModel, readDi } from "./pxnam.js";
+import { parseWav, prepareIr, packIr, irName } from "./pxir.js";
 import { t3kReady, t3kRedirect, t3kSelect, t3kSignIn, t3kTone, t3kModels, t3kDownload } from "./pxt3k.js";
 
 const $ = (id) => document.getElementById(id);
@@ -297,6 +304,7 @@ async function connect() {
     focus = st.focus;
     slots = await ed.list();
     await loadNam();
+    await loadIr();
     ed.onState = onPush;
     await ed.watch(true);
     $("idle").hidden = true; $("ui").hidden = false; $("actions").hidden = false;
@@ -477,6 +485,69 @@ async function namClear(m) {
     const rc = await ed.namErase(m.slot);
     await namRefresh();
     say(rc ? "The pedal could not erase the slot." : `User slot ${m.slot + 1} is empty.`, rc ? "err" : "ok");
+  } catch (e) { say(`Not cleared: ${e.message}`, "err"); }
+  finally { busy = false; }
+}
+
+// ---- v38: cabinet IRs (8 user slots) ----
+let irs = null, irSlot = -1;
+async function loadIr() {
+  const on = !!(ed && ed.hasIr);
+  ["irh", "irnote", "irlist"].forEach((id) => { $(id).hidden = !on; });
+  if (!on) return;
+  irs = await ed.irList();
+  renderIr();
+}
+function renderIr() {
+  const box = $("irlist");
+  box.textContent = "";
+  for (const m of irs) {
+    const row = document.createElement("div");
+    row.className = "row" + (m.used ? "" : " empty");
+    row.innerHTML = `<span class="n">IR${m.slot + 1}</span><span class="nm"></span>` +
+      `<span class="acts"><button class="btn small">Load…</button>${m.used ? '<button class="btn small">Clear</button>' : ""}</span>`;
+    row.querySelector(".nm").textContent = m.used ? m.name : "empty";
+    const b = row.querySelectorAll("button");
+    b[0].onclick = () => { irSlot = m.slot; $("irfile").value = ""; $("irfile").click(); };
+    if (b[1]) b[1].onclick = () => irClear(m);
+    box.appendChild(row);
+  }
+}
+async function irRefresh() {
+  irs = await ed.irList();
+  await ed.irTexts();
+  renderIr();
+  renderAll();
+}
+$("irfile").onchange = async () => {
+  const f = $("irfile").files[0];
+  if (!f || !ed || irSlot < 0) return;
+  if (busy) { say("Wait for the current operation to end.", "err"); return; }
+  busy = true;
+  try {
+    const name = irName(f.name);
+    const w = parseWav(await f.arrayBuffer());
+    const ir = prepareIr(w);
+    say(`Sending ${name} to IR slot ${irSlot + 1}…`);
+    const rc = await ed.irUpload(irSlot, packIr(name, ir.h), (x) => progress(x));
+    progress(null);
+    if (rc) throw new Error(rc === 2 ? "the pedal could not write its flash" : "the pedal refused the IR");
+    await irRefresh();
+    say(`${name} is in IR slot ${irSlot + 1}${ir.note ? " (" + ir.note + ")" : ""}. Choose it with the CAB block's ` +
+      `USER IR type, IR "${name}".`, "ok");
+  } catch (e) {
+    progress(null);
+    say(`IR not loaded: ${e.message}`, "err");
+  } finally { busy = false; }
+};
+async function irClear(m) {
+  if (busy || !ed) return;
+  if (!await ask(`Clear IR slot ${m.slot + 1} (${m.name})? Presets using it play without a cabinet until you load another IR there.`, "Clear")) return;
+  busy = true;
+  try {
+    const rc = await ed.irErase(m.slot);
+    await irRefresh();
+    say(rc ? "The pedal could not erase the slot." : `IR slot ${m.slot + 1} is empty.`, rc ? "err" : "ok");
   } catch (e) { say(`Not cleared: ${e.message}`, "err"); }
   finally { busy = false; }
 }

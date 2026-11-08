@@ -190,7 +190,7 @@ static void pxn_rr2(const int32_t *rr, int32_t *r2)
 
 #if defined(__PI32V2__) && !defined(PXN_NO_ASM)
 #define PXN_ASM 1
-/* ---- the same, by hand (in the flash, with their callers: no call-range question) ---- */
+/* ---- the same, by hand (v40: moved to RAM with their callers on the pedal, tools/ramcode.py --plain) ---- */
 void pxn_dot3x4_asm(const pxn_dot *j);
 void pxn_dot1_asm(const pxn_dot *j);
 void pxn_post_asm(const pxn_post *j);

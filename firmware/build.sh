@@ -41,7 +41,7 @@ CHAN="${OP_CHANNEL:-}"
 : > "$O/channel.h"
 if [ -n "$CHAN" ]; then
   case "$CHAN" in *[!a-z0-9-]*|"") echo "ERROR: OP_CHANNEL must be lowercase letters, digits and -"; exit 1;; esac
-  TESTVER="${OP_TEST_VERSION:-37}"
+  TESTVER="${OP_TEST_VERSION:-40}"
   printf '#define OP_VERSION_NUM "%s"\n#define OP_TAG " %s"\n' "$TESTVER" "$(echo "$CHAN" | tr a-z- A-Z' ')" > "$O/channel.h"
   APP="$HERE/openpocket-$CHAN.bin"; PKG="$HERE/../docs/firmware/$CHAN"
   rm -f "$APP"
@@ -53,7 +53,7 @@ DSPDEF="-DPX_SR=44100.0f -DPX_OVERSAMPLE=4"
 INC="-I$HERE/inc -I$HERE/../engine"
 $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF $BLEDEF -DOP_GUARD_STACK=$GUARD_STACK $INC \
     -I"$BSP/chip" -I"$BSP/boards/fm1" -include "$O/channel.h" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
-$CC $FP -O2 -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_dsp.o"
+$CC $FP -O2 -ffunction-sections -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_dsp.o"
 $CC $FP -O2 -fno-builtin -c "$HERE/px_math.c" -o "$O/px_math.o"
 BLEOBJ=""; MAPOPT=""
 if [ -n "$OP_BLE" ]; then
@@ -68,7 +68,21 @@ if [ -n "$OP_BLE" ]; then
 fi
 # official JieLi I2S driver (LLVM bitcode from the AC79 SDK, Apache-2.0) -> pi32v2 object
 $CC -Os -c -x ir "$HERE/sdk/iis.bc" -o "$O/iis.o"
+# v40: the audio path runs from RAM, as the stock firmware's does (no flash fetches through the cache, which the two cores
+# share): its functions' sections are renamed .ram_text.dsp.* (tools/ramcode.py; the code itself is unchanged), and the
+# linker puts them in the RAM code window (firmware/app.ld). --plain: px_dsp.o's hand-written routines (NAM, filters).
+RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_block rv_front clip_run os_up os_down
+  ir_run fft64 rfft128 cab_detail ps_voice_al ps_align amp_stage bq_block bq_block2 drive_block nam_run fq_loop_c px_nam_dual
+  pxn_process pxn_block pxn_issue pxn_layers_pipe pxn_direct pxn_post_part pxn_rows pxn_rows_cpu pxn_gather pxn_range_cpu
+  pxn_serve pxn_srv_begin pxn_srv_end pxn_srv_active pxn_srv_block pxn_help_job pxn_vstart pxn_vwait pxn_kick pxn_venq
+  pxn_need pxn_hneed pxn_hstart pxn_hend pxn_layer_block pxn_dual pxn_dot3x4_c pxn_dot4_c pxn_dot1_c pxn_rdot_c pxn_rdl_c
+  pxn_post_c pxn_gcopy_c"
+RAM_FW="a_enc a_dec a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job pipe_job dsp_pipe dsp_pipe_run
+  fm1_alnk0_irq tn_capture fm1_cpu1_run fm1_cpu1_wait fm1_cpu1_retire a_hrun a_hwait b_ticks memcpy memset"
+python3 "$HERE/../tools/ramcode.py" "$O/px_dsp.o" --plain $RAM_DSP
+python3 "$HERE/../tools/ramcode.py" "$O/openpocket.o" $RAM_FW
 # a direct call between the flash code and the RAM code is out of the CPU's call range: refuse it with its name
+# (v40: the audio path's RAM code, .ram_text.dsp.*, is within range by its place, firmware/app.ld)
 python3 "$HERE/../tools/check_calls.py" "$O/crt0.o" "$O/vec.o" "$O/isr.o" $CPU1OBJ "$O/openpocket.o" "$O/px_dsp.o" "$O/px_math.o"
 "$TC/pi32v2/bin/ld" --defsym "op_guard_stack=$GUARD_STACK" -T "$HERE/app.ld" "$O/crt0.o" "$O/vec.o" "$O/isr.o" $CPU1OBJ "$O/openpocket.o" "$O/px_dsp.o" "$O/px_math.o" "$O/iis.o" $BLEOBJ $MAPOPT -o "$O/openpocket.elf"
 # symbol map: used to translate a crash address (PC) into a function name

@@ -20,7 +20,7 @@
 /* the app may only write the OTA staging area (its loader + update record), the preset store (px_store.h) and,
  * v37, the NAM user models (px_models.h) */
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || FL_IN(off, n, 0xF0000u, 0xF4000u) || \
-                             FL_IN(off, n, 0xC0000u, 0xE0000u))
+                             FL_IN(off, n, 0xC0000u, 0xE0000u) || FL_IN(off, n, 0xF4000u, 0xFC000u))
 
 /* the package identity, patched by pxpkg.py ("OP-PRODUCT:" + identity, 32 bytes, exactly once in the app) */
 static const volatile char OP_PRODUCT[32] __attribute__((used, aligned(4))) = "OP-PRODUCT:PocketX_9" OP_VERSION_NUM;
