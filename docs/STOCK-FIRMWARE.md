@@ -683,11 +683,11 @@ read): **not all-pass stages but peaking EQs**, a model of a phaser's response:
 
 The ten constants and the filters come from each drive's knob functions, which are **circuit fits**, not tables:
 - MW-808: `2.6104`, `0.1149`, 17.8 kHz and 22 kHz poles, `6.94`, `189.2`, `21.07`, `210.26`;
-- MW-OCD: a tone table of 8 points (103 Hz 32.7 dB, 257 Hz 36.3 dB, 132 Hz 33.7 dB, 89 Hz 27.3 dB ...), `173.78`,
-  `-12.99`;
+- MW-OCD: a table of 16 numbers that read as frequency and level pairs (103, 32.69, 28.78, 257, 36.32, 132, 33.74, 89,
+  27.33, 89, 22.38, 79, 32.69, 186, 28.78, 146; the pairing was not confirmed), `173.78`, `-12.99`;
 - MW-RAT: `3.65`, `1.876`, `4.123`, `1.758`, `-11.52`, `27.13`, `7.45`, `13.62`;
 - MW-MUFF: `2.49`, `1.061`, 250 Hz and 525 Hz (`1570.8` and `3298.7` rad/s), `40.5`, `-26.6`, `0.8`, 350 Hz;
-- MW-FACE: two **5th-order polynomials** of the knob (`3909 - 23084 k + 52295 k^2 - 50424 k^3 + 18304 k^4`, and
+- MW-FACE (**likely**: these two functions are called from the shared set routine): two **4th-order polynomials** of the knob (`3909 - 23084 k + 52295 k^2 - 50424 k^3 + 18304 k^4`, and
   `0.7345 - 4.364 k + 9.830 k^2 - 9.386 k^3 + 3.285 k^4`), the shape of a Fuzz Face's pots (**likely**).
 
 ### 11.3 Hall and Cloud, before the core
