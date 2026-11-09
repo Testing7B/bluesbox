@@ -122,7 +122,7 @@ typedef struct {
     uint32_t qh, qn;
     uint32_t stack[STACK_WORDS] __attribute__((aligned(8)));
 } task_t;
-static task_t tasks[MAXTASK] __attribute__((section(".bss.ble_stack")));   /* app.ld brackets it as _ble_stack_lo.._hi */
+static task_t tasks[MAXTASK] __attribute__((section(".noinit.ble_stack")));   /* in NOINIT, out of the 96 KB RAM (app.ld brackets it as _ble_stack_lo.._hi) */
 static task_t *cur;                                  /* the task being run, 0 in the scheduler */
 static uint32_t *sched_sp;
 
@@ -145,6 +145,26 @@ static void task_body(void)
 }
 
 static void task_yield(void) { ble_ctx_swap(&cur->sp, sched_sp); }
+
+/* NOINIT is not cleared at boot: the task table is, before the main loop first polls it; the stacks are painted, so
+ * ble_stack_min_free can tell how deep the tasks went */
+#define BLE_PAINT 0x5AA5C33Cu
+void ble_os_init(void)
+{
+    uint32_t i, k;
+    memset(tasks, 0, sizeof tasks);
+    for (i = 0; i < MAXTASK; i++)
+        for (k = 0; k < STACK_WORDS; k++) tasks[i].stack[k] = BLE_PAINT;
+}
+uint32_t ble_stack_min_free(void)                    /* bytes never used at the bottom of the deepest task's stack */
+{
+    uint32_t i, k, m = STACK_WORDS;
+    for (i = 0; i < MAXTASK; i++) {
+        for (k = 0; k < STACK_WORDS && tasks[i].stack[k] == BLE_PAINT; k++) ;
+        if (tasks[i].state != T_FREE && k < m) m = k;
+    }
+    return m * 4u;
+}
 
 int task_create(void (*fn)(void *), void *arg, const char *name)
 {

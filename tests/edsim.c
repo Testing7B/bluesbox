@@ -131,7 +131,7 @@ static uint32_t dsp_load = 42u;
 static int dsp_bypass;
 static uint32_t ed_load(void) { return dsp_load; }
 static uint32_t ed_flags(void) { return (dsp_bypass ? 1u : 0u) | 2u; }
-static uint32_t ed_stat(uint32_t k) { return k < 2u ? dsp_load : 0u; }
+static uint32_t ed_stat(uint32_t k) { return k < 2u ? dsp_load : k < 4u ? 0u : 4096u; }
 
 /* ---- SysEx in/out ---- */
 static uint8_t frame[2048];

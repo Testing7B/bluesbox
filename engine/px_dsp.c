@@ -23,6 +23,13 @@
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef __PI32V2__   /* on the pedal: a buffer in the free end of the RAM code window (firmware/app.ld .bss_hi), out of the 96 KB RAM */
+#define PX_HI(name) __attribute__((section(".bss.hi." #name)))
+#define PX_POOL_TAIL(name) __attribute__((section(".pool.tail." #name)))   /* after the pool's own buffers (app.ld) */
+#else
+#define PX_HI(name)
+#define PX_POOL_TAIL(name)
+#endif
 
 #define PI_F 3.14159265f
 
@@ -208,7 +215,7 @@ static void fq_block(const px_bq *f, px_fq *s, int32_t *b, int n)
     if (n & 1) fq_loop_c(b, n, c, &s->x1);              /* (the hand loop does 2 samples a turn) */
     else fq_loop(b, n, c, &s->x1);
 }
-static int32_t px_fqbuf[PX_OVERSAMPLE * PX_MAX_BLOCK];
+static int32_t px_fqbuf[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_POOL_TAIL(px_fqbuf);
 static void fq_to(int32_t *q, const float *x, int n)
 {
     for (int k = 0; k < n; k++) {
@@ -1399,8 +1406,9 @@ static void cab_make(float sr, const px_preset_t *p, cab_set *o)
 #define IR_B 64
 #define IR_F 128
 #define IR_P (PX_IR_LEN / IR_B)
+typedef char ir_scratch_check[PX_IR_LEN <= (IR_P / 2) * IR_F ? 1 : -1];   /* the IR and ir_load_h's scratch both fit in ir_X */
 static float ir_H[IR_P][IR_F];                         /* the partitions' spectra (packed: [0] DC, [1] Nyquist, re/im) */
-static float ir_X[IR_P][IR_F];                         /* the last IR_P input blocks' spectra (a ring, newest at ir_pos) */
+static float ir_X[IR_P][IR_F] PX_HI(ir_X);                       /* the last IR_P input blocks' spectra (a ring, newest at ir_pos) */
 static float ir_in[IR_F], ir_Y[IR_F];                  /* the last two input blocks; the sum of the products */
 static int ir_pos, ir_ok;
 static float fft_w[64];                                /* e^(2 pi i m / 64), m = 0..31: cos, sin */
@@ -1470,9 +1478,8 @@ static void irfft128(float *x)
     fft64(x, 1.0f);                                    /* z = 64 x IFFT(Z): x[2n] = Re, x[2n+1] = Im */
 }
 /* the spectra of an IR (PX_IR_LEN taps), its level set as the modelled cabinets' (energy 1/2) */
-static void ir_load_h(const float *h)
+static void ir_load_h(const float *h, float *b)       /* b: IR_F floats of scratch */
 {
-    static float b[IR_F];
     float en = 0.0f;
     if (!fft_ready) fft_init();
     for (int i = 0; i < PX_IR_LEN; i++) en += h[i] * h[i];
@@ -1554,10 +1561,10 @@ static void rc_cab_ir(px_engine *e)
     e->cab_n = 0; e->cab_firon = 0;
     if ((s != e->ir_slot || !ir_ok) && px_may_load) {  /* (a new slot is a full change: never on the audio side) */
         char nm[12];
-        float *h = &ir_X[0][0];                        /* (scratch: cleared after) */
+        float *h = &ir_X[0][0];                        /* (scratch: cleared after; the IR in the first half, ir_load_h's in the second) */
         if (!fft_ready) fft_init();
         ir_ok = px_ir_user(s, nm, h);
-        if (ir_ok) ir_load_h(h);
+        if (ir_ok) ir_load_h(h, &ir_X[IR_P / 2][0]);
         ir_clear();
         e->ir_slot = s;
     }
@@ -2251,7 +2258,7 @@ static void hb_br1(float *xs, float *ys, float c0, const float *in, float *out, 
 /* x2 up: in[n] -> out[2n]: the even branch (coefficients 0, 2, 4) makes out[2i], the odd one out[2i + 1], both from in[i]
  * (state: s->x/y[0..2] the even branch, [3..5] the odd one); x2 down: in[2i + 1] through the even branch, in[2i] through
  * the odd one, out[i] = their mean. The stride-2 reads and writes go through px_os_d. */
-static float px_os_d[4 * PX_MAX_BLOCK];
+static float px_os_d[4 * PX_MAX_BLOCK] PX_POOL_TAIL(px_os_d);
 static void hb1_up(px_hb *s, const float *in, float *out, int n)
 {
     float *d = px_os_d;
@@ -2281,7 +2288,7 @@ static void hb2_down(px_hb *s, const float *in, float *out, int n)
     for (int i = 0; i < n; i++) out[i] = 0.5f * (d[2 * i] + d[2 * i + 1]);
 }
 #undef HB_SEC
-static float px_os_m[2 * PX_MAX_BLOCK];                /* (stage 1 <-> 2) */
+static float px_os_m[2 * PX_MAX_BLOCK] PX_HI(px_os_m);                /* (stage 1 <-> 2) */
 static void os_up(px_hb *st, const float *in, float *out, int n, int os)   /* os 2 or 4: st[0] stage 1, st[1] stage 2 */
 {
     if (os == 2) { hb1_up(&st[0], in, out, n); return; }
@@ -2297,7 +2304,8 @@ static void os_down(px_hb *st, const float *in, float *out, int n, int os)   /* 
 
 /* drive_run over n oversampled samples in place, stage by stage (the same operations as drive_run sample by sample);
  * the anti-denormal offset follows the base-rate sample (os samples each) */
-static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_h[PX_OVERSAMPLE * PX_MAX_BLOCK], px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK];
+static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_HI(px_os_t), px_os_h[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_HI(px_os_h),
+             px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_HI(px_os_u);
 static void drive_block(px_engine *e, float *u, int n, int os)   /* (static buffers: off the interrupt's stack) */
 {
     float *t = px_os_t, *h = px_os_h;
@@ -2919,7 +2927,7 @@ static void rv_block(px_engine *e, const float *xb, float *wo, int n)
 }
 
 /* ---- v39: the wet lanes (px_dsp.h). [lane][buffer][frame]: 2 KB of RAM ---- */
-static float px_wl[2][2][PX_WL_N];
+static float px_wl[2][2][PX_WL_N] PX_HI(px_wl);
 static void wl_clear(px_engine *e)
 {
     e->wl_b = 0;

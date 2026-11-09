@@ -15,6 +15,8 @@ void *memmove(void *d, const void *s, size_t n);
 void *malloc(size_t n);
 void free(void *p);
 
+void ble_os_init(void);              /* at boot, before the first ble_poll: the task table (in NOINIT) cleared, the stacks painted */
+uint32_t ble_stack_min_free(void);   /* the bytes never used at the bottom of the deepest task's stack */
 void ble_poll(void);                 /* the main loop calls this often: runs the controller's timers and tasks */
 uint32_t ble_heap_free(void);
 uint32_t ble_heap_min_free(void);

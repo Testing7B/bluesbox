@@ -30,7 +30,15 @@ typedef struct {
 } nm_hdr_t;
 typedef char nm_hdr_check[sizeof(nm_hdr_t) == NM_HDR ? 1 : -1];
 
+#if OP_BLE_TEST   /* the Bluetooth test image: in the SRAM below the RAM (app.ld .bss_lo); what it holds is checked before use */
+static uint8_t nm_stage[NM_BYTES] __attribute__((aligned(4), section(".bss.lo.nm_stage")));
+#else
 static uint8_t nm_stage[NM_BYTES] __attribute__((aligned(4)));
+#endif
+#ifdef OTA_SCRATCH   /* the update's staging (ota.c ota_stage): ota_session blocks the main loop, so no upload runs meanwhile */
+typedef char ota_scratch_check[sizeof nm_stage >= 0x400u + 512u ? 1 : -1];
+static uint8_t *ota_scratch(void) { return nm_stage; }
+#endif
 static struct { uint8_t ok; char name[12]; float level; } nm_cache[PX_NAM_NUSER];
 static uint32_t nm_gen;                          /* bumps when a slot changes */
 

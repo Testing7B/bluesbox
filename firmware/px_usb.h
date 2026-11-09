@@ -33,6 +33,8 @@ static int ble_stall_tick(void);                /* ble/ble_status.h, included af
 #include "fm1_flash.h"
 #include "fm1_cpu1_stop.h"
 #include "usb.c"
+static uint8_t *ota_scratch(void);              /* px_models.h: the upload staging buffer, idle while ota_session blocks */
+#define OTA_SCRATCH ota_scratch()
 #include "ota.c"
 
 static uint8_t px_flash_ok;                     /* the flash is a 1 MiB SPI NOR: the update entry may stage */

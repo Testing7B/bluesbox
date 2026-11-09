@@ -63,6 +63,9 @@ if [ -n "$OP_BLE" ]; then
   for b in "$HERE"/../third_party/jieli-ble/*/*.bc; do
     $CC -Os -c -x ir "$b" -o "$O/jl/$(basename "$(dirname "$b")")_$(basename "$b" .bc).o"
   done
+  # v40 made memcpy and memset RAM code, out of the call range of the library's code at the end of the flash: the
+  # library calls flash copies instead (ble/ble_libc.c)
+  for o in "$O"/jl/*.o; do python3 "$HERE/../tools/elfsym.py" "$o" memcpy=ble_memcpy memset=ble_memset; done
   rm -f "$O/libjl.a"; "$TC/pi32v2/bin/ar" rcs "$O/libjl.a" "$O"/jl/*.o   # an archive: the linker takes only the objects the image calls
   $CC -c "$HERE/ble/ble_ctx.S" -o "$O/ble_ctx.o"; $CC -c "$HERE/ble/ble_isr.S" -o "$O/ble_isr.o"; BLEOBJ="$O/ble_ctx.o $O/ble_isr.o $O/libjl.a"
 fi
@@ -98,8 +101,14 @@ def sym(n):
     m=re.search(rf"^([0-9a-f]+) .*\s{n}$",syms,re.M); return int(m.group(1),16) if m else None
 load=sym("_data_load"); rt_load=sym("_rt_load"); start=sym("_start")
 be,cl,ch,nb=sym("_bss_end"),sym("_cram_lo"),sym("_cram_hi"),sym("_ble_stack_hi")
+re_,hs,he=sym("_rt_end"),sym("_bss_hi_start"),sym("_bss_hi_end")
+ls_,le=sym("_bss_lo_start"),sym("_bss_lo_end")
+if ls_ is not None and le and le > ls_: print(f"low RAM   : {le-ls_} of 24576 bytes (below the RAM)")
+ps_,pe=sym("_pool_tail_start"),sym("_pool_tail_end")
+if ps_ and pe: print(f"pool tail : {pe-ps_} bytes, {0x01C5E000-pe} left before the RAM code")
+if re_ and he: print(f"hi RAM    : RAM code {re_-0x01C5E000}, data {he-hs}, free {0x01C74000-he} of 90112 bytes (the RAM code window)")
 if be: print(f"RAM       : {be-0x01C08000} of 98304 bytes ({98304-(be-0x01C08000)} free)")
-if nb and nb >= 0x01C7C000: print(f"NOINIT    : {nb-0x01C7C000} of 15696 bytes up to the BLE task stacks' end")
+if nb and nb >= 0x01C7C000 and nb > sym("_ble_stack_lo"): print(f"NOINIT    : {nb-0x01C7C000} of 15696 bytes up to the BLE task stacks' end")
 if cl is not None and ch is not None: print(f"cache RAM : {ch-cl} of 28672 bytes (the rest, {28672-(ch-cl)}, to the NAM network's vector unit)")
 assert start==0x02000120,hex(start or 0)
 img=bytearray(open(f"{out}/text.bin","rb").read())

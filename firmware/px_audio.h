@@ -291,10 +291,18 @@ static void a_collect(void)                            /* collects the block in 
 
 /* ---- tuner: the interrupt stores the input decimated by 4 (11025 Hz); the main loop estimates the note ---- */
 #define TN_N 1024u
-static float tn_buf[TN_N];
+#if OP_BLE_TEST   /* the Bluetooth test image: the buffers in the cache RAM (app.ld CRAM); without it (pxc_init failed) no tuner */
+#define TN_MEM __attribute__((section(".cram.tuner")))
+#define TN_READY (pxc_status == PXC_READY)
+#else
+#define TN_MEM
+#define TN_READY 1
+#endif
+static float tn_buf[TN_N] TN_MEM;
 static volatile uint32_t tn_w;
 static void tn_capture(const float *x, uint32_t n)
 {
+    if (!TN_READY) return;
     uint32_t w = tn_w;
     for (uint32_t i = 0; i + 3u < n; i += 4u) {
         tn_buf[w] = (x[i] + x[i + 1u] + x[i + 2u] + x[i + 3u]) * 0.25f;
@@ -302,16 +310,23 @@ static void tn_capture(const float *x, uint32_t n)
     }
     tn_w = w;
 }
-static float tn_lin[TN_N];
-static float tn_d[200];
+#define TN_W 600u
+#define TN_TMAX 180u
+static float tn_lin[TN_W + TN_TMAX] TN_MEM;   /* the newest W + TMAX samples in order: all the difference function reads */
+static float tn_d[200] TN_MEM;
 static float tuner_estimate(void)      /* frequency in Hz, or 0 (silence / unclear). YIN algorithm. */
 {
-    const uint32_t W = 600u, TMIN = 10u, TMAX = 180u;  /* 61 Hz .. 1100 Hz at 11025 Hz */
+    const uint32_t W = TN_W, TMIN = 10u, TMAX = TN_TMAX;  /* 61 Hz .. 1100 Hz at 11025 Hz */
     uint32_t w = tn_w;
     float e = 0.0f;
-    for (uint32_t i = 0; i < TN_N; i++) { tn_lin[i] = tn_buf[(w + i) & (TN_N - 1u)]; e += tn_lin[i] * tn_lin[i]; }
+    if (!TN_READY) return 0.0f;
+    for (uint32_t i = 0; i < TN_N; i++) {              /* the energy over all TN_N samples, the copy of the newest */
+        const float v = tn_buf[(w + i) & (TN_N - 1u)];
+        e += v * v;
+        if (i >= TN_N - W - TMAX) tn_lin[i - (TN_N - W - TMAX)] = v;
+    }
     if (e < (float)TN_N * 1.0e-6f) return 0.0f;        /* too weak: nothing to tune */
-    const float *x = tn_lin + (TN_N - W - TMAX);
+    const float *x = tn_lin;
     float run = 0.0f;
     tn_d[0] = 1.0f;
     for (uint32_t t = 1; t <= TMAX; t++) {

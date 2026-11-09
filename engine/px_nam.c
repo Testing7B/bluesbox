@@ -2985,7 +2985,7 @@ int pxn_asm_in_use(void)
  * the residual): 1,920 multiply-adds a run. hand: the hand routines (if any), else C. scratch: PXN_TEST_WORDS */
 uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, int reps)
 {
-    static int32_t ring[3 * 64];
+    int32_t ring[3 * 64] = {0};                    /* (on the stack: only the bench screen runs this, at boot) */
     int32_t *s = scratch;
     void (*d4)(const pxn_dot *) = pxn_dot3x4_c;
     void (*po)(const pxn_post *) = pxn_post_c;
@@ -3011,7 +3011,7 @@ uint32_t pxn_bench_layer(int32_t *scratch, uint32_t (*ticks)(void), int hand, in
  * 32 frames: 1,920 multiply-adds), 1 the gather (6 taps x 32 frames), 2 the post (32 frames, with the residual) */
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps)
 {
-    static int32_t ring[3 * 64];
+    int32_t ring[3 * 64] = {0};                    /* (on the stack: only the bench screen runs this, at boot) */
     int32_t *s = scratch;
     pxn_test_data(s);
     pxn_dot d = {PXN_T_W(s), pxn_x, 20, PXN_S * 4, pxn_z, 8};

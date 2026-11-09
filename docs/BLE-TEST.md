@@ -14,7 +14,7 @@ same bytes with or without this feature in the tree. The test image is its own b
 
 **First hardware run (fixed).** The first image crashed on every boot, before any advertisement: the hardware stack-limit
 guard (`fm1_guard.h`, EMU bit 3) faults any stack pointer outside `[_ustack_lo, _sstack_top]`, and the controller's task
-stacks (`ble_os.c`) are in ordinary RAM below that window. The test image is now built with that one guard off
+stacks (`ble_os.c`) are outside that window (in NOINIT above it since v40.1). The test image is now built with that one guard off
 (`OP_GUARD_STACK=0` in `firmware/build.sh`); the write, bus and code-range guards stay on. The normal firmware keeps all four.
 `firmware/app.ld` now refuses to link the image if the stack guard is on while the task stacks lie outside the window, so the
 mistake cannot come back unnoticed (`OP_BLE=1 OP_GUARD_STACK=1 sh firmware/build.sh` shows the refusal).
@@ -175,8 +175,12 @@ third_party/jieli-ble/      JieLi's controller, as published (Apache-2.0): see i
 * **No RTOS.** The library expects tasks, queues, semaphores and timers. `ble_os.c` provides a cooperative scheduler:
   the controller's one task runs from `ble_poll()` in the main loop, switches only where it waits (queue, semaphore,
   delay), and is woken by the two BLE interrupts (IRQ 45 and 29, priority 2: the numbers and priority the stock firmware
-  uses). The heap is a 24 KB static pool; each task has a 4 KB stack. Against the normal image it needs about 44 KB more RAM (of which the heap
-  and stacks are 36 KB) and 131 KB more flash; the link fits with about 15 KB of the 96 KB RAM region free.
+  uses). The heap is a 24 KB static pool; each task has a 4 KB stack. Against the normal image it needs about 50 KB more RAM (of which the heap
+  and stacks are 39 KB) and about 230 KB more flash. Since v40.1 the task stacks are in NOINIT (cleared at boot by `ble_os_init`), the
+  tuner's buffers in the cache RAM, and the NAM / IR upload staging below the RAM (0x01C00000, `app.ld` `.bss_lo`); the link fits with
+  about 7.7 KB of the 96 KB RAM region free. The library's code lies past the call range of v40's RAM code, so its `memcpy` and `memset`
+  calls go to flash copies (`tools/elfsym.py`). PING reports the heap's lowest free bytes and the deepest task stack's unused bytes
+  (`node tools/op.mjs dsp`): 14,152 B and 3,200 B while advertising, on the first run.
 * **Radio start-up.** The library's `bt_rf_init` calls the Wi-Fi library's `wf_rf_common_init` first. Linking that would
   pull in the Wi-Fi MAC/SDIO stack, so `ble_rf.c` runs the already committed capture of the stock start-up instead
   (`firmware/bsp/chip/ble_rf_tables_v15.h`, run by `fm1_ble_rf.h`), with this unit's trims measured by `fm1_rf_cal.h`.

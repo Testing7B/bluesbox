@@ -28,6 +28,8 @@ function parse(argv) {
 export function parsePing(r) {
   const p = { load: r[0], bypass: !!(r[1] & 1), secondCore: !!(r[1] & 2) };
   if (r.length >= 8) Object.assign(p, { peak: r[2], peakAll: r[3], xrun: r[4] | r[5] << 7, clip: r[6] | r[7] << 7 });
+  if (r.length >= 12) Object.assign(p, { stackFree: (r[8] | r[9] << 7) * 4, irqStackFree: (r[10] | r[11] << 7) * 4 });
+  if (r.length >= 16) Object.assign(p, { bleHeapFree: (r[12] | r[13] << 7) * 4, bleTaskStackFree: (r[14] | r[15] << 7) * 4 });
   return p;
 }
 const wrap14 = (a, b) => (b - a + 16384) % 16384;
@@ -55,7 +57,9 @@ export async function run(ed, args, sleep) {
       let max = a.load, b = a;
       for (let t = 0; t < args.seconds; t += 0.5) { await sleep(0.5); b = parsePing(await ed.request(C.PING)); max = Math.max(max, b.load); }
       out.push({ slot: p.slot + 1, name: p.name, load: b.load, peak: b.peak ?? max, bypass: b.bypass || a.bypass, secondCore: b.secondCore,
-                 xrun: b.xrun === undefined ? null : wrap14(a.xrun, b.xrun), clip: b.clip === undefined ? null : wrap14(a.clip, b.clip) });
+                 xrun: b.xrun === undefined ? null : wrap14(a.xrun, b.xrun), clip: b.clip === undefined ? null : wrap14(a.clip, b.clip),
+                 stackFree: b.stackFree ?? null, irqStackFree: b.irqStackFree ?? null,
+                 bleHeapFree: b.bleHeapFree ?? null, bleTaskStackFree: b.bleTaskStackFree ?? null });
     }
   } finally { await ed.select(was).catch(() => {}); }
   return out;
@@ -83,6 +87,9 @@ export async function main(argv, { access, say = console.log } = {}) {
       say("slot name           load  peak  late  clip  cores  bypass");
       for (const r of rows)
         say(`${String(r.slot).padStart(4)} ${r.name.padEnd(14)} ${String(r.load).padStart(4)}% ${String(r.peak).padStart(4)}% ${String(r.xrun ?? "?").padStart(5)} ${String(r.clip ?? "?").padStart(5)}  ${r.secondCore ? "2   " : "1   "}   ${r.bypass ? "BYP" : "-"}`);
+      const last = rows[rows.length - 1];
+      if (last && last.stackFree !== null) say(`stacks never used since boot: main ${last.stackFree} B, interrupts ${last.irqStackFree} B`);
+      if (last && last.bleHeapFree !== null) say(`Bluetooth: heap lowest free ${last.bleHeapFree} B, deepest task stack never used ${last.bleTaskStackFree} B`);
     }
     return rows.some((r) => r.bypass || r.xrun) ? 1 : 0;
   } catch (e) { say(e.message); return 2; } finally { if (node) node.close(); }
