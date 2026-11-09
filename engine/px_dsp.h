@@ -100,6 +100,7 @@ int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memo
 int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines checked, then (ticks given) its
                                                          fastest way to run chosen (1 = hand routines in use) */
 uint32_t    px_nam_tuned(int mode);                   /* that timing: ticks for 256 frames, by mode (0 = n/a) */
+int         px_nam_equiv(int mode);                   /* the hand routines against C, whole network: blocks that differ */
 void        px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));   /* the other core */
 void        px_nam_fast(void *base, unsigned bytes);   /* memory away from the CPUs' RAM, for the vector unit (before px_nam_check) */
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */

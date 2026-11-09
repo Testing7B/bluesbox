@@ -29,10 +29,12 @@ static int32_t *pxn_fast;                               /* offered (pxn_set_fast
 #define PXN_WF_HEAD 1550                                /* the head row in pxn_wf */
 #define PXN_FAST_WORDS ((PXN_N + 1) * PXN_S + PXN_WF_HEAD + PXN_S + 4)
 static uint8_t pxn_rd = 1;                              /* the CPU's layers by rdot (1) or gathered X rows (0): timed */
-static uint32_t pxn_rdt[4];                             /* that timing (mode 0): [0] gathered, [1] rdot, [2] rdq, [3] rdl */
+static uint32_t pxn_rdt[5];                             /* that timing (mode 0): [0] gathered, [1] rdot, [2] rdq, [3] rdl,
+                                                           [4] rdm */
 static uint8_t pxn_rdq_on = 1;                          /* rdot's load-ahead versions (rdq) where checked: timed */
 static uint8_t pxn_rdl_on = 1;                          /* rdl: a layer's groups in one call, where checked: timed */
-uint32_t pxn_rdot_ticks(int rd) { return rd >= 0 && rd < 4 ? pxn_rdt[rd] : 0; }
+static uint8_t pxn_rdm_on = 1;                          /* rdm: rdl two rows at a time (the 3-row layers), where checked */
+uint32_t pxn_rdot_ticks(int rd) { return rd >= 0 && rd < 5 ? pxn_rdt[rd] : 0; }
 /* v37 diagnostic 18: where the CPU's time goes (mode 0, timed by pxn_tune): [0] input, [1] layers' 4-frame groups (tap
  * tables + kernel), [2] layers' 1..3-frame rests (gathered), [3] post, [4] rings + head copy + output, [5] whole block,
  * [6] head groups, [7] head rest, [8] [1] again with the kernel skipped (the tap tables alone) */
@@ -40,9 +42,11 @@ static uint32_t (*pxn_pt)(void);
 static uint32_t pxn_prof[9];
 static uint8_t pxn_pskip, pxn_pd = 1;
 static uint8_t pxn_p3ok, pxn_pc = 4;                 /* post3 checked; frames per post call (4 with the vector unit) */
-static uint32_t pxn_ptt[2];                          /* mode 0 timed with post2 and post3 */
-uint32_t pxn_post_ticks(int v) { return v >= 0 && v < 2 ? pxn_ptt[v] : 0; }
+static uint32_t pxn_ptt[3];                          /* mode 0 timed with post2, post3 and post4 */
+static uint8_t pxn_p4ok, pxn_p4on;                   /* post4 checked; in use (where x is read from the ring) */
+uint32_t pxn_post_ticks(int v) { return v >= 0 && v < 3 ? pxn_ptt[v] : 0; }
 int pxn_post3_state(void) { return pxn_p3ok ? 1 + (pxn_ptt[1] && pxn_ptt[1] < pxn_ptt[0]) : 0; }
+int pxn_post4_state(void) { return pxn_p4ok ? 1 + (pxn_p4on != 0) : 0; }
 #define PXN_T() (pxn_pt ? pxn_pt() : 0u)
 uint32_t pxn_prof_ticks(int k) { return k >= 0 && k < 9 ? pxn_prof[k] : 0; }
 static int32_t pxn_z[PXN_N * PXN_C + 4], pxn_hs[PXN_N * PXN_C];
@@ -188,19 +192,28 @@ static void pxn_rr2(const int32_t *rr, int32_t *r2)
     for (int o = 0; o < PXN_C; o++) r2[9 + o] = rr[4 * o + 3];
 }
 
-#if defined(__PI32V2__) && !defined(PXN_NO_ASM)
-#define PXN_ASM 1
-/* ---- the same, by hand (v40: moved to RAM with their callers on the pedal, tools/ramcode.py --plain) ---- */
+/* v40.2: PXN_LEAN (the Bluetooth test image, whose flash is full) leaves out the hand routines only the start-up check and
+ * timing still use (rdot, rdot6, the rdq ones) and the bench screen's instruction loops: their C versions stay */
+#ifndef PXN_LEAN
+#define PXN_LEAN 0
+#endif
+/* ---- the same, by hand (v40: moved to RAM with their callers on the pedal, tools/ramcode.py --plain). v40.2: PXN_HAND
+ * runs their start-up check, timing and dispatch: on the pedal; on the PC only in tests/engine/hand_test.c, which gives
+ * them C stand-ins that read exactly what the hand code reads (a fault in the check shows there, not as a boot loop) */
 void pxn_dot3x4_asm(const pxn_dot *j);
 void pxn_dot1_asm(const pxn_dot *j);
 void pxn_post_asm(const pxn_post *j);
 void pxn_post2_asm(const pxn_post *j);
 void pxn_post3_asm(const pxn_post *j);
+void pxn_post4_asm(const pxn_post *j);
 void pxn_rdot_asm(const pxn_rdot *j);
 void pxn_rdot6_asm(const pxn_rdot *j);
 void pxn_rdq6_asm(const pxn_rdot *j), pxn_rdq15_asm(const pxn_rdot *j), pxn_rdq16_asm(const pxn_rdot *j);
 void pxn_rdl6_asm(pxn_rdot *j), pxn_rdl15_asm(pxn_rdot *j), pxn_rdl16_asm(pxn_rdot *j);
+void pxn_rdm6_asm(pxn_rdot *j), pxn_rdm15_asm(pxn_rdot *j);
 void pxn_gcopy_asm(int32_t *dst, const int32_t *src, int n, int sb);
+#if defined(__PI32V2__) && !defined(PXN_NO_ASM)
+#define PXN_ASM 1
 __asm__(
     "\t.text\n"
     /* dot3x4: the 3 rows (contiguous) for 4 frames at a time. Locals: [sp+0] x, [sp+4] z, [sp+8] groups left,
@@ -500,6 +513,73 @@ __asm__(
     ".Lpxn_p3e:\n"
     "\tsp += 8\n"
     "\t{pc, r15-r4} = [sp++]\n"
+    /* post4 (v40.2): post2 for x straight from the layer's ring (sb 12: 3 words a frame), no counter in memory (the body
+     * is too long for the hardware loop): the residual's 12 words copied onto the stack first, so that their loads pair with the
+     * multiply-adds ([sp+...]) and r0 counts the frames (decremented by the branch). LeakyReLU as smax(z, (z * 42949673) >> 32): the same value for
+     * every z (z >= 0: the product is never above z; z < 0: never below it). r1 z, r2 x, r3 hs, r7 out; a0 a1 a2 in
+     * r14 r15 r6 */
+    "\t.global pxn_post4_asm\n"
+    "pxn_post4_asm:\n"
+    "\t[--sp] = {rets, r15-r4}\n"
+    "\tsp += -48\n"
+    "\tr7 = [r0+28]\n"
+    "\tr4 = [r7+0]\n\t[sp+0] = r4\n\tr4 = [r7+4]\n\t[sp+4] = r4\n\tr4 = [r7+8]\n\t[sp+8] = r4\n"
+    "\tr4 = [r7+12]\n\t[sp+12] = r4\n\tr4 = [r7+16]\n\t[sp+16] = r4\n\tr4 = [r7+20]\n\t[sp+20] = r4\n"
+    "\tr4 = [r7+24]\n\t[sp+24] = r4\n\tr4 = [r7+28]\n\t[sp+28] = r4\n\tr4 = [r7+32]\n\t[sp+32] = r4\n"
+    "\tr4 = [r7+36]\n\t[sp+36] = r4\n\tr4 = [r7+40]\n\t[sp+40] = r4\n\tr4 = [r7+44]\n\t[sp+44] = r4\n"
+    "\tr1 = [r0+0]\n\tr2 = [r0+4]\n\tr3 = [r0+16]\n\tr7 = [r0+20]\n\tr0 = [r0+24]\n"
+    "\tif (r7 == 0) goto .Lpxn_p4h\n"
+    ".Lpxn_p4f:\n"
+    "\t{r6-r4} = [r1++]\n"
+    "\tr15 = 42949673\n"
+    "\tr9_r8 = r4 * r15 (s)\n"
+    "\tr11_r10 = r5 * r15 (s)\n"
+    "\tr13_r12 = r6 * r15 (s)\n"
+    "\tr14 = smax(r4, r9)\n"
+    "\tr15 = smax(r5, r11)\n"
+    "\tr6 = smax(r6, r13)\n"
+    "\t{r10-r8} = [r3++]\n"
+    "\tr8 += r14\n\tr9 += r15\n\tr10 += r6\n"
+    "\t[r3+-12] = r8\n\t[r3+-8] = r9\n\t[r3+-4] = r10\n"
+    "\tr4 = [sp+0]\n\tr5 = [sp+4]\n"
+    "\tr9_r8 = r14 * r4 (s)  #  r4 = [sp+8]\n"
+    "\tr11_r10 = r14 * r5 (s)  #  r5 = [sp+12]\n"
+    "\tr13_r12 = r14 * r4 (s)  #  r4 = [sp+16]\n"
+    "\tr9_r8 += r15 * r5 (s)  #  r5 = [sp+20]\n"
+    "\tr11_r10 += r15 * r4 (s)  #  r4 = [sp+24]\n"
+    "\tr13_r12 += r15 * r5 (s)  #  r5 = [sp+28]\n"
+    "\tr9_r8 += r6 * r4 (s)  #  r4 = [sp+32]\n"
+    "\tr11_r10 += r6 * r5 (s)  #  r5 = [sp+36]\n"
+    "\tr13_r12 += r6 * r4 (s)  #  r4 = [sp+40]\n"
+    "\tr9_r8 >>= 24\n\tr11_r10 >>= 24\n\tr13_r12 >>= 24\n"
+    "\tr8 += r5\n\tr10 += r4\n"
+    "\tr5 = [sp+44]\n"
+    "\tr12 += r5\n"
+    "\t{r6-r4} = [r2++]\n"
+    "\tr8 += r4\n\tr10 += r5\n\tr12 += r6\n"
+    "\t[r7++=4] = r8\n\t[r7++=4] = r10\n\t[r7++=4] = r12\n"
+    "\tif (--r0 != 0) goto .Lpxn_p4f\n"
+    "\tgoto .Lpxn_p4e\n"
+    ".Lpxn_p4h:\n"
+    "\t{r6-r4} = [r1++]\n"
+    "\tr15 = 42949673\n"
+    "\tr9_r8 = r4 * r15 (s)\n"
+    "\tr11_r10 = r5 * r15 (s)\n"
+    "\tr13_r12 = r6 * r15 (s)\n"
+    "\tr14 = smax(r4, r9)\n"
+    "\tr15 = smax(r5, r11)\n"
+    "\tr6 = smax(r6, r13)\n"
+    "\t{r10-r8} = [r3++]\n"
+    "\tr8 += r14\n\tr9 += r15\n\tr10 += r6\n"
+    "\t[r3+-12] = r8\n\t[r3+-8] = r9\n\t[r3+-4] = r10\n"
+    "\tif (--r0 != 0) goto .Lpxn_p4h\n"
+    ".Lpxn_p4e:\n"
+    "\tsp += 48\n"
+    "\t{pc, r15-r4} = [sp++]\n"
+    /* v40.2: rdot, rdot6, the rdq routines and rdl6, rdl15 stay in the flash (.text.pxn_cold, not moved to RAM): they
+     * only serve the start-up check and timing, rdm doing the work, and the RAM code window needs the room */
+    "\t.section .text.pxn_cold,\"ax\"\n"
+#if !PXN_LEAN
     /* rdot: r0 the weights (row after row), r1 a tap's pointer, r2 the tap table, r3 taps left, r4 u, r5 a weight,
      * r6 an x; 4 accumulators. [sp+0] job, [sp+4] rows left, [sp+8] z */
     "\t.global pxn_rdot_asm\n"
@@ -1481,6 +1561,7 @@ __asm__(
     /* rdl6, rdl15, rdl16 (tools/gen_rdq.py --rdl): rdq for all the groups of 4 frames of a layer's block in one call
      * (diagnostic 20): the tap table on the stack ([sp+20+4k]), the job's u and z moved on, every tap pointer 4 frames
      * on after each group, back by the ring's length past its end (the ring's first frames are mirrored after it) */
+#endif
     "\t.global pxn_rdl6_asm\n"
     "pxn_rdl6_asm:\n"
     "\t[--sp] = {rets, r15-r4}\n"
@@ -2142,6 +2223,7 @@ __asm__(
     "\tif (r7 != 0) goto .Lpxn_rdl15_asmg\n"
     "\tsp += 80\n"
     "\t{pc, r15-r4} = [sp++]\n"
+    "\t.text\n"
     "\t.global pxn_rdl16_asm\n"
     "pxn_rdl16_asm:\n"
     "\t[--sp] = {rets, r15-r4}\n"
@@ -2611,6 +2693,1305 @@ __asm__(
     "\tsp += 84\n"
     "\t{pc, r15-r4} = [sp++]\n"
 
+    /* rdm (v40.2, tools/gen_rdq.py --rdm): rdl's job for the 3 rows of a 6- or 15-tap layer, rows 0 and 1 two frames at a
+     * time (every load paired with a multiply-add), row 2 four frames at a time */
+    "\t.global pxn_rdm6_asm\n"
+    "pxn_rdm6_asm:\n"
+    "\t[--sp] = {rets, r15-r4}\n"
+    "\tsp += -44\n"
+    "\t[sp+0] = r0\n"
+    "\tr7 = [r0+24]\n"
+    "\t[sp+4] = r7\n"
+    "\tr7 = [r0+16]\n"
+    "\t[sp+8] = r7\n"
+    "\tr7 = [r0+12]\n"
+    "\t[sp+12] = r7\n"
+    "\tr7 = [r0+0]\n"
+    "\t[sp+16] = r7\n"
+    "\tr1 = [r0+4]\n"
+    "\tr7 = [r1+0]\n"
+    "\t[sp+20] = r7\n"
+    "\tr7 = [r1+4]\n"
+    "\t[sp+24] = r7\n"
+    "\tr7 = [r1+8]\n"
+    "\t[sp+28] = r7\n"
+    "\tr7 = [r1+12]\n"
+    "\t[sp+32] = r7\n"
+    "\tr7 = [r1+16]\n"
+    "\t[sp+36] = r7\n"
+    "\tr7 = [r1+20]\n"
+    "\t[sp+40] = r7\n"
+    ".Lpxn_rdm6_asmg:\n"
+    "\tr0 = [sp+16]\n"
+    "\tr1 = r0 + 80\n"
+    "\tr2 = [sp+12]\n"
+    "\tr3 = [r0++=4]\n"
+    "\tr4 = [r1++=4]\n"
+    "\tr5 = [r2+0]\n"
+    "\tr6 = [r2+4]\n"
+    "\tr9_r8 = r3 * r5 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 = r3 * r6 (s)  #  r3 = [r1++=4]\n"
+    "\tr13_r12 = r4 * r5 (s)  #  r2 = [sp+20]\n"
+    "\tr15_r14 = r4 * r6 (s)\n"
+    "\tr5 = 1048576\n"
+    "\tr9_r8 += r7 * r5 (s)  #  r6 = [r0++=4]\n"
+    "\tr13_r12 += r3 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr15_r14 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r7 * r5 (s)  #  r7 = [r1++=4]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+28]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+36]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr9_r8 += r7 * r3 (s)\n"
+    "\tr11_r10 += r7 * r4 (s)\n"
+    "\tr13_r12 += r5 * r3 (s)\n"
+    "\tr15_r14 += r5 * r4 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr2 = [sp+8]\n"
+    "\t[r2+0] = r8\n"
+    "\t[r2+12] = r10\n"
+    "\t[r2+4] = r12\n"
+    "\t[r2+16] = r14\n"
+    "\tr0 = [sp+16]\n"
+    "\tr1 = r0 + 80\n"
+    "\tr2 = [sp+12]\n"
+    "\tr3 = [r0++=4]\n"
+    "\tr4 = [r1++=4]\n"
+    "\tr5 = [r2+8]\n"
+    "\tr6 = [r2+12]\n"
+    "\tr9_r8 = r3 * r5 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 = r3 * r6 (s)  #  r3 = [r1++=4]\n"
+    "\tr13_r12 = r4 * r5 (s)  #  r2 = [sp+20]\n"
+    "\tr15_r14 = r4 * r6 (s)\n"
+    "\tr5 = 1048576\n"
+    "\tr9_r8 += r7 * r5 (s)  #  r6 = [r0++=4]\n"
+    "\tr13_r12 += r3 * r5 (s)  #  r4 = [r2+36]\n"
+    "\tr15_r14 += r3 * r5 (s)  #  r3 = [r2+24]\n"
+    "\tr11_r10 += r7 * r5 (s)  #  r7 = [r1++=4]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+28]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+36]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr9_r8 += r7 * r3 (s)\n"
+    "\tr11_r10 += r7 * r4 (s)\n"
+    "\tr13_r12 += r5 * r3 (s)\n"
+    "\tr15_r14 += r5 * r4 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr2 = [sp+8]\n"
+    "\t[r2+24] = r8\n"
+    "\t[r2+36] = r10\n"
+    "\t[r2+28] = r12\n"
+    "\t[r2+40] = r14\n"
+    "\tr0 = [sp+16]\n"
+    "\tr0 += 160\n"
+    "\tr7 = [sp+12]\n"
+    "\tr5 = [r0++=4]\n"
+    "\tr6 = [r0++=4]\n"
+    "\tr3 = [r7+0]\n"
+    "\tr9_r8 = r3 * r5 (s)\n"
+    "\tr3 = [r7+4]\n"
+    "\tr11_r10 = r3 * r5 (s)\n"
+    "\tr3 = [r7+8]\n"
+    "\tr13_r12 = r3 * r5 (s)\n"
+    "\tr3 = [r7+12]\n"
+    "\tr15_r14 = r3 * r5 (s)\n"
+    "\tr3 = 1048576\n"
+    "\tr9_r8 += r3 * r6 (s)\n"
+    "\tr11_r10 += r3 * r6 (s)\n"
+    "\tr13_r12 += r3 * r6 (s)\n"
+    "\tr15_r14 += r3 * r6 (s)\n"
+    "\tr1 = [sp+20]\n"
+    "\tr5 = [r0++=4]\n"
+    "\tr3 = [r1+0]\n"
+    "\tr4 = [r1+12]\n"
+    "\tr6 = [r1+24]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+28]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)\n"
+    "\tr11_r10 += r4 * r5 (s)\n"
+    "\tr13_r12 += r6 * r5 (s)\n"
+    "\tr15_r14 += r7 * r5 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr4 = [sp+8]\n"
+    "\t[r4+8] = r8\n"
+    "\t[r4+20] = r10\n"
+    "\t[r4+32] = r12\n"
+    "\t[r4+44] = r14\n"
+    "\tr4 += 48\n"
+    "\t[sp+8] = r4\n"
+    "\tr4 = [sp+12]\n"
+    "\tr4 += 16\n"
+    "\t[sp+12] = r4\n"
+    "\tr4 = [sp+0]\n"
+    "\tr2 = [r4+28]\n"
+    "\tr3 = [r4+32]\n"
+    "\tr1 = [sp+20]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+20] = r1\n"
+    "\tr1 = [sp+24]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+24] = r1\n"
+    "\tr1 = [sp+28]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+28] = r1\n"
+    "\tr1 = [sp+32]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+32] = r1\n"
+    "\tr1 = [sp+36]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+36] = r1\n"
+    "\tr1 = [sp+40]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+40] = r1\n"
+    "\tr7 = [sp+4]\n"
+    "\tr7 += -1\n"
+    "\t[sp+4] = r7\n"
+    "\tif (r7 != 0) goto .Lpxn_rdm6_asmg\n"
+    "\tr4 = [sp+0]\n"
+    "\tr7 = [sp+12]\n"
+    "\t[r4+12] = r7\n"
+    "\tr7 = [sp+8]\n"
+    "\t[r4+16] = r7\n"
+    "\tsp += 44\n"
+    "\t{pc, r15-r4} = [sp++]\n"
+    "\t.global pxn_rdm15_asm\n"
+    "pxn_rdm15_asm:\n"
+    "\t[--sp] = {rets, r15-r4}\n"
+    "\tsp += -80\n"
+    "\t[sp+0] = r0\n"
+    "\tr7 = [r0+24]\n"
+    "\t[sp+4] = r7\n"
+    "\tr7 = [r0+16]\n"
+    "\t[sp+8] = r7\n"
+    "\tr7 = [r0+12]\n"
+    "\t[sp+12] = r7\n"
+    "\tr7 = [r0+0]\n"
+    "\t[sp+16] = r7\n"
+    "\tr1 = [r0+4]\n"
+    "\tr7 = [r1+0]\n"
+    "\t[sp+20] = r7\n"
+    "\tr7 = [r1+4]\n"
+    "\t[sp+24] = r7\n"
+    "\tr7 = [r1+8]\n"
+    "\t[sp+28] = r7\n"
+    "\tr7 = [r1+12]\n"
+    "\t[sp+32] = r7\n"
+    "\tr7 = [r1+16]\n"
+    "\t[sp+36] = r7\n"
+    "\tr7 = [r1+20]\n"
+    "\t[sp+40] = r7\n"
+    "\tr7 = [r1+24]\n"
+    "\t[sp+44] = r7\n"
+    "\tr7 = [r1+28]\n"
+    "\t[sp+48] = r7\n"
+    "\tr7 = [r1+32]\n"
+    "\t[sp+52] = r7\n"
+    "\tr7 = [r1+36]\n"
+    "\t[sp+56] = r7\n"
+    "\tr7 = [r1+40]\n"
+    "\t[sp+60] = r7\n"
+    "\tr7 = [r1+44]\n"
+    "\t[sp+64] = r7\n"
+    "\tr7 = [r1+48]\n"
+    "\t[sp+68] = r7\n"
+    "\tr7 = [r1+52]\n"
+    "\t[sp+72] = r7\n"
+    "\tr7 = [r1+56]\n"
+    "\t[sp+76] = r7\n"
+    ".Lpxn_rdm15_asmg:\n"
+    "\tr0 = [sp+16]\n"
+    "\tr1 = r0 + 188\n"
+    "\tr2 = [sp+12]\n"
+    "\tr3 = [r0++=4]\n"
+    "\tr4 = [r1++=4]\n"
+    "\tr5 = [r2+0]\n"
+    "\tr6 = [r2+4]\n"
+    "\tr9_r8 = r3 * r5 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 = r3 * r6 (s)  #  r3 = [r1++=4]\n"
+    "\tr13_r12 = r4 * r5 (s)  #  r2 = [sp+20]\n"
+    "\tr15_r14 = r4 * r6 (s)\n"
+    "\tr5 = 1048576\n"
+    "\tr9_r8 += r7 * r5 (s)  #  r6 = [r0++=4]\n"
+    "\tr13_r12 += r3 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr15_r14 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r7 * r5 (s)  #  r7 = [r1++=4]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+28]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+36]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+44]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+48]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+52]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+56]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+60]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+64]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+68]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+72]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr2 = [sp+76]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+0]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+12]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+4]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+16]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+8]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+20]\n"
+    "\tr9_r8 += r7 * r3 (s)\n"
+    "\tr11_r10 += r7 * r4 (s)\n"
+    "\tr13_r12 += r5 * r3 (s)\n"
+    "\tr15_r14 += r5 * r4 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr2 = [sp+8]\n"
+    "\t[r2+0] = r8\n"
+    "\t[r2+12] = r10\n"
+    "\t[r2+4] = r12\n"
+    "\t[r2+16] = r14\n"
+    "\tr0 = [sp+16]\n"
+    "\tr1 = r0 + 188\n"
+    "\tr2 = [sp+12]\n"
+    "\tr3 = [r0++=4]\n"
+    "\tr4 = [r1++=4]\n"
+    "\tr5 = [r2+8]\n"
+    "\tr6 = [r2+12]\n"
+    "\tr9_r8 = r3 * r5 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 = r3 * r6 (s)  #  r3 = [r1++=4]\n"
+    "\tr13_r12 = r4 * r5 (s)  #  r2 = [sp+20]\n"
+    "\tr15_r14 = r4 * r6 (s)\n"
+    "\tr5 = 1048576\n"
+    "\tr9_r8 += r7 * r5 (s)  #  r6 = [r0++=4]\n"
+    "\tr13_r12 += r3 * r5 (s)  #  r4 = [r2+36]\n"
+    "\tr15_r14 += r3 * r5 (s)  #  r3 = [r2+24]\n"
+    "\tr11_r10 += r7 * r5 (s)  #  r7 = [r1++=4]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+28]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+36]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+44]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+48]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+52]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+56]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+60]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+64]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+68]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+72]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr2 = [sp+76]\n"
+    "\tr9_r8 += r7 * r3 (s)  #  r6 = [r0++=4]\n"
+    "\tr11_r10 += r7 * r4 (s)  #  r7 = [r1++=4]\n"
+    "\tr13_r12 += r5 * r3 (s)  #  r3 = [r2+24]\n"
+    "\tr15_r14 += r5 * r4 (s)  #  r4 = [r2+36]\n"
+    "\tr9_r8 += r6 * r3 (s)  #  r5 = [r0++=4]\n"
+    "\tr11_r10 += r6 * r4 (s)  #  r6 = [r1++=4]\n"
+    "\tr13_r12 += r7 * r3 (s)  #  r3 = [r2+28]\n"
+    "\tr15_r14 += r7 * r4 (s)  #  r4 = [r2+40]\n"
+    "\tr9_r8 += r5 * r3 (s)  #  r7 = [r0++=4]\n"
+    "\tr11_r10 += r5 * r4 (s)  #  r5 = [r1++=4]\n"
+    "\tr13_r12 += r6 * r3 (s)  #  r3 = [r2+32]\n"
+    "\tr15_r14 += r6 * r4 (s)  #  r4 = [r2+44]\n"
+    "\tr9_r8 += r7 * r3 (s)\n"
+    "\tr11_r10 += r7 * r4 (s)\n"
+    "\tr13_r12 += r5 * r3 (s)\n"
+    "\tr15_r14 += r5 * r4 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr2 = [sp+8]\n"
+    "\t[r2+24] = r8\n"
+    "\t[r2+36] = r10\n"
+    "\t[r2+28] = r12\n"
+    "\t[r2+40] = r14\n"
+    "\tr0 = [sp+16]\n"
+    "\tr0 += 376\n"
+    "\tr7 = [sp+12]\n"
+    "\tr5 = [r0++=4]\n"
+    "\tr6 = [r0++=4]\n"
+    "\tr3 = [r7+0]\n"
+    "\tr9_r8 = r3 * r5 (s)\n"
+    "\tr3 = [r7+4]\n"
+    "\tr11_r10 = r3 * r5 (s)\n"
+    "\tr3 = [r7+8]\n"
+    "\tr13_r12 = r3 * r5 (s)\n"
+    "\tr3 = [r7+12]\n"
+    "\tr15_r14 = r3 * r5 (s)\n"
+    "\tr3 = 1048576\n"
+    "\tr9_r8 += r3 * r6 (s)\n"
+    "\tr11_r10 += r3 * r6 (s)\n"
+    "\tr13_r12 += r3 * r6 (s)\n"
+    "\tr15_r14 += r3 * r6 (s)\n"
+    "\tr1 = [sp+20]\n"
+    "\tr5 = [r0++=4]\n"
+    "\tr3 = [r1+0]\n"
+    "\tr4 = [r1+12]\n"
+    "\tr6 = [r1+24]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+24]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+28]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+32]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+40]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+48]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+52]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+56]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+60]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+64]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+68]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr2 = [sp+72]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+40]\n"
+    "\tr1 = [sp+76]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r2+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r2+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r2+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r2+44]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+0]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+12]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+24]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+36]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+4]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+16]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+28]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+40]\n"
+    "\tr9_r8 += r3 * r5 (s)  #  r3 = [r1+8]\n"
+    "\tr11_r10 += r4 * r5 (s)  #  r4 = [r1+20]\n"
+    "\tr13_r12 += r6 * r5 (s)  #  r6 = [r1+32]\n"
+    "\tr15_r14 += r7 * r5 (s)  #  r5 = [r0++=4]\n"
+    "\tr7 = [r1+44]\n"
+    "\tr9_r8 += r3 * r5 (s)\n"
+    "\tr11_r10 += r4 * r5 (s)\n"
+    "\tr13_r12 += r6 * r5 (s)\n"
+    "\tr15_r14 += r7 * r5 (s)\n"
+    "\tr9_r8 >>= 24\n"
+    "\tr11_r10 >>= 24\n"
+    "\tr13_r12 >>= 24\n"
+    "\tr15_r14 >>= 24\n"
+    "\tr4 = [sp+8]\n"
+    "\t[r4+8] = r8\n"
+    "\t[r4+20] = r10\n"
+    "\t[r4+32] = r12\n"
+    "\t[r4+44] = r14\n"
+    "\tr4 += 48\n"
+    "\t[sp+8] = r4\n"
+    "\tr4 = [sp+12]\n"
+    "\tr4 += 16\n"
+    "\t[sp+12] = r4\n"
+    "\tr4 = [sp+0]\n"
+    "\tr2 = [r4+28]\n"
+    "\tr3 = [r4+32]\n"
+    "\tr1 = [sp+20]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+20] = r1\n"
+    "\tr1 = [sp+24]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+24] = r1\n"
+    "\tr1 = [sp+28]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+28] = r1\n"
+    "\tr1 = [sp+32]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+32] = r1\n"
+    "\tr1 = [sp+36]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+36] = r1\n"
+    "\tr1 = [sp+40]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+40] = r1\n"
+    "\tr1 = [sp+44]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+44] = r1\n"
+    "\tr1 = [sp+48]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+48] = r1\n"
+    "\tr1 = [sp+52]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+52] = r1\n"
+    "\tr1 = [sp+56]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+56] = r1\n"
+    "\tr1 = [sp+60]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+60] = r1\n"
+    "\tr1 = [sp+64]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+64] = r1\n"
+    "\tr1 = [sp+68]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+68] = r1\n"
+    "\tr1 = [sp+72]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+72] = r1\n"
+    "\tr1 = [sp+76]\n"
+    "\tr1 += 48\n"
+    "\tr5 = r1 + r3\n"
+    "\tif (r1 >= r2) {\n"
+    "\tr1 = r5\n"
+    "\t}\n"
+    "\t[sp+76] = r1\n"
+    "\tr7 = [sp+4]\n"
+    "\tr7 += -1\n"
+    "\t[sp+4] = r7\n"
+    "\tif (r7 != 0) goto .Lpxn_rdm15_asmg\n"
+    "\tr4 = [sp+0]\n"
+    "\tr7 = [sp+12]\n"
+    "\t[r4+12] = r7\n"
+    "\tr7 = [sp+8]\n"
+    "\t[r4+16] = r7\n"
+    "\tsp += 80\n"
+    "\t{pc, r15-r4} = [sp++]\n"
     /* gcopy: r0 dst, r1 src, r2 frames, r3 row stride */
     "\t.global pxn_gcopy_asm\n"
     "pxn_gcopy_asm:\n"
@@ -2627,6 +4008,9 @@ __asm__(
 #else
 #define PXN_ASM 0
 #endif
+#ifndef PXN_HAND
+#define PXN_HAND PXN_ASM
+#endif
 
 /* the routines in use: C until the start-up check (pxn_selftest) picks the hand ones */
 static void (*pxn_dot3x4)(const pxn_dot *) = pxn_dot3x4_c;
@@ -2637,6 +4021,7 @@ static void (*pxn_rdot_f)(const pxn_rdot *) = pxn_rdot_c;
 static void (*pxn_rdot6_f)(const pxn_rdot *) = pxn_rdot_c;   /* for 6 taps */
 static void (*pxn_rdq_f[PXN_HK + 1])(const pxn_rdot *);       /* by tap count: the load-ahead routines, if checked */
 static void (*pxn_rdl_f[PXN_HK + 1])(pxn_rdot *);             /* by tap count: rdl, if checked */
+static void (*pxn_rdm_f[PXN_HK + 1])(pxn_rdot *);             /* by tap count: rdm (3 rows), if checked */
 
 /* ---- the chip's vector unit (in its FFT block, 0x1EE0400): dot products in hardware ----
  * One command computes nloop dot products of nlen 32-bit pairs, z = sum(y * x) >> q, the x, y and z addresses moving by
@@ -2700,6 +4085,13 @@ void pxn_vstart(const int32_t *w, const int32_t *x, int T, int sb, int zb, int32
     (void)w; (void)x; (void)T; (void)sb; (void)zb; (void)z; (void)n;
 }
 void pxn_vwait(void) { }
+#if PXN_HAND
+static int pxn_vdot(const int32_t *w, const int32_t *x, int T, int sb, int32_t *z, int n)   /* (no unit) */
+{
+    (void)w; (void)x; (void)T; (void)sb; (void)z; (void)n;
+    return -1;
+}
+#endif
 #endif
 /* the command queue (mode 2): commands wait in their own contexts; pxn_kick, called often by the CPU's work, starts the
  * next one as soon as the unit is done. Counters: queued, started, finished. */
@@ -2804,8 +4196,8 @@ static void pxn_test_data_sh(int32_t *s, int sh)
 static void pxn_test_data(int32_t *s) { pxn_test_data_sh(s, 6); }
 int pxn_selftest(int32_t *scratch)
 {
-#if PXN_ASM
-    int32_t *s = scratch, ok = 1, p2ok = 1, p3ok = 1;
+#if PXN_HAND
+    int32_t *s = scratch, ok = 1, p2ok = 1, p3ok = 1, p4ok = 1;
     for (int pass = 0; pass < 4 && ok; pass++) {
         pxn_test_data(s);
         const int T = pass & 1 ? 47 : 20, sb = PXN_S * 4;
@@ -2833,12 +4225,25 @@ int pxn_selftest(int32_t *scratch)
             for (int i = 0; i < 64; i++) PXN_T_O(s, 2)[i] = PXN_T_O(s, 3)[i] = i * 77 - 1000;
             pxn_post3_asm(&q);                            /* post3: the same check */
             if (memcmp(PXN_T_O(s, 2), PXN_T_O(s, 4), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 5), 64 * 4)) p3ok = 0;
+            /* post4: x 3 words a frame (as in a ring), against the C post on the same x */
+            pxn_post c4 = p;
+            c4.x = PXN_T_X(s) + pass; c4.sb = 12; c4.rr2 = r2;
+            c4.hs = PXN_T_O(s, 2); if (c4.out) c4.out = PXN_T_O(s, 3);
+            for (int i = 0; i < 64; i++) PXN_T_O(s, 2)[i] = PXN_T_O(s, 3)[i] = PXN_T_O(s, 6)[i] = PXN_T_O(s, 7)[i] = i * 77 - 1000;
+            pxn_post_c(&c4);
+            pxn_post q4 = c4;
+            q4.hs = PXN_T_O(s, 6); if (q4.out) q4.out = PXN_T_O(s, 7);
+            pxn_post4_asm(&q4);
+            if (memcmp(PXN_T_O(s, 2), PXN_T_O(s, 6), 64 * 4) || memcmp(PXN_T_O(s, 3), PXN_T_O(s, 7), 64 * 4)) p4ok = 0;
         }
         pxn_gcopy_c(PXN_T_O(s, 0), PXN_T_W(s) + pass, 5, 40);
         pxn_gcopy_asm(PXN_T_O(s, 1), PXN_T_W(s) + pass, 5, 40);
         if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4)) ok = 0;
     }
-    {   /* rdot: 3 rows of 6 taps, 3 rows of 15, the head's 1 row of 16, against the C one */
+    {
+        static const uint8_t QK[3] = {6, 15, 16};
+#if !PXN_LEAN
+        /* rdot: 3 rows of 6 taps, 3 rows of 15, the head's 1 row of 16, against the C one */
         int rok = 1;
         for (int pass = 0; pass < 3 && rok; pass++) {
             pxn_test_data(s);
@@ -2860,7 +4265,6 @@ int pxn_selftest(int32_t *scratch)
         pxn_rdot6_f = rok ? pxn_rdot6_asm : pxn_rdot_c;
         /* the load-ahead routines: 3 rows of 6 and 15 taps, 1 and 3 rows of 16, each against C */
         static void (*const Q[3])(const pxn_rdot *) = {pxn_rdq6_asm, pxn_rdq15_asm, pxn_rdq16_asm};
-        static const uint8_t QK[3] = {6, 15, 16};
         for (int q = 0; q < 3; q++) {
             int qok = 1;
             for (int pass = 0; pass < 4 && qok; pass++) {
@@ -2876,6 +4280,7 @@ int pxn_selftest(int32_t *scratch)
             }
             pxn_rdq_f[QK[q]] = qok ? Q[q] : 0;
         }
+#endif
         /* rdl: 3 groups of 3 rows (6, 15 taps) and of 1 row (16), on a "ring" whose end some taps pass (brought back
          * by its length), against the C one: outputs, and the job's u and z after */
         static void (*const R[3])(pxn_rdot *) = {pxn_rdl6_asm, pxn_rdl15_asm, pxn_rdl16_asm};
@@ -2895,13 +4300,34 @@ int pxn_selftest(int32_t *scratch)
                 if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4) || j.u != c.u || j.z - PXN_T_O(s, 1) != c.z - PXN_T_O(s, 0))
                     lok = 0;
             }
-            pxn_rdl_f[QK[q]] = lok && pxn_rdq_f[QK[q]] ? R[q] : 0;
+            pxn_rdl_f[QK[q]] = lok && (PXN_LEAN || pxn_rdq_f[QK[q]]) ? R[q] : 0;
+        }
+        /* rdm: the same check, the 3-row layers (6 and 15 taps) */
+        static void (*const M[2])(pxn_rdot *) = {pxn_rdm6_asm, pxn_rdm15_asm};
+        for (int q = 0; q < 2; q++) {
+            int mok = 1;
+            for (int pass = 0; pass < 2 && mok; pass++) {
+                pxn_test_data(s);
+                const int K = QK[q];
+                const int32_t *tp[16];
+                for (int k = 0; k < K; k++) tp[k] = PXN_T_X(s) + 3 * (k * 5 + pass);
+                pxn_rdot j = {PXN_T_W(s), tp, K, PXN_T_X(s) + 400, PXN_T_O(s, 0), 3, 3,
+                              PXN_T_X(s) + 3 * (K * 4), -3 * (K * 3) * 4};
+                pxn_rdot c = j;
+                pxn_rdl_c(&c);
+                j.z = PXN_T_O(s, 1);
+                M[q](&j);
+                if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4) || j.u != c.u || j.z - PXN_T_O(s, 1) != c.z - PXN_T_O(s, 0))
+                    mok = 0;
+            }
+            pxn_rdm_f[QK[q]] = mok && pxn_rdl_f[QK[q]] ? M[q] : 0;
         }
     }
     if (ok) {
         pxn_dot3x4 = pxn_dot3x4_asm; pxn_dot1 = pxn_dot1_asm; pxn_gcopy = pxn_gcopy_asm;
         pxn_post_f = p2ok ? pxn_post2_asm : pxn_post_asm;
         pxn_p3ok = (uint8_t)(p2ok && p3ok);             /* pxn_tune times post3 against post2 */
+        pxn_p4ok = (uint8_t)(p2ok && p4ok);             /* and post4 against both */
     }
     /* the vector unit: rows of 20 and 47 over 8 X rows, against the C dot */
     {
@@ -2951,7 +4377,7 @@ int pxn_selftest(int32_t *scratch)
 }
 int pxn_post2_in_use(void)
 {
-#if PXN_ASM
+#if PXN_HAND
     return pxn_post_f == pxn_post2_asm || pxn_post_f == pxn_post3_asm;
 #else
     return 0;
@@ -2962,10 +4388,11 @@ int pxn_fast_in_use(void) { return pxn_xf != 0; }
 int pxn_rdot_chosen(void) { return pxn_rd; }
 int pxn_rdq_in_use(void) { return pxn_rdq_on && pxn_rdq_f[6]; }
 int pxn_rdl_state(void) { return pxn_rdl_f[6] && pxn_rdl_f[15] && pxn_rdl_f[16] ? 1 + (pxn_rdl_on != 0) : 0; }
+int pxn_rdm_state(void) { return pxn_rdm_f[6] && pxn_rdm_f[15] ? 1 + (pxn_rdm_on != 0) : 0; }
 int pxn_rdq_checked(void) { return pxn_rdq_f[6] && pxn_rdq_f[15] && pxn_rdq_f[16]; }
 int pxn_rdot_in_use(void)
 {
-#if PXN_ASM
+#if PXN_HAND && !PXN_LEAN
     return pxn_rdot_f == pxn_rdot_asm;
 #else
     return 0;
@@ -2973,7 +4400,7 @@ int pxn_rdot_in_use(void)
 }
 int pxn_asm_in_use(void)
 {
-#if PXN_ASM
+#if PXN_HAND
     return pxn_dot3x4 == pxn_dot3x4_asm;
 #else
     return 0;
@@ -3151,7 +4578,8 @@ int pxn_vfast_macs(int v) { return 20 * (v == 1 ? 32 : v == 7 ? 200 : v >= 5 ? 5
     "\tr4 = 0\n\tr5 = 0\n\tr6 = 0\n\tr7 = 0\n\tr3 = 5\n\tr10 = 3\n\tr12 = 4\n\tr2 = r0\n\tr11 = r1\n"          \
     ".L" name ":\n\trep r11 {\n" body "\t}\n\tif (r11 != 0) goto .L" name "\n"                                  \
     "\t{pc, r15-r4} = [sp++]\n"
-__asm__("\t.text\n"
+#if !PXN_LEAN
+__asm__("\t.section .text.pxn_cold,\"ax\"\n"
         PXN_UB("pxn_ub_ld", "\tr3 = [r2++=4]\n")
         PXN_UB("pxn_ub_ldd", "\tr5_r4 = d[r2++=8]\n")
         PXN_UB("pxn_ub_ldm3", "\t{r6-r4} = [r2++]\n")
@@ -3173,12 +4601,13 @@ void pxn_ub_ld(const int32_t *, int), pxn_ub_ldd(const int32_t *, int), pxn_ub_l
     pxn_ub_fmac(const int32_t *, int), pxn_ub_rmac2(const int32_t *, int), pxn_ub_pnd(const int32_t *, int),
     pxn_ub_p2nd(const int32_t *, int), pxn_ub_p4dep(const int32_t *, int), pxn_ub_p4nd(const int32_t *, int);
 #endif
+#endif
 /* ticks for reps x n loops of `kind`: 0 load, 1 64-bit load, 2 3-word load, 3 store, 4 multiply-add (registers),
  * 5 multiply-add paired with a load, 6 multiply-add with its load, 7 two multiply-adds; buf: 1024 words. n: the
  * loop count used (written). 0 without hand code. */
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void))
 {
-#if PXN_ASM
+#if PXN_ASM && !PXN_LEAN
     static void (*const F[12])(const int32_t *, int) = {pxn_ub_ld, pxn_ub_ldd, pxn_ub_ldm3, pxn_ub_st,
                                                          pxn_ub_rmac, pxn_ub_pair, pxn_ub_fmac, pxn_ub_rmac2,
                                                          pxn_ub_pnd, pxn_ub_p2nd, pxn_ub_p4dep, pxn_ub_p4nd};
@@ -3238,7 +4667,7 @@ static int pxn_rings(pxn_model *m, int32_t *r0, unsigned n0, int32_t *r1, unsign
 int pxn_load(pxn_model *m, const float *w, int32_t *r0, unsigned n0, int32_t *r1, unsigned n1)
 {
     m->ready = 0;
-#if !PXN_ASM
+#if !PXN_HAND
     pxn_rdl_f[6] = pxn_rdl_f[15] = pxn_rdl_f[16] = pxn_rdl_c;   /* the PC: the one-call path, by the C routine */
 #endif
     for (int i = 0; i < PXN_NW; i++)
@@ -3390,6 +4819,10 @@ static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring
         const int32_t wc = w;
         if (N) { w += c; if (w == N->len) w = 0; }
         p.n = c;
+#if PXN_HAND
+        if (ring && pxn_p4on) pxn_post4_asm(&p);
+        else
+#endif
         pxn_post_f(&p);
         if (N && wc < PXN_MIR) pxn_mir(N->ring, N->len, wc, c);
         if (kick) pxn_kick();
@@ -3418,16 +4851,18 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
         /* each tap's first 4 frames, then 4 frames on per group: read straight on past the end (the mirrored frames),
          * the pointer brought back by the ring's length once past it (diagnostic 19: no position arithmetic per tap) */
         const int32_t *const end = ring + 3 * len;
+        int32_t s = w + f0 - (K - 1) * d;                /* the first tap; each next one d frames on (d < len) */
+        while (s < 0) s += len;
+        while (s >= len) s -= len;
         for (int k = 0; k < K; k++) {
-            int32_t s = w + f0 - (K - 1 - k) * d;
-            while (s < 0) s += len;
-            while (s >= len) s -= len;
             tp[k] = ring + 3 * s;
+            s += d;
+            if (s >= len) s -= len;
         }
         void (*const q)(const pxn_rdot *) = pxn_rdq_on && pxn_rdq_f[K] ? pxn_rdq_f[K] : K == 6 ? pxn_rdot6_f : pxn_rdot_f;
-        pxn_rdot j = {wr, tp, K, pxn_u + f0, pxn_z + 3 * f0, rows, n4 / 4, end, -3 * len * 4};
+        pxn_rdot j = {wr, tp, K, pxn_u + f0, pxn_z + 3 * f0, rows, n4 >> 2, end, -3 * len * 4};
         if (pxn_rdl_on && pxn_rdl_f[K] && pxn_pc != 4) {  /* the whole block in one call (no unit to kick) */
-            if (!pxn_pskip) pxn_rdl_f[K](&j);
+            if (!pxn_pskip) (pxn_rdm_on && rows == PXN_C && pxn_rdm_f[K] ? pxn_rdm_f[K] : pxn_rdl_f[K])(&j);
         } else
         for (int g = 0; g < n4; g += 4) {
             if (!pxn_pskip) q(&j);
@@ -3579,6 +5014,18 @@ static void pxn_layers_pipe(pxn_model *m, int fa, int fb, int c)
  * CPU1 the last n-hs frames, waiting before layer i until CPU0 has posted layer i-1 (frame t needs only frames t and
  * earlier). The lateness the firmware measured (ticks) gives CPU0 more frames (hs up to 28) in the first blocks:
  * frames moved = lateness / 2 per-frame costs. pxn_serve runs on CPU1 (after POST) until pxn_srv_end. */
+/* v40.2 diagnostic, built only with PXN_DEV (a development build): ticks the cores wait for each other in the
+ * pipeline: [0] CPU0 for CPU1 at the end of a block, [1] CPU1 for CPU0 before a layer, [2] CPU0 after the layers (the
+ * head, rings and output), [3] blocks counted */
+#ifdef PXN_DEV
+extern uint32_t (*px_clock)(void);
+volatile uint32_t pxn_w[4];
+#define PXN_DCLK() (px_clock ? px_clock() : 0u)
+#define PXN_DEVW(k, t) (pxn_w[k] += PXN_DCLK() - (t))
+#else
+#define PXN_DCLK() 0u
+#define PXN_DEVW(k, t) ((void)(t))
+#endif
 static struct {
     pxn_model *m;
     volatile int32_t seq, hs, n, mdone, hlay, hdone, stop;   /* mdone: layers CPU0 has posted; hlay: layers CPU1 has */
@@ -3627,6 +5074,9 @@ void pxn_serve(void)                                     /* CPU1 */
         const int32_t q = pxn_sv.seq;
         PXN_SYNC();
         for (int i = 0; i < PXN_NL; i++) {
+#ifdef PXN_DEV
+            if (pxn_sv.mdone < i) { const uint32_t t0 = PXN_DCLK(); while (pxn_sv.mdone < i) PXN_SYNC(); PXN_DEVW(1, t0); }
+#endif
             while (pxn_sv.mdone < i) PXN_SYNC();
             pxn_range_cpu(pxn_sv.m, i, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1);
             PXN_SYNC();
@@ -3658,6 +5108,7 @@ static void pxn_srv_block(pxn_model *m, int n)           /* CPU0: the layers of 
         pxn_sv.mdone = i + 1;
         PXN_SSTEP(0);
     }
+    const uint32_t tw0 = PXN_DCLK();
     for (uint32_t k = 0; pxn_sv.hdone != q; ) {
         PXN_SYNC();
         PXN_SSTEP(1);
@@ -3668,6 +5119,10 @@ static void pxn_srv_block(pxn_model *m, int n)           /* CPU0: the layers of 
             pxn_sv_on = 0;
         }
     }
+    PXN_DEVW(0, tw0);
+#ifdef PXN_DEV
+    pxn_w[3]++;
+#endif
 }
 static void pxn_block(pxn_model *m, const float *in, float *out, int n)
 {
@@ -3694,7 +5149,9 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
         pxn_x = xb;
     }
     if (pxn_pt) pxn_prof[0] += PXN_T() - tb;
-    if (h && n == PXN_N && pxn_sv_on && !pipe) pxn_srv_block(m, n);   /* two cores, CPU1 serving (the pipeline) */
+    const int srv = h && n == PXN_N && pxn_sv_on && !pipe;
+    uint32_t tsv = 0;
+    if (srv) { pxn_srv_block(m, n); tsv = PXN_DCLK(); }   /* two cores, CPU1 serving (the pipeline) */
     else if (h && n == PXN_N) {                          /* two cores */
         pxn_hstart(m, h);
 #if PXN_VQON
@@ -3736,6 +5193,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
     const float g = m->out_gain;
     for (int f = 0; f < n; f++) out[f] = (float)pxn_z[3 * f] * g;
     pxn_x = pxn_xs;
+    if (srv) PXN_DEVW(2, tsv);
     if (pxn_pt) {
         const uint32_t te = PXN_T();
         pxn_prof[5] += te - tb;
@@ -3752,11 +5210,13 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
     int best = 0;
     for (int k = 0; k < PXN_MODES; k++) t[k] = 0;
     if (!m->ready) return pxn_mode_v;
-    for (int rd = 3; rd >= 0; rd--) {                    /* the CPU's way: rdl, rdq, rdot or gathered X rows (mode 0) */
+    for (int rd = 4; rd >= 0; rd--) {                    /* the CPU's way: rdm, rdl, rdq, rdot or gathered X rows (mode 0) */
+        if (rd == 4 && !pxn_rdm_f[6]) { pxn_rdt[4] = 0; continue; }
         if (rd == 3 && !pxn_rdl_f[6]) { pxn_rdt[3] = 0; continue; }
         pxn_rd = (uint8_t)(rd > 0);
         pxn_rdq_on = (uint8_t)(rd >= 2);
-        pxn_rdl_on = (uint8_t)(rd == 3);
+        pxn_rdl_on = (uint8_t)(rd >= 3);
+        pxn_rdm_on = (uint8_t)(rd == 4);
         pxn_mode_v = 0;
         pxn_reset(m);
         uint32_t r = 4321u, dt = 0;
@@ -3770,15 +5230,19 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
     }
     {
         int b = 0;
-        for (int rd = 1; rd < 4; rd++) if (pxn_rdt[rd] && pxn_rdt[rd] < pxn_rdt[b]) b = rd;
+        for (int rd = 1; rd < 5; rd++) if (pxn_rdt[rd] && pxn_rdt[rd] < pxn_rdt[b]) b = rd;
         pxn_rd = (uint8_t)(b > 0);
         pxn_rdq_on = (uint8_t)(b >= 2);
-        pxn_rdl_on = (uint8_t)(b == 3);
+        pxn_rdl_on = (uint8_t)(b >= 3);
+        pxn_rdm_on = (uint8_t)(b == 4);
         pxn_sv_c = (int32_t)(pxn_rdt[b] / (8u * PXN_N));  /* one frame through every layer, one core (ticks) */
     }
-#if PXN_ASM
-    if (pxn_p3ok) for (int v = 0; v < 2; v++) {          /* post2 or post3: the faster */
-        pxn_post_f = v ? pxn_post3_asm : pxn_post2_asm;
+#if PXN_HAND
+    pxn_p4on = 0;
+    if (pxn_p3ok) for (int v = 0; v < 3; v++) {          /* post2, post3, post4 (from the ring): the fastest */
+        if (v == 2 && !pxn_p4ok) { pxn_ptt[2] = 0; break; }
+        pxn_post_f = v == 1 ? pxn_post3_asm : pxn_post2_asm;
+        pxn_p4on = (uint8_t)(v == 2);
         pxn_mode_v = 0;
         pxn_reset(m);
         uint32_t r = 4321u, dt = 0;
@@ -3791,6 +5255,7 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
         pxn_ptt[v] = dt;
     }
     if (pxn_p3ok) pxn_post_f = pxn_ptt[1] < pxn_ptt[0] ? pxn_post3_asm : pxn_post2_asm;
+    pxn_p4on = (uint8_t)(pxn_p3ok && pxn_p4ok && pxn_ptt[2] && pxn_ptt[2] < pxn_ptt[0] && pxn_ptt[2] < pxn_ptt[1]);
 #endif
     for (int pass = 0; pass < 2; pass++) {               /* the profile (mode 0, the chosen way), then without kernel */
         uint32_t keep[9];
@@ -3830,6 +5295,52 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
     pxn_mode_v = best;
     pxn_reset(m);
     return best;
+}
+
+/* v40.2: the hand routines against C on the whole network: 64 blocks of a test signal through the model as it runs in
+ * `mode` (the routines the start-up timing chose), then again with every routine in C (mode 0), each block's output
+ * hashed bit for bit. Returns the blocks whose hashes differ (0: the same output), or -1 if the model is not loaded or
+ * the mode is not available. The model is reset after; the routines and mode in use are put back. */
+int pxn_equiv(pxn_model *m, int mode)
+{
+    float in[PXN_N], out[PXN_N];                         /* (on the stack: it runs at boot, or on the PC) */
+    uint32_t hb[64];
+    if (!m->ready || mode < 0 || mode >= PXN_MODES || (PXN_MC[mode].h && !pxn_hrun) || PXN_MC[mode].pipe || mode == 1)
+        return -1;
+    const int mv = pxn_mode_v;
+    const uint8_t rd = pxn_rd, rq = pxn_rdq_on, rl = pxn_rdl_on, rm = pxn_rdm_on, p4 = pxn_p4on;
+    void (*const d3)(const pxn_dot *) = pxn_dot3x4, (*const d1)(const pxn_dot *) = pxn_dot1, (*const po)(const pxn_post *) = pxn_post_f;
+    void (*const gc)(int32_t *, const int32_t *, int, int) = pxn_gcopy;
+    void (*const r1)(const pxn_rdot *) = pxn_rdot_f, (*const r6)(const pxn_rdot *) = pxn_rdot6_f;
+    void (*l6)(pxn_rdot *) = pxn_rdl_f[6], (*l15)(pxn_rdot *) = pxn_rdl_f[15], (*l16)(pxn_rdot *) = pxn_rdl_f[16];
+    int diff = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) {                                      /* every routine in C, one core */
+            pxn_mode_v = 0; pxn_rd = 1; pxn_rdq_on = 0; pxn_rdl_on = 1; pxn_rdm_on = 0; pxn_p4on = 0;
+            pxn_dot3x4 = pxn_dot3x4_c; pxn_dot1 = pxn_dot1_c; pxn_post_f = pxn_post_c; pxn_gcopy = pxn_gcopy_c;
+            pxn_rdot_f = pxn_rdot6_f = pxn_rdot_c;
+            pxn_rdl_f[6] = pxn_rdl_f[15] = pxn_rdl_f[16] = pxn_rdl_c;
+        } else pxn_mode_v = mode;
+        pxn_reset(m);
+        uint32_t r = 2024u;
+        for (int b = 0; b < 64; b++) {
+            for (int f = 0; f < PXN_N; f++) {
+                r = r * 1103515245u + 12345u;
+                in[f] = (float)((int32_t)r >> 8) * (0.5f / 8388608.0f) * (float)(b % 8 + 1) * 0.125f;
+            }
+            pxn_block(m, in, out, PXN_N);
+            uint32_t h = 2166136261u;
+            const uint8_t *q = (const uint8_t *)out;
+            for (unsigned i = 0; i < sizeof out; i++) h = (h ^ q[i]) * 16777619u;
+            if (!pass) hb[b] = h;
+            else if (hb[b] != h) diff++;
+        }
+    }
+    pxn_mode_v = mv; pxn_rd = rd; pxn_rdq_on = rq; pxn_rdl_on = rl; pxn_rdm_on = rm; pxn_p4on = p4;
+    pxn_dot3x4 = d3; pxn_dot1 = d1; pxn_post_f = po; pxn_gcopy = gc; pxn_rdot_f = r1; pxn_rdot6_f = r6;
+    pxn_rdl_f[6] = l6; pxn_rdl_f[15] = l15; pxn_rdl_f[16] = l16;
+    pxn_reset(m);
+    return diff;
 }
 
 void pxn_process(pxn_model *m, const float *in, float *out, int n)

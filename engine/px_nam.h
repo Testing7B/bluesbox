@@ -100,14 +100,19 @@ int pxn_rdot_chosen(void);              /* the CPU's layers: 1 rdot, 0 gathered 
 uint32_t pxn_rdot_ticks(int rd);        /* that timing, mode 0: 0 gathered, 1 rdot, 2 rdq (load-ahead rdot) */
 uint32_t pxn_prof_ticks(int k);
 int pxn_rdl_state(void);              /* rdl (a layer's groups in one call): 0 failed its check, 1 slower, 2 in use */
+int pxn_rdm_state(void);              /* rdm (rdl two rows at a time): 0 failed its check, 1 slower, 2 in use */
 uint32_t pxn_post_ticks(int v);        /* mode 0 timed with post2 (0) and post3 (1) */
 int pxn_post3_state(void);             /* 0 post3 failed its check, 1 slower than post2, 2 in use */        /* where mode 0's time goes (pxn_tune): see px_nam.c */
+int pxn_post4_state(void);             /* 0 post4 failed its check, 1 slower, 2 in use (layers read from their rings) */
 int pxn_rdq_in_use(void);
 int pxn_rdq_checked(void);              /* all three passed the start-up check */
 uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int reps);
 uint32_t pxn_bench_vfast(int32_t *buf, uint32_t (*ticks)(void), int v);   /* v 0..7, see px_nam.c */
 int pxn_vfast_macs(int v);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
+/* the hand routines against C on the whole network (64 blocks, mode `mode` against all C, mode 0): the blocks whose
+ * output differs by a bit, -1 if not available (see px_nam.c) */
+int pxn_equiv(pxn_model *m, int mode);
 /* clears the histories (silence in) */
 void pxn_reset(pxn_model *m);
 /* n frames (any n): in -> out, float, in place allowed */

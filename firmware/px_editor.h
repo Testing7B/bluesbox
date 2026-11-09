@@ -241,6 +241,10 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         for (k = 0; k < 2u; k++) ed_b(ed_stat(k) > 127u ? 127u : ed_stat(k));   /* v40.1: the peaks, the late blocks, the clips */
         for (k = 2; k < 4u; k++) { ed_b(ed_stat(k)); ed_b(ed_stat(k) >> 7); }
         for (k = 4; k < ED_STATS; k++) { ed_b(ed_stat(k) >> 2); ed_b(ed_stat(k) >> 9); }   /* free bytes / 4: the stacks (BLE image: its heap, its tasks) */
+#ifdef ED_PROF
+        ed_b(ED_PROF);                                 /* v40.2: where the DSP time goes (ed_prof), after their count */
+        for (k = 0; k < ED_PROF; k++) { ed_b(ed_prof(k)); ed_b(ed_prof(k) >> 7); }
+#endif
         break;
     case ED_NAM_LIST: {                                /* v37: every model, factory first, then the user slots */
         char nm[12];

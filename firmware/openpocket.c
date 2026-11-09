@@ -568,6 +568,18 @@ static uint32_t ed_stat(uint32_t k)                    /* PING, after the flags 
          : 0u;
 #endif
 }
+/* v40.2: PING's profile (14 bits each): each block's and the NAM network's share of an audio block's time over the last
+ * second (%, a_pf), the network's way of running (pxn_mode), then from its start-up timing (0.1 % of real time, the
+ * network alone): each way of running (px_nam_tuned), and where one core's time goes (pxn_prof_ticks) */
+#define ED_PROF (PX_NBLK + 2u + PXN_MODES + 9u)
+static uint32_t ed_prof(uint32_t k)
+{
+    if (k <= PX_NBLK) return a_pf[k];
+    if (k == PX_NBLK + 1u) return (uint32_t)pxn_mode();
+    k -= PX_NBLK + 2u;
+    const uint32_t t = k < PXN_MODES ? px_nam_tuned((int)k) : pxn_prof_ticks((int)(k - PXN_MODES));
+    return t * 10u / (A_BUDGET * 2u / 100u);           /* (ticks for 256 frames: two audio blocks) */
+}
 static void nm_changed(uint32_t s)   /* v37: a user model was written or erased: the engine reloads it if it plays it */
 {
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;

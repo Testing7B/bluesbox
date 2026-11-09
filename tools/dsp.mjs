@@ -24,12 +24,25 @@ function parse(argv) {
   return a;
 }
 
+// the engine's blocks (engine/px_dsp.h PX_B_*), then the NAM network
+const PROF = ["GATE", "COMP", "PITCH", "SFX", "DRIVE", "AMP", "CAB", "EQ", "MOD", "DELAY", "REVERB", "SYN", "NAM"];
+
 // PING's reply: load, flags, then (v40.1) peak, peak since boot, late blocks and clips (14 bits each, wrapping)
 export function parsePing(r) {
   const p = { load: r[0], bypass: !!(r[1] & 1), secondCore: !!(r[1] & 2) };
   if (r.length >= 8) Object.assign(p, { peak: r[2], peakAll: r[3], xrun: r[4] | r[5] << 7, clip: r[6] | r[7] << 7 });
   if (r.length >= 12) Object.assign(p, { stackFree: (r[8] | r[9] << 7) * 4, irqStackFree: (r[10] | r[11] << 7) * 4 });
-  if (r.length >= 16) Object.assign(p, { bleHeapFree: (r[12] | r[13] << 7) * 4, bleTaskStackFree: (r[14] | r[15] << 7) * 4 });
+  // v40.2: then a count and that many bytes: each block's share of the block time (%, in the engine's block order) and
+  // the NAM network's, then the network's way of running (its mode)
+  const base = [12, 16].find((b) => r.length > b && r.length === b + 1 + 2 * r[b]);
+  if ((base ?? r.length) >= 16) Object.assign(p, { bleHeapFree: (r[12] | r[13] << 7) * 4, bleTaskStackFree: (r[14] | r[15] << 7) * 4 });
+  if (base) {
+    const f = []; for (let i = base + 1; i + 1 < r.length; i += 2) f.push(r[i] | r[i + 1] << 7);
+    p.prof = f.slice(0, PROF.length); p.namMode = f[PROF.length];
+    p.namModes = f.slice(PROF.length + 1, PROF.length + 12).map((v) => v / 10);
+    p.namParts = f.slice(PROF.length + 12, PROF.length + 21).map((v) => v / 10);
+    p.extra = f.slice(PROF.length + 21);
+  }
   return p;
 }
 const wrap14 = (a, b) => (b - a + 16384) % 16384;
@@ -59,7 +72,8 @@ export async function run(ed, args, sleep) {
       out.push({ slot: p.slot + 1, name: p.name, load: b.load, peak: b.peak ?? max, bypass: b.bypass || a.bypass, secondCore: b.secondCore,
                  xrun: b.xrun === undefined ? null : wrap14(a.xrun, b.xrun), clip: b.clip === undefined ? null : wrap14(a.clip, b.clip),
                  stackFree: b.stackFree ?? null, irqStackFree: b.irqStackFree ?? null,
-                 bleHeapFree: b.bleHeapFree ?? null, bleTaskStackFree: b.bleTaskStackFree ?? null });
+                 bleHeapFree: b.bleHeapFree ?? null, bleTaskStackFree: b.bleTaskStackFree ?? null,
+                 prof: b.prof ?? null, namMode: b.namMode ?? null, namModes: b.namModes ?? null, namParts: b.namParts ?? null, extra: b.extra ?? null });
     }
   } finally { await ed.select(was).catch(() => {}); }
   return out;
@@ -87,7 +101,19 @@ export async function main(argv, { access, say = console.log } = {}) {
       say("slot name           load  peak  late  clip  cores  bypass");
       for (const r of rows)
         say(`${String(r.slot).padStart(4)} ${r.name.padEnd(14)} ${String(r.load).padStart(4)}% ${String(r.peak).padStart(4)}% ${String(r.xrun ?? "?").padStart(5)} ${String(r.clip ?? "?").padStart(5)}  ${r.secondCore ? "2   " : "1   "}   ${r.bypass ? "BYP" : "-"}`);
+      if (rows.some((r) => r.prof)) {
+        say("where the time goes (% of a block, last second):");
+        for (const r of rows) if (r.prof) {
+          const parts = r.prof.map((v, i) => [PROF[i] ?? `#${i}`, v]).filter(([, v]) => v);
+          say(`${String(r.slot).padStart(4)} ${r.name.padEnd(14)} ${parts.map(([n, v]) => `${n} ${v}`).join("  ")}  (mode ${r.namMode})`);
+        }
+      }
       const last = rows[rows.length - 1];
+      if (last && last.namModes) {
+        say(`NAM network at start-up, % of real time by mode: ${last.namModes.map((v, i) => `${i}:${v}`).join(" ")}`);
+        say(`  one core (mode 0) parts: ${last.namParts.join(" ")}`);
+        if (last.extra.length) say(`  extra: ${last.extra.join(" ")}`);
+      }
       if (last && last.stackFree !== null) say(`stacks never used since boot: main ${last.stackFree} B, interrupts ${last.irqStackFree} B`);
       if (last && last.bleHeapFree !== null) say(`Bluetooth: heap lowest free ${last.bleHeapFree} B, deepest task stack never used ${last.bleTaskStackFree} B`);
     }

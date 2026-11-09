@@ -1203,6 +1203,15 @@ int px_nam_check(uint32_t (*ticks)(void))
     }
     return ok;
 }
+/* v40.2: the hand routines against C on the first factory model (pxn_equiv): blocks that differ, -1 if not available */
+int px_nam_equiv(int mode)
+{
+    float lv;
+    if (nam_load(0, &lv)) return -1;
+    const int d = pxn_equiv(&px_nam_m, mode);
+    px_nam_m.ready = 0;
+    return d;
+}
 uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < PXN_MODES ? px_nam_tt[mode] : 0; }
 /* the network will run on two cores in this engine's next blocks: the caller must run px_engine_process on the core
  * that hands jobs to the other one (pxn_set_helper) */
