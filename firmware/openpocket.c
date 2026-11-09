@@ -657,7 +657,7 @@ static void app_main(void)
     }
 #endif
 #if DSP_CPU1
-    fm1_cpu1_bar_build(27u);             /* a new build gives the 2nd core another chance */
+    fm1_cpu1_bar_build(402u);            /* a new build gives the 2nd core another chance (v40.2: its NAM routines changed) */
     fm1_cpu1_start();                    /* at boot, before audio and interrupts (Felucca) */
 #endif
     lcd_init();
@@ -763,7 +763,10 @@ static void app_main(void)
 #else
     if (pxc_status == PXC_READY) px_nam_fast((void *)PXC_BEGIN, PXC_END - PXC_BEGIN);   /* the vector unit's inputs */
 #endif
-    px_nam_check(b_ticks);               /* v37: the NAM routines by hand checked, its fastest way to run chosen */
+    /* v37: the NAM routines by hand checked, its fastest way to run chosen. v40.2: not after a failed boot (safe mode,
+     * the DSP off anyway): a hand routine that faults in its check then costs one boot, not every one, and the pedal
+     * comes up with USB-MIDI for the installer's rescue (it ran C until the next boot) */
+    if (!safe) px_nam_check(b_ticks);
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     leds_init();                         /* the button lights: all off loaded, then on (PC7 low), as stock */
     op_stage(ST_UI, "SCREEN...");
