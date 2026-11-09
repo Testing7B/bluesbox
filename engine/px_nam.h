@@ -110,6 +110,22 @@ uint32_t pxn_bench_part(int32_t *scratch, uint32_t (*ticks)(void), int part, int
 uint32_t pxn_bench_vfast(int32_t *buf, uint32_t (*ticks)(void), int v);   /* v 0..7, see px_nam.c */
 int pxn_vfast_macs(int v);
 uint32_t pxn_bench_ops(int kind, int32_t *buf, int reps, int *n, uint32_t (*ticks)(void));
+/* v40.2: two cores by layers (see px_nam.c): CPU0 queues each block through layers 0..s (pxn_lp_a, PXN_N frames), CPU1
+ * finishes the oldest queued block (pxn_lp_b: 1 = one finished, 0 = none waiting), writing its output where pxn_lp_a
+ * was told. Memory: PXN_LP_BYTES from the caller (pxn_set_lp); pxn_lp_ok() says whether it can run in the mode chosen;
+ * pxn_lp_reset() after the network is reset or loaded (no block in progress); pxn_lp_split(s) sets s for the next
+ * blocks (0..PXN_NL-1) */
+#define PXN_LPQ 6
+#define PXN_LP_BYTES ((unsigned)PXN_LPQ * (16u + 4u * (PXN_N + 4u + 2u * PXN_N * PXN_C)) + 4u * (PXN_N * PXN_C + 4u + PXN_NL) + 8u)
+void pxn_set_lp(void *base, unsigned bytes);
+int pxn_lp_ok(void);
+void pxn_lp_reset(void);
+void pxn_lp_split(int s);
+int pxn_lp_split_now(void);
+uint32_t pxn_lp_queued(void);
+void pxn_lp_a(pxn_model *m, const float *in, float *out);
+int pxn_lp_b(pxn_model *m);
+int pxn_lp_equiv(pxn_model *m);          /* against one core, the other core serving: blocks that differ */
 /* the hand routines against C on the whole network (64 blocks, mode `mode` against all C, mode 0): the blocks whose
  * output differs by a bit, -1 if not available (see px_nam.c) */
 int pxn_equiv(pxn_model *m, int mode);

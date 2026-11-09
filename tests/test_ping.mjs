@@ -28,6 +28,18 @@ check("v40.2 release reply: the profile after its count, no Bluetooth figures", 
   assert.equal(p.namMode, 5);
   assert.equal(p.namModes.length, 11); assert.equal(p.namParts.length, 9);
 });
+check("v40.2 reply with the layer split's figure (0 = off, else 1 + CPU0's last layer)", () => {
+  const with_ = (v) => [...base, 35, ...prof(34).slice(1), ...two(v)];
+  assert.equal(parsePing(with_(12)).split, 11);
+  assert.equal(parsePing(with_(0)).split, null);
+  assert.equal(parsePing(with_(12)).namMode, 5);
+  assert.deepEqual(parsePing(with_(12)).extra, []);
+});
+check("v40.2 reply with each core's load and peak after the split", () => {
+  const p = parsePing([...base, 39, ...prof(34).slice(1), ...two(12), ...two(55), ...two(57), ...two(63), ...two(66)]);
+  assert.equal(p.split, 11); assert.equal(p.cpu0, 55); assert.equal(p.cpu1, 57); assert.equal(p.cpu0Peak, 63); assert.equal(p.cpu1Peak, 66);
+  assert.deepEqual(p.extra, []);
+});
 check("v40.2 Bluetooth reply: its heap and tasks, then the profile", () => {
   const p = parsePing([...ble, ...prof(35)]);
   assert.equal(p.bleHeapFree, 14152); assert.equal(p.prof.length, 13); assert.equal(p.namMode, 5);

@@ -1212,10 +1212,36 @@ int px_nam_equiv(int mode)
     px_nam_m.ready = 0;
     return d;
 }
+/* v40.2: the layer split against one core on the first factory model (pxn_lp_equiv): blocks that differ, -1 n/a */
+int px_nam_lp_equiv(void)
+{
+    float lv;
+    if (nam_load(0, &lv)) return -1;
+    const int d = pxn_lp_equiv(&px_nam_m);
+    px_nam_m.ready = 0;
+    return d;
+}
 uint32_t px_nam_tuned(int mode) { return mode >= 0 && mode < PXN_MODES ? px_nam_tt[mode] : 0; }
 /* the network will run on two cores in this engine's next blocks: the caller must run px_engine_process on the core
  * that hands jobs to the other one (pxn_set_helper) */
 int px_nam_dual(const px_engine *e) { return pxn_dual() && e->amp_nam && e->cur.on[PX_B_AMP] && px_nam_m.ready; }
+void px_nam_lp_mem(void *base, unsigned bytes) { pxn_set_lp(base, bytes); }
+int px_nam_lp(px_engine *e, int on)
+{
+    e->nam_lp = (uint8_t)(on && pxn_lp_ok());
+    pxn_lp_reset();
+    return e->nam_lp;
+}
+int px_nam_lp_b(px_engine *e)
+{
+    const uint32_t t0 = px_clock ? px_clock() : 0u;
+    const int r = pxn_lp_b(&px_nam_m);
+    if (r && px_clock) e->nam_pfb += px_clock() - t0;
+    return r;
+}
+uint32_t px_nam_lp_queued(void) { return pxn_lp_queued(); }
+void px_nam_lp_split(int s) { pxn_lp_split(s); }
+int px_nam_lp_split_now(void) { return pxn_lp_split_now(); }
 void px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void)) { pxn_set_helper(run, wait); }
 void px_nam_fast(void *base, unsigned bytes) { pxn_set_fast((int32_t *)base, bytes); }
 /* every model is trimmed to -20 LUFS on the DI clip (its level trim); this puts NAM + the 1x12 at GAIN noon at the fitted
@@ -3032,7 +3058,11 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     }
     if (part == PX_PART_NAM) {
         const uint32_t t0 = px_clock ? px_clock() : 0u;
-        nam_run(e, out, n, tr[ip_amp]);
+        if (e->nam_lp && n % PXN_N == 0) {             /* v40.2: queued for the layer split; the rest in PX_PART_POST */
+            const float gi = e->nam_in_g;
+            for (int k = 0; k < n; k++) out[k] *= gi;
+            for (int o = 0; o < n; o += PXN_N) pxn_lp_a(&px_nam_m, out + o, out + o);
+        } else nam_run(e, out, n, tr[ip_amp]);
         if (px_clock) e->pf[PX_NBLK] += px_clock() - t0;
         return;
     }
@@ -3059,6 +3089,12 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             { float y = x - e->dc_x1 + 0.9995f * e->dc_y1; e->dc_x1 = x; e->dc_y1 = y; x = y; }
         } else x = part == PX_PART_POST ? in[k] : e->nam_buf[k];
         xb[k] = x;
+    }
+    if (pass == 1 && part == PX_PART_POST && e->nam_lp) {   /* v40.2: nam_run's end (the network itself ran split) */
+        const float go = e->nam_out_g * tr[ip_amp];
+        for (int k = 0; k < n; k++) xb[k] *= go;
+        bq_block2(&e->ts_low, &e->ts_mid, xb, n);
+        bq_block(&e->ts_high, xb, n);
     }
     for (int s = s_lo; s < s_hi; s++) {
         const int sblk = st[s];

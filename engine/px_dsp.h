@@ -101,8 +101,18 @@ int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines 
                                                          fastest way to run chosen (1 = hand routines in use) */
 uint32_t    px_nam_tuned(int mode);                   /* that timing: ticks for 256 frames, by mode (0 = n/a) */
 int         px_nam_equiv(int mode);                   /* the hand routines against C, whole network: blocks that differ */
+int         px_nam_lp_equiv(void);                    /* v40.2: the layer split against one core, both cores: blocks that differ */
 void        px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));   /* the other core */
 void        px_nam_fast(void *base, unsigned bytes);   /* memory away from the CPUs' RAM, for the vector unit (before px_nam_check) */
+/* v40.2: the network split between the cores by layers (engine/px_nam.c pxn_lp_*), for the two-core pipeline: memory
+ * (px_nam_lp_mem, PX_NAM_LP_BYTES), on or off for this engine (px_nam_lp: on only if it can run; the queue emptied),
+ * the other core's part (px_nam_lp_b: 1 = a block finished; both declared after px_engine), blocks waiting for it,
+ * CPU0's share (layers 0..s) */
+#define     PX_NAM_LP_BYTES PXN_LP_BYTES
+void        px_nam_lp_mem(void *base, unsigned bytes);
+uint32_t    px_nam_lp_queued(void);
+void        px_nam_lp_split(int s);
+int         px_nam_lp_split_now(void);
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
 /* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
  * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */
@@ -249,8 +259,15 @@ typedef struct {
     uint16_t wl_n[2][2], wl_rd[2], wl_p[2];
     float wl_dlag;
     uint32_t wl_late, wl_pf[2];                        /* wet blocks cut short (out of time); wet time per lane (ticks) */
+    /* v40.2: the NAM network split between the cores by layers (px_nam_lp): its PX_PART_NAM queues the blocks, the other
+     * core finishes them (px_nam_lp_b), and PX_PART_POST applies the network's output gain and tone first; the other
+     * core's network time (ticks) */
+    uint8_t nam_lp;
+    uint32_t nam_pfb;
 } px_engine;
 int         px_nam_dual(const px_engine *e);          /* 1 = its NAM runs on two cores: process it on the job-giving core */
+int         px_nam_lp(px_engine *e, int on);          /* v40.2: the layer split on (if it can run) or off */
+int         px_nam_lp_b(px_engine *e);                /* v40.2: the other core's part of the oldest queued block */
 
 void px_engine_init(px_engine *e, float sr);
 void px_engine_set(px_engine *e, const px_preset_t *p);

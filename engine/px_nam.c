@@ -51,6 +51,11 @@ int pxn_post4_state(void) { return pxn_p4ok ? 1 + (pxn_p4on != 0) : 0; }
 uint32_t pxn_prof_ticks(int k) { return k >= 0 && k < 9 ? pxn_prof[k] : 0; }
 static int32_t pxn_z[PXN_N * PXN_C + 4], pxn_hs[PXN_N * PXN_C];
 static int32_t pxn_u[PXN_N + 4];                        /* the block's input (Q20), for rdot */
+/* v40.2: a block's scratch as a layer uses it: z (its rows' sums), u (the block's input, Q20), hs (the head sums), and q:
+ * when not 0, the layer's output goes there (3 words a frame) instead of the next layer's ring (the layer split's
+ * hand-over between the cores, pxn_lp_*). The one-core and frame-split ways use pxn_sc0. */
+typedef struct { int32_t *z; const int32_t *u; int32_t *hs; int32_t *q; } pxn_sc;
+static const pxn_sc pxn_sc0 = {pxn_z, pxn_u, pxn_hs, 0};
 static const int32_t *pxn_tpt[2][PXN_HK];               /* rdot's tap tables, one per core */
 
 /* dot: z[3f] = (w . x_f) >> 24 for ng frames (dot4: ng groups of 4 frames), x_f the X rows sb bytes apart.
@@ -4021,7 +4026,8 @@ static void (*pxn_rdot_f)(const pxn_rdot *) = pxn_rdot_c;
 static void (*pxn_rdot6_f)(const pxn_rdot *) = pxn_rdot_c;   /* for 6 taps */
 static void (*pxn_rdq_f[PXN_HK + 1])(const pxn_rdot *);       /* by tap count: the load-ahead routines, if checked */
 static void (*pxn_rdl_f[PXN_HK + 1])(pxn_rdot *);             /* by tap count: rdl, if checked */
-static void (*pxn_rdm_f[PXN_HK + 1])(pxn_rdot *);             /* by tap count: rdm (3 rows), if checked */
+static void (*pxn_rdm_f[2])(pxn_rdot *);                      /* rdm (3 rows) for 6 and 15 taps, if checked */
+#define PXN_RDM(K) pxn_rdm_f[(K) == 15]                       /* (K: 6 or 15, the 3-row layers) */
 
 /* ---- the chip's vector unit (in its FFT block, 0x1EE0400): dot products in hardware ----
  * One command computes nloop dot products of nlen 32-bit pairs, z = sum(y * x) >> q, the x, y and z addresses moving by
@@ -4320,7 +4326,7 @@ int pxn_selftest(int32_t *scratch)
                 if (memcmp(PXN_T_O(s, 0), PXN_T_O(s, 1), 64 * 4) || j.u != c.u || j.z - PXN_T_O(s, 1) != c.z - PXN_T_O(s, 0))
                     mok = 0;
             }
-            pxn_rdm_f[QK[q]] = mok && pxn_rdl_f[QK[q]] ? M[q] : 0;
+            pxn_rdm_f[q] = mok && pxn_rdl_f[QK[q]] ? M[q] : 0;
         }
     }
     if (ok) {
@@ -4388,7 +4394,7 @@ int pxn_fast_in_use(void) { return pxn_xf != 0; }
 int pxn_rdot_chosen(void) { return pxn_rd; }
 int pxn_rdq_in_use(void) { return pxn_rdq_on && pxn_rdq_f[6]; }
 int pxn_rdl_state(void) { return pxn_rdl_f[6] && pxn_rdl_f[15] && pxn_rdl_f[16] ? 1 + (pxn_rdl_on != 0) : 0; }
-int pxn_rdm_state(void) { return pxn_rdm_f[6] && pxn_rdm_f[15] ? 1 + (pxn_rdm_on != 0) : 0; }
+int pxn_rdm_state(void) { return pxn_rdm_f[0] && pxn_rdm_f[1] ? 1 + (pxn_rdm_on != 0) : 0; }
 int pxn_rdq_checked(void) { return pxn_rdq_f[6] && pxn_rdq_f[15] && pxn_rdq_f[16]; }
 int pxn_rdot_in_use(void)
 {
@@ -4757,14 +4763,14 @@ static void pxn_gather(const int32_t *ring, int32_t len, int32_t w, int K, int d
     }
 }
 /* rows weight rows (1, or the 3 of a layer, contiguous) over X rows f0 .. f0+n-1 -> pxn_z, by the CPU */
-static void pxn_rows_cpu(const int32_t *w, int T, int rows, int f0, int n)
+static void pxn_rows_cpu(const int32_t *w, int T, int rows, int f0, int n, int32_t *z)
 {
     const int n4 = rows == PXN_C ? n & ~3 : 0;
-    pxn_dot d = {w, pxn_x + f0 * PXN_S, T, PXN_S * 4, pxn_z + 3 * f0, n4 >> 2};
+    pxn_dot d = {w, pxn_x + f0 * PXN_S, T, PXN_S * 4, z + 3 * f0, n4 >> 2};
     if (n4) pxn_dot3x4(&d);
     if (n4 < n)
         for (int o = 0; o < rows; o++) {
-            d.w = w + o * T; d.x = pxn_x + (f0 + n4) * PXN_S; d.z = pxn_z + 3 * (f0 + n4) + o; d.ng = n - n4;
+            d.w = w + o * T; d.x = pxn_x + (f0 + n4) * PXN_S; d.z = z + 3 * (f0 + n4) + o; d.ng = n - n4;
             pxn_dot1(&d);
         }
 }
@@ -4780,7 +4786,7 @@ static void pxn_rows(const pxn_model *m, const int32_t *w, int T, int rows, int 
 #else
     (void)m;
 #endif
-    pxn_rows_cpu(w, T, rows, 0, n);
+    pxn_rows_cpu(w, T, rows, 0, n, pxn_z);
 }
 /* a ring's first PXN_MIR frames are mirrored after its end, so that 4 frames from any position read straight on: the
  * frames p .. p+c-1 just written, those of them below PXN_MIR copied (only those: the other core may be writing the
@@ -4794,12 +4800,13 @@ static inline void pxn_mir(int32_t *ring, int32_t len, int32_t p, int c)
 }
 /* layer i's post for frames f0 .. f0+n-1: LeakyReLU, head sum, residual into the next layer's ring (its block starts
  * at its write position, still the one before this block); in pieces of 4 frames, the vector unit kicked between */
-static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring)
+static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring, const pxn_sc *sc)
 {
     pxn_layer *L = &m->L[i];
     const int K = L->k;
-    pxn_post p = {pxn_z + 3 * f0, pxn_x + f0 * PXN_S + 2 + 3 * (K - 1), PXN_S * 4, L->rr, pxn_hs + 3 * f0, 0, 0, L->rr2};
-    pxn_layer *N = i < PXN_NL - 1 ? &m->L[i + 1] : 0;
+    pxn_post p = {sc->z + 3 * f0, pxn_x + f0 * PXN_S + 2 + 3 * (K - 1), PXN_S * 4, L->rr, sc->hs + 3 * f0, 0, 0, L->rr2};
+    pxn_layer *N = i < PXN_NL - 1 && !sc->q ? &m->L[i + 1] : 0;   /* (q: the output to the hand-over, contiguous) */
+    int32_t *q = i < PXN_NL - 1 && sc->q ? sc->q + 3 * f0 : 0;
     int32_t w = N ? N->w + f0 : 0, r = L->w + f0;         /* r: the layer's own input in its ring (ring = 1) */
     if (N && w >= N->len) w -= N->len;
     if (r >= L->len) r -= L->len;
@@ -4818,6 +4825,7 @@ static void pxn_post_part(pxn_model *m, int i, int f0, int n, int kick, int ring
         }
         const int32_t wc = w;
         if (N) { w += c; if (w == N->len) w = 0; }
+        if (q) { p.out = q; q += 3 * c; }
         p.n = c;
 #if PXN_HAND
         if (ring && pxn_p4on) pxn_post4_asm(&p);
@@ -4836,13 +4844,13 @@ static void pxn_layer_block(pxn_model *m, int i, int n)
     const int K = L->k, T = 3 * K + 2;
     pxn_gather(L->ring, L->len, L->w, K, L->d, 0, n, 1);
     pxn_rows(m, m->wa + L->off, T, PXN_C, n);
-    pxn_post_part(m, i, 0, n, 1, 0);
+    pxn_post_part(m, i, 0, n, 1, 0, &pxn_sc0);
 }
 /* rows weight rows (3 of a layer, or the head's 1) for frames f0 .. f0+n-1 by the CPU straight from a ring (its block
  * starting at position w): groups of 4 frames by rdot, a rest of 1 .. 3 frames gathered. core: whose tables (0 the
  * calling core, 1 the helper) */
 static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d, const int32_t *wr, int rows, int f0,
-                       int n, int core, int kick)
+                       int n, int core, int kick, const pxn_sc *sc)
 {
     const int32_t **tp = pxn_tpt[core];
     const int n4 = pxn_rd ? n & ~3 : 0;
@@ -4860,9 +4868,9 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
             if (s >= len) s -= len;
         }
         void (*const q)(const pxn_rdot *) = pxn_rdq_on && pxn_rdq_f[K] ? pxn_rdq_f[K] : K == 6 ? pxn_rdot6_f : pxn_rdot_f;
-        pxn_rdot j = {wr, tp, K, pxn_u + f0, pxn_z + 3 * f0, rows, n4 >> 2, end, -3 * len * 4};
+        pxn_rdot j = {wr, tp, K, sc->u + f0, sc->z + 3 * f0, rows, n4 >> 2, end, -3 * len * 4};
         if (pxn_rdl_on && pxn_rdl_f[K] && pxn_pc != 4) {  /* the whole block in one call (no unit to kick) */
-            if (!pxn_pskip) (pxn_rdm_on && rows == PXN_C && pxn_rdm_f[K] ? pxn_rdm_f[K] : pxn_rdl_f[K])(&j);
+            if (!pxn_pskip) (pxn_rdm_on && rows == PXN_C && PXN_RDM(K) ? PXN_RDM(K) : pxn_rdl_f[K])(&j);
         } else
         for (int g = 0; g < n4; g += 4) {
             if (!pxn_pskip) q(&j);
@@ -4877,17 +4885,17 @@ static void pxn_direct(const int32_t *ring, int32_t len, int32_t w, int K, int d
     uint32_t t1 = PXN_T();
     if (n4 < n) {
         pxn_gather(ring, len, w, K, d, f0 + n4, n - n4, kick);
-        pxn_rows_cpu(wr, 3 * K + 2, rows, f0 + n4, n - n4);
+        pxn_rows_cpu(wr, 3 * K + 2, rows, f0 + n4, n - n4, sc->z);
     }
     if (pxn_pt) { pxn_prof[pxn_pd] += t1 - t0; pxn_prof[pxn_pd + 1] += PXN_T() - t1; }
 }
 /* layer i for frames f0 .. f0+n-1, by the CPU alone */
-static void pxn_range_cpu(pxn_model *m, int i, int f0, int n, int kick, int core)
+static void pxn_range_cpu(pxn_model *m, int i, int f0, int n, int kick, int core, const pxn_sc *sc)
 {
     pxn_layer *L = &m->L[i];
-    pxn_direct(L->ring, L->len, L->w, L->k, L->d, m->wa + L->off, PXN_C, f0, n, core, kick);
+    pxn_direct(L->ring, L->len, L->w, L->k, L->d, m->wa + L->off, PXN_C, f0, n, core, kick, sc);
     uint32_t t0 = PXN_T();
-    pxn_post_part(m, i, f0, n, kick, 1);
+    pxn_post_part(m, i, f0, n, kick, 1, sc);
     if (pxn_pt) pxn_prof[3] += PXN_T() - t0;
 }
 
@@ -4906,7 +4914,7 @@ static void pxn_help_job(uint32_t arg)                  /* on the helper core */
 {
     (void)arg;
     for (int i = 0; i < PXN_NL; i++) {
-        pxn_range_cpu(pxn_hj.m, i, 0, pxn_hj.h, 0, 1);
+        pxn_range_cpu(pxn_hj.m, i, 0, pxn_hj.h, 0, 1, &pxn_sc0);
         PXN_SYNC();
         pxn_hj.done = i + 1;
         PXN_SYNC();
@@ -4919,7 +4927,7 @@ static uint8_t pxn_emu_hjob;
 static int pxn_emu_hrun(void (*fn)(uint32_t), uint32_t arg) { (void)fn; (void)arg; pxn_emu_hjob = 1; return 1; }
 static void pxn_emu_hstep(void)
 {
-    if (pxn_emu_hjob && pxn_hj.done < PXN_NL) { pxn_range_cpu(pxn_hj.m, pxn_hj.done, 0, pxn_hj.h, 0, 1); pxn_hj.done++; }
+    if (pxn_emu_hjob && pxn_hj.done < PXN_NL) { pxn_range_cpu(pxn_hj.m, pxn_hj.done, 0, pxn_hj.h, 0, 1, &pxn_sc0); pxn_hj.done++; }
 }
 static int pxn_emu_hwait(void) { while (pxn_hj.done < PXN_NL) pxn_emu_hstep(); pxn_emu_hjob = 0; return 0; }
 void pxn_emu_helper(void) { pxn_hrun = pxn_emu_hrun; pxn_hwait = pxn_emu_hwait; }
@@ -4941,7 +4949,7 @@ static void pxn_hneed(int j)
         }
     }
     if (pxn_hdead)
-        while (pxn_hj.done < j) { pxn_range_cpu(pxn_hj.m, pxn_hj.done, 0, pxn_hj.h, 1, 0); pxn_hj.done++; }
+        while (pxn_hj.done < j) { pxn_range_cpu(pxn_hj.m, pxn_hj.done, 0, pxn_hj.h, 1, 0, &pxn_sc0); pxn_hj.done++; }
 }
 static void pxn_hstart(pxn_model *m, int h)
 {
@@ -4970,12 +4978,12 @@ static uint32_t pxn_issue(pxn_model *m, int i, int f0, int n, int c)   /* the 3 
 {
     const pxn_layer *L = &m->L[i];
     const int T = 3 * L->k + 2;
-    if (!pxn_vec_ok) { pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0, n); return 0; }
+    if (!pxn_vec_ok) { pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0, n, pxn_z); return 0; }
     const int nv = n - c;                                /* the CPU takes the last c frames itself, meanwhile */
     for (int o = 0; o < PXN_C && nv > 0; o++)
         pxn_venq(pxn_uw(m, m->wa + L->off + o * T), pxn_x + f0 * PXN_S, T, pxn_z + 3 * f0 + o, nv);
     const uint32_t seq = nv > 0 ? pxn_vq_in : 0;
-    if (c > 0) pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0 + (nv > 0 ? nv : 0), nv > 0 ? c : n);
+    if (c > 0) pxn_rows_cpu(m->wa + L->off, T, PXN_C, f0 + (nv > 0 ? nv : 0), nv > 0 ? c : n, pxn_z);
     return seq;
 }
 static void pxn_need(pxn_model *m, uint32_t seq, int i, int f0, int n, int c)
@@ -4983,7 +4991,7 @@ static void pxn_need(pxn_model *m, uint32_t seq, int i, int f0, int n, int c)
     if (!seq) return;
     if (!pxn_vfail && !pxn_vupto(seq)) return;
     const pxn_layer *L = &m->L[i];                       /* the unit died: the CPU does its part (X rows intact) */
-    pxn_rows_cpu(m->wa + L->off, 3 * L->k + 2, PXN_C, f0, n - c);
+    pxn_rows_cpu(m->wa + L->off, 3 * L->k + 2, PXN_C, f0, n - c, pxn_z);
 }
 static void pxn_layers_pipe(pxn_model *m, int fa, int fb, int c)
 {
@@ -4997,7 +5005,7 @@ static void pxn_layers_pipe(pxn_model *m, int fa, int fb, int c)
     for (int i = 0; i < PXN_NL; i++)
         for (int s = 0; s < 2; s++) {
             pxn_need(m, seq[s], i, f0[s], nf[s], c);
-            pxn_post_part(m, i, f0[s], nf[s], 1, 0);
+            pxn_post_part(m, i, f0[s], nf[s], 1, 0, &pxn_sc0);
             if (i < PXN_NL - 1) {
                 pxn_hneed(i + 1);
                 L = &m->L[i + 1];
@@ -5039,7 +5047,7 @@ static void pxn_emu_sstep(int waited)
 {
     if (pxn_sv.hdone == pxn_sv.seq || (!waited && !pxn_emu_eager)) return;
     while (pxn_sv.hlay < PXN_NL && pxn_sv.hlay <= pxn_sv.mdone) {
-        pxn_range_cpu(pxn_sv.m, pxn_sv.hlay, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1);
+        pxn_range_cpu(pxn_sv.m, pxn_sv.hlay, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1, &pxn_sc0);
         pxn_sv.hlay++;
     }
     if (pxn_sv.hlay == PXN_NL) pxn_sv.hdone = pxn_sv.seq;
@@ -5078,7 +5086,7 @@ void pxn_serve(void)                                     /* CPU1 */
             if (pxn_sv.mdone < i) { const uint32_t t0 = PXN_DCLK(); while (pxn_sv.mdone < i) PXN_SYNC(); PXN_DEVW(1, t0); }
 #endif
             while (pxn_sv.mdone < i) PXN_SYNC();
-            pxn_range_cpu(pxn_sv.m, i, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1);
+            pxn_range_cpu(pxn_sv.m, i, pxn_sv.hs, pxn_sv.n - pxn_sv.hs, 0, 1, &pxn_sc0);
             PXN_SYNC();
             pxn_sv.hlay = i + 1;
         }
@@ -5103,7 +5111,7 @@ static void pxn_srv_block(pxn_model *m, int n)           /* CPU0: the layers of 
     PXN_SYNC();
     PXN_SSTEP(0);
     for (int i = 0; i < PXN_NL; i++) {
-        pxn_range_cpu(m, i, 0, hs, 1, 0);
+        pxn_range_cpu(m, i, 0, hs, 1, 0, &pxn_sc0);
         PXN_SYNC();
         pxn_sv.mdone = i + 1;
         PXN_SSTEP(0);
@@ -5114,7 +5122,7 @@ static void pxn_srv_block(pxn_model *m, int n)           /* CPU0: the layers of 
         PXN_SSTEP(1);
         if (++k > 8000000u) {                            /* (CPU1 gone for ~0.1 s: its layers here, from where it was) */
             pxn_sv_dead = 1;
-            for (int i = pxn_sv.hlay; i < PXN_NL; i++) pxn_range_cpu(m, i, hs, n - hs, 1, 0);
+            for (int i = pxn_sv.hlay; i < PXN_NL; i++) pxn_range_cpu(m, i, hs, n - hs, 1, 0, &pxn_sc0);
             pxn_sv.hdone = q;
             pxn_sv_on = 0;
         }
@@ -5158,14 +5166,14 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
         if (pipe) pxn_layers_pipe(m, h, n, c);
         else
 #endif
-        for (int i = 0; i < PXN_NL; i++) { pxn_hneed(i); pxn_range_cpu(m, i, h, n - h, 1, 0); }
+        for (int i = 0; i < PXN_NL; i++) { pxn_hneed(i); pxn_range_cpu(m, i, h, n - h, 1, 0, &pxn_sc0); }
         pxn_hend();
     }
 #if PXN_VQON
     else if (pipe && n >= 16) pxn_layers_pipe(m, 0, n, c);
 #endif
     else if (pxn_mode_v == 1 && pxn_vec_ok) for (int i = 0; i < PXN_NL; i++) pxn_layer_block(m, i, n);
-    else for (int i = 0; i < PXN_NL; i++) pxn_range_cpu(m, i, 0, n, 1, 0);
+    else for (int i = 0; i < PXN_NL; i++) pxn_range_cpu(m, i, 0, n, 1, 0, &pxn_sc0);
     (void)pipe; (void)c;
     const uint32_t th = PXN_T();
     for (int i = 0; i < PXN_NL; i++) {                   /* every ring moves on by the block */
@@ -5187,7 +5195,7 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
         pxn_rows(m, m->head, PXN_S, 1, n);
     } else {
         pxn_pd = 6;
-        pxn_direct(m->hring, m->hlen, hw, PXN_HK, 1, m->head, 1, 0, n, 0, 1);
+        pxn_direct(m->hring, m->hlen, hw, PXN_HK, 1, m->head, 1, 0, n, 0, 1, &pxn_sc0);
         pxn_pd = 1;
     }
     const float g = m->out_gain;
@@ -5202,6 +5210,131 @@ static void pxn_block(pxn_model *m, const float *in, float *out, int n)
 }
 int pxn_dual(void) { return PXN_MC[pxn_mode_v].h != 0; }
 
+/* ---- v40.2: two cores by layers (the audio pipeline's network) ----
+ * The frame split above has both cores run every layer on half a block, the second core waiting for the first at every
+ * layer, and the head on one core at the end. Here CPU0 runs the input and layers 0..s of each 32-frame block
+ * (pxn_lp_a) and hands the block over; CPU1 runs layers s+1..22, the head and the output (pxn_lp_b), up to PXN_LPQ
+ * blocks behind, across audio blocks (the pipeline gives the network's output to the blocks after it one audio block
+ * later anyway). Every layer of a block runs once, on the whole block, after the same layer of the block before
+ * (pxn_lpm.ld), and in the same order of operations: the output is the one-core output, bit for bit. s may change from
+ * one block to the next. Layer s writes its output to the block's hand-over (q) instead of layer s+1's ring; CPU1 copies
+ * it there before running layer s+1: each ring belongs to one core at a time. The memory (PXN_LP_BYTES) comes from the
+ * firmware (pxn_set_lp); without it the frame split runs. */
+typedef struct { float *out; int32_t s; int32_t u[PXN_N + 4]; int32_t hs[PXN_N * PXN_C]; int32_t q[PXN_N * PXN_C]; } pxn_lpe;
+typedef struct { pxn_lpe e[PXN_LPQ]; int32_t z1[PXN_N * PXN_C + 4]; volatile uint32_t ld[PXN_NL]; } pxn_lpm;   /* ld: per layer, blocks done */
+typedef char pxn_lp_size_check[sizeof(pxn_lpm) <= PXN_LP_BYTES ? 1 : -1];
+static pxn_lpm *pxn_lp;
+static volatile uint32_t pxn_lp_in, pxn_lp_out;        /* blocks handed over, finished */
+static volatile int32_t pxn_lp_s = PXN_NL / 2;
+void pxn_set_lp(void *base, unsigned bytes) { pxn_lp = bytes >= sizeof(pxn_lpm) ? (pxn_lpm *)base : 0; }
+/* the layer split can run: its memory, the network read straight from the rings (no X rows, which the cores would
+ * share), two cores without the vector unit */
+int pxn_lp_ok(void) { return pxn_lp && pxn_rd && PXN_MC[pxn_mode_v].h && !PXN_MC[pxn_mode_v].pipe; }
+void pxn_lp_reset(void)                                  /* (no block in progress: the network was reset or loaded) */
+{
+    pxn_lp_in = pxn_lp_out = 0;
+    if (pxn_lp) for (int i = 0; i < PXN_NL; i++) pxn_lp->ld[i] = 0;
+    PXN_SYNC();
+}
+void pxn_lp_split(int s) { pxn_lp_s = s < 0 ? 0 : s > PXN_NL - 1 ? PXN_NL - 1 : s; }
+int pxn_lp_split_now(void) { return pxn_lp_s; }
+uint32_t pxn_lp_queued(void) { return pxn_lp_in - pxn_lp_out; }
+#ifdef PXN_EMUVEC
+static pxn_model *pxn_lp_em;                             /* PC: the other core's work, done while this one waits */
+#define PXN_LSTEP() (pxn_lp_em ? (void)pxn_lp_b(pxn_lp_em) : (void)0)
+#else
+#define PXN_LSTEP() ((void)0)
+#endif
+static inline void pxn_lp_wait(uint32_t b, int lo, int hi)   /* layers lo..hi of block b-1 done */
+{
+    for (int j = lo; j <= hi; j++)
+        while ((int32_t)(pxn_lp->ld[j] - b) < 0) { PXN_SYNC(); PXN_LSTEP(); }
+}
+static inline void pxn_lp_next(pxn_layer *L)
+{
+    L->w += PXN_N;
+    if (L->w >= L->len) L->w -= L->len;
+}
+/* CPU0: one block of PXN_N frames, its output to be written to out by pxn_lp_b */
+void pxn_lp_a(pxn_model *m, const float *in, float *out)
+{
+    const uint32_t b = pxn_lp_in;
+#ifdef PXN_EMUVEC
+    pxn_lp_em = m;
+#endif
+    while (b - pxn_lp_out >= PXN_LPQ) { PXN_SYNC(); PXN_LSTEP(); }   /* (the queue full: CPU1 far behind) */
+    pxn_lpe *e = &pxn_lp->e[b % PXN_LPQ];
+    const int s = pxn_lp_s;
+    pxn_lp_wait(b, 0, s);                                /* (s moved up: CPU1 had layers up to s of the block before) */
+    e->out = out;
+    e->s = s;
+    pxn_layer *L0 = &m->L[0];
+    int32_t w0 = L0->w;
+    for (int f = 0; f < PXN_N; f++) {                    /* as pxn_block */
+        float v = in[f] * 1048576.0f;
+        const int32_t u = v >= 67108864.0f ? 67108864 : v <= -67108864.0f ? -67108864 : (int32_t)v;
+        int32_t *r = L0->ring + 3 * w0;
+        e->u[f] = u;
+        for (int c = 0; c < PXN_C; c++) r[c] = (int32_t)(((int64_t)m->rech[c] * u) >> PXN_QW);
+        if (w0 < PXN_MIR) pxn_mir(L0->ring, L0->len, w0, 1);
+        if (++w0 == L0->len) w0 = 0;
+    }
+    memset(e->hs, 0, sizeof e->hs);
+    pxn_sc sc = {pxn_z, e->u, e->hs, 0};
+    for (int i = 0; i <= s; i++) {
+        if (i == s) sc.q = e->q;
+        pxn_range_cpu(m, i, 0, PXN_N, 0, 0, &sc);
+        pxn_lp_next(&m->L[i]);
+        PXN_SYNC();
+        pxn_lp->ld[i] = b + 1;
+    }
+    PXN_SYNC();
+    pxn_lp_in = b + 1;
+    PXN_SYNC();
+}
+/* CPU1 (or CPU0 when it is alone): the oldest block handed over, finished; 0 = none waiting */
+int pxn_lp_b(pxn_model *m)
+{
+    const uint32_t b = pxn_lp_out;
+    if (b == pxn_lp_in) return 0;
+    PXN_SYNC();
+    pxn_lpe *e = &pxn_lp->e[b % PXN_LPQ];
+    const int s = e->s;
+    if (s < PXN_NL - 1) {
+        pxn_lp_wait(b, s + 1, PXN_NL - 1);               /* (s moved down: CPU0 had them for the block before) */
+        pxn_layer *L = &m->L[s + 1];                     /* the hand-over into layer s+1's ring, as pxn_post_part */
+        int32_t w = L->w;
+        for (int f = 0; f < PXN_N; f++) {
+            int32_t *r = L->ring + 3 * w;
+            r[0] = e->q[3 * f]; r[1] = e->q[3 * f + 1]; r[2] = e->q[3 * f + 2];
+            if (w < PXN_MIR) pxn_mir(L->ring, L->len, w, 1);
+            if (++w == L->len) w = 0;
+        }
+    }
+    const pxn_sc sc = {pxn_lp->z1, e->u, e->hs, 0};
+    for (int i = s + 1; i < PXN_NL; i++) {
+        pxn_range_cpu(m, i, 0, PXN_N, 0, 1, &sc);
+        pxn_lp_next(&m->L[i]);
+        PXN_SYNC();
+        pxn_lp->ld[i] = b + 1;
+    }
+    int n1 = m->hlen - m->hw;                            /* the head, as pxn_block */
+    if (n1 > PXN_N) n1 = PXN_N;
+    memcpy(m->hring + 3 * m->hw, e->hs, (unsigned)n1 * PXN_C * 4u);
+    if (n1 < PXN_N) memcpy(m->hring, e->hs + 3 * n1, (unsigned)(PXN_N - n1) * PXN_C * 4u);
+    if (n1 < PXN_N || m->hw < PXN_MIR) pxn_mir(m->hring, m->hlen, 0, PXN_MIR);
+    const int32_t hw = m->hw;
+    m->hw += PXN_N;
+    if (m->hw >= m->hlen) m->hw -= m->hlen;
+    pxn_direct(m->hring, m->hlen, hw, PXN_HK, 1, m->head, 1, 0, PXN_N, 1, 0, &sc);
+    const float g = m->out_gain;
+    for (int f = 0; f < PXN_N; f++) e->out[f] = (float)sc.z[3 * f] * g;
+    PXN_SYNC();
+    pxn_lp_out = b + 1;
+    PXN_SYNC();
+    return 1;
+}
+
 /* times the modes on the loaded model (8 blocks of 32 frames of a test signal each), keeps the fastest: the modes
  * with the vector unit only if it is there, the two-core ones only with a helper */
 int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
@@ -5211,7 +5344,7 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
     for (int k = 0; k < PXN_MODES; k++) t[k] = 0;
     if (!m->ready) return pxn_mode_v;
     for (int rd = 4; rd >= 0; rd--) {                    /* the CPU's way: rdm, rdl, rdq, rdot or gathered X rows (mode 0) */
-        if (rd == 4 && !pxn_rdm_f[6]) { pxn_rdt[4] = 0; continue; }
+        if (rd == 4 && !pxn_rdm_f[0]) { pxn_rdt[4] = 0; continue; }
         if (rd == 3 && !pxn_rdl_f[6]) { pxn_rdt[3] = 0; continue; }
         pxn_rd = (uint8_t)(rd > 0);
         pxn_rdq_on = (uint8_t)(rd >= 2);
@@ -5295,6 +5428,73 @@ int pxn_tune(pxn_model *m, uint32_t (*ticks)(void), uint32_t t[PXN_MODES])
     pxn_mode_v = best;
     pxn_reset(m);
     return best;
+}
+
+/* v40.2: the layer split against one core, the other core really serving (pxn_set_helper): 64 blocks of a test signal,
+ * handed over 4 at a time (as the audio pipeline does) with the split moved between them, each block's output hashed
+ * against the one-core run. Returns the blocks that differ (0: the same), -1 if it cannot run. The model is reset. */
+static volatile uint8_t pxn_lpe_stop;
+static void pxn_lpe_job(uint32_t arg)                    /* (the other core) */
+{
+    pxn_model *m = (pxn_model *)(uintptr_t)arg;
+    for (;;) {
+        if (pxn_lp_b(m)) continue;
+        if (pxn_lpe_stop) break;
+        PXN_SYNC();
+    }
+}
+int pxn_lp_equiv(pxn_model *m)
+{
+    float in[4][PXN_N], out[4][PXN_N];                  /* (on the stack: it runs at boot, or on the PC) */
+    uint32_t hb[64];
+    if (!m->ready || !pxn_lp_ok() || !pxn_hrun) return -1;
+    const int mv = pxn_mode_v, s0 = pxn_lp_s;
+    int diff = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        pxn_reset(m);
+        pxn_lp_reset();
+        pxn_mode_v = pass ? mv : 0;
+        int job = 0;
+        if (pass) {
+            pxn_lpe_stop = 0;
+            PXN_SYNC();
+            job = pxn_hrun(pxn_lpe_job, (uint32_t)(uintptr_t)m);
+        }
+        uint32_t r = 2025u;
+        for (int c = 0; c < 16; c++) {
+            for (int j = 0; j < 4; j++)
+                for (int f = 0; f < PXN_N; f++) {
+                    r = r * 1103515245u + 12345u;
+                    in[j][f] = (float)((int32_t)r >> 8) * (0.5f / 8388608.0f) * (float)((c * 4 + j) % 8 + 1) * 0.125f;
+                }
+            if (pass) {
+                pxn_lp_split((int)(r >> 16) % PXN_NL);
+                for (int j = 0; j < 4; j++) pxn_lp_a(m, in[j], out[j]);
+                while (pxn_lp_out != pxn_lp_in) {        /* (the other core's: or here, without it) */
+                    PXN_SYNC();
+                    if (!job) pxn_lp_b(m); else PXN_LSTEP();
+                }
+            } else for (int j = 0; j < 4; j++) pxn_block(m, in[j], out[j], PXN_N);
+            for (int j = 0; j < 4; j++) {
+                uint32_t h = 2166136261u;
+                const uint8_t *q = (const uint8_t *)out[j];
+                for (unsigned i = 0; i < sizeof out[j]; i++) h = (h ^ q[i]) * 16777619u;
+                if (!pass) hb[c * 4 + j] = h;
+                else if (hb[c * 4 + j] != h) diff++;
+            }
+        }
+        if (job) {
+            PXN_SYNC();
+            pxn_lpe_stop = 1;
+            PXN_SYNC();
+            if (pxn_hwait() < 0) diff = -1;
+        }
+    }
+    pxn_mode_v = mv;
+    pxn_lp_split(s0);
+    pxn_reset(m);
+    pxn_lp_reset();
+    return diff;
 }
 
 /* v40.2: the hand routines against C on the whole network: 64 blocks of a test signal through the model as it runs in

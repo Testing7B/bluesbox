@@ -81,6 +81,7 @@ int main(void)
 {
     px_nam_helper(hrun, hwait);
     need(px_nam_check(ticks) == 1, "the start-up check refused a hand routine whose stand-in is the C one");
+    need(px_nam_lp(&e, 1) == 0 && px_nam_lp_equiv() == -1, "the layer split ran without its memory");   /* (none given) */
     need(pxn_rdm_state() > 0 && pxn_post4_state() > 0 && pxn_rdl_state() > 0, "rdm, post4 or rdl not checked");
     pxn_rd = 1; pxn_rdq_on = 1; pxn_rdl_on = 1; pxn_rdm_on = 1; pxn_p4on = 1;   /* the pedal's way (v40.2) */
     static const int M[] = {0, 5, 9, 10};
