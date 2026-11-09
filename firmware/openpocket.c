@@ -260,7 +260,8 @@ static px_preset_t PRESET;
 static uint32_t cur_preset = 0;
 static uint32_t master_vol = 80;        /* 0..100, follows the MASTER knob (ADC channel 2) */
 static void st_get(uint32_t k, px_preset_t *p);   /* px_store.h: the saved preset of slot k, else the factory one */
-static void load_preset(uint32_t i) { st_get(i, &PRESET); }
+static uint8_t preset_new;                             /* v40.3: a preset was loaded: the sound follows at once */
+static void load_preset(uint32_t i) { st_get(i, &PRESET); preset_new = 1; }
 
 #if AUDIO_PROBE
 void fm1_timer5_irq(void) { }
@@ -572,8 +573,9 @@ static uint32_t ed_stat(uint32_t k)                    /* PING, after the flags 
  * second (%, a_pf), the network's way of running (pxn_mode), then from its start-up timing (0.1 % of real time, the
  * network alone): each way of running (px_nam_tuned), and where one core's time goes (pxn_prof_ticks); then the layer
  * split: 0 off, else 1 + the last layer CPU0 runs; then with it CPU0's and CPU1's load and their peaks since the preset
- * was set (%) */
-#define ED_PROF (PX_NBLK + 2u + PXN_MODES + 9u + 5u)
+ * was set (%); v40.3: then the last full change: from the change to the sound back (0.1 ms, 0 while it fades in), the
+ * engine's set in it (0.1 ms), how long the last LOADING was shown (ms) and how many were since boot */
+#define ED_PROF (PX_NBLK + 2u + PXN_MODES + 9u + 5u + 4u)
 static uint32_t ed_prof(uint32_t k)
 {
     if (k <= PX_NBLK) return a_pf[k];
@@ -583,6 +585,12 @@ static uint32_t ed_prof(uint32_t k)
     if (k > PXN_MODES + 9u && k <= PXN_MODES + 13u) {  /* each core's load and peak (%), the layer split only */
         const uint32_t j = k - PXN_MODES - 10u;
         return g_eng.nam_lp ? (j < 2u ? a_cl[j] : a_cpk[j - 2u]) : 0u;
+    }
+    if (k >= PXN_MODES + 14u) {                        /* v40.3: the last full change (0.1 ms) and LOADING (ms, count) */
+        const uint32_t d = FM1_TICKS_PER_US * 100u;
+        const uint32_t v = k == PXN_MODES + 14u ? (a_swin ? 0u : (a_sw1 - a_swc) / d) : k == PXN_MODES + 15u ? a_swset / d
+                         : k == PXN_MODES + 16u ? a_ldms : a_ldn;
+        return v > 16383u ? 16383u : v;
     }
     const uint32_t t = k < PXN_MODES ? px_nam_tuned((int)k) : pxn_prof_ticks((int)(k - PXN_MODES));
     return t * 10u / (A_BUDGET * 2u / 100u);           /* (ticks for 256 frames: two audio blocks) */
@@ -802,12 +810,12 @@ static void app_main(void)
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         px_midi_service();               /* USB-MIDI: Program / Control Change in, the pedal's own changes out */
-        audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
         lights_update(&PRESET, ui_mode == M_TUNER, now);   /* the button lights follow the blocks */
         if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "2C" (NAM pipelined), "C0" or BYP */
             static uint32_t t_cpu;
-            if (now - t_cpu >= 500u) {
-                t_cpu = now;
+            static uint8_t ld_shown;
+            if (now - t_cpu >= 500u || a_ld != ld_shown) {   /* (LOADING on and off at once) */
+                t_cpu = now; ld_shown = a_ld;
                 char c[16];
                 uint32_t l = a_bypass ? a_peak : a_load; int i = 0;
                 if (l > 999u) l = 999u;
@@ -824,6 +832,7 @@ static void app_main(void)
                 c[i++] = (char)('0' + l % 10u); c[i++] = '%';
                 if (!a_bypass && a_xrun && a_blocks - a_xrun_at < 700u) c[i++] = '!';   /* a block ran late in the last 2 s: "2C 88%!" */
                 c[i] = 0;
+                if (a_ld) { const char *t = "LOADING"; for (i = 0; t[i]; i++) c[i] = t[i]; c[i] = 0; }   /* v40.3: a NAM model */
                 bat_raw[2] = (int32_t)a_xrun; bat_raw[3] = (int32_t)a_clip; bat_raw[4] = (int32_t)a_peak_all;   /* tuner page */
 #if OP_BLE_TEST
                 {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
@@ -839,10 +848,10 @@ static void app_main(void)
                         for (j = 0; c[j]; j++) b[k++] = c[j];
                         b[k] = 0;
                     }
-                    ui_status(b, a_bypass);
+                    ui_status(b, !a_ld && a_bypass);
                 }
 #else
-                ui_status(c, a_bypass || (a_xrun && a_blocks - a_xrun_at < 700u));   /* (red: bypassed, or a late block) */
+                ui_status(c, !a_ld && (a_bypass || (a_xrun && a_blocks - a_xrun_at < 700u)));   /* (red: bypassed, or a late block) */
 #endif
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
@@ -971,6 +980,8 @@ static void app_main(void)
             if (dv >= 2 || (nv == 0u && master_vol != 0u) || (nv == 100u && master_vol != 100u)) master_vol = nv;
         }
 #if !AUDIO_PROBE
+        audio_poll(now, preset_new);     /* the sound follows the UI (preset, settings, volume), before the screen redraws */
+        preset_new = 0;
         ui_render();                     /* redraws only what changed */
 #endif
     }

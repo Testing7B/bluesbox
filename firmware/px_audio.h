@@ -102,6 +102,10 @@ static float a_mg = 1.0f;
  * it back in (~6 ms each way). Knob changes and blocks on / off are handed to the audio side (a_kp, a_kpend) and applied
  * at the start of its next block, where they glide and fade (px_engine_knobs): the interrupt is never held off for them. */
 static volatile float a_xf = 1.0f;                     /* the change fade's gain now */
+/* v40.3: the last full change, for PING (ticks): the last change seen (any), the full one's, the engine's set (how
+ * long), the sound back (the end of the fade-in, written by the audio side) */
+static volatile uint32_t a_sw0, a_swc, a_swset, a_sw1;
+static volatile uint8_t a_swin;                        /* 1 from a full change until its fade-in ends */
 static float a_gv = 0.64f;                             /* the volume as it glides */
 static volatile uint8_t a_xft = 1;                     /* where the change fade goes: 1 sound, 0 silence */
 static px_preset_t a_kp;
@@ -163,6 +167,7 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
                 a_out[i] *= xf;
             }
             a_xf = xf;
+            if (xf == 1.0f && a_swin) { a_sw1 = fm1_ticks(); a_swin = 0; }
         } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     }
     const float g = a_gain;                            /* v38: the volume glides there (~3 ms), no zipper */
@@ -554,9 +559,11 @@ static void audio_apply(void)                          /* the preset to the engi
         }
     }
     a_full = 0;
+    a_swc = a_sw0;
     /* anything else: the output fades out, the engine is set (the interrupt held off meanwhile: a late block now only
      * repeats silence), and the output fades back in */
     if (live) { a_xft = 0; for (uint32_t t = 0; a_xf != 0.0f && t < 400u; t++) fm1_delay_us(100); }   /* (40 ms at most) */
+    const uint32_t t0 = fm1_ticks();
     if (a_running) fm1_irq_mask(FM1_IRQ_ALNK0);
     a_collect();                                       /* CPU1 must not process during the recompute */
 #if DSP_CPU1
@@ -566,11 +573,13 @@ static void audio_apply(void)                          /* the preset to the engi
 #if DSP_CPU1
     px_nam_lp(&g_eng, a_c1 && OP_NAM_LP && px_nam_dual(&g_eng));
 #endif
+    a_swset = fm1_ticks() - t0;
     a_kpend = 0;
 #if DSP_CPU1
     a_nbv = 0;                                         /* (the pipeline restarts from silence) */
 #endif
     a_bypass = 0; a_over = 0; a_peak = 0; a_cpk[0] = a_cpk[1] = 0;
+    if (a_xf != 1.0f) a_swin = 1; else a_sw1 = fm1_ticks();   /* (not faded out: the audio was not running) */
     if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
     a_xft = 1;
 }
@@ -794,19 +803,31 @@ static void audio_prof(uint32_t now)                    /* (main loop) once a se
     }
     a_wcut = g_eng.wl_late;
 }
-/* call from the main loop: applies preset changes (40 ms debounce) */
-static void audio_poll(uint32_t now)
+/* v40.3: the status corner shows LOADING (a_ld, from the main loop) while the sound waits for a NAM model, the MODEL
+ * knob's 40 ms: from 20 ms after the change until the new model plays, 300 ms at least (no flash); a preset is set at
+ * once, its model with it, so it shows nothing. For PING: how long the last one was shown (ms), how many since boot */
+static uint8_t a_ld;
+static uint32_t a_ldms, a_ldn;
+static int audio_nam_load(void)                        /* 1 = the preset needs another NAM model */
+{
+    return PRESET.type[PX_B_AMP] == PX_AMP_NAM && px_nam_model(PRESET.p[PX_B_AMP][0]) != g_eng.nam_idx;
+}
+/* call from the main loop, after the controls and before the screen: applies preset changes (40 ms debounce; v40.3: a
+ * preset loaded, at once) */
+static void audio_poll(uint32_t now, int at_once)
 {
     audio_prof(now);
-    static uint32_t last_h, t_change, t_apply, vol_shown = 1000u;
-    static int pending;
+    static uint32_t last_h, t_change, t_apply, t_ld, vol_shown = 1000u;
+    static int pending, nam;
     if (a_nan) audio_reset();
     uint32_t h = ui_hash();
-    if (h != last_h) { last_h = h; t_change = now; pending = 1; }
+    if (h != last_h) { last_h = h; t_change = now; pending = 1; nam = audio_nam_load(); a_sw0 = fm1_ticks(); }
+    if (pending && nam && !a_ld && now - t_change >= 20u) { a_ld = 1; t_ld = now; a_ldn++; }
     /* 40 ms after the last change; v38: while a knob turns, every 40 ms too (it glides: no need to wait for the end) */
-    if (pending && (now - t_change >= 40u ||
+    if (pending && (at_once || now - t_change >= 40u ||
                     (now - t_apply >= 40u && !a_kpend && px_engine_change(&g_eng, &PRESET) == PX_CH_KNOBS))) {
         pending = 0; t_apply = now; audio_apply();
     }
+    if (a_ld && !pending && now - t_ld >= 300u && (!a_swin || now - t_ld >= 1000u)) { a_ld = 0; a_ldms = now - t_ld; }
     if (master_vol != vol_shown) { vol_shown = master_vol; audio_volume(master_vol); }
 }
