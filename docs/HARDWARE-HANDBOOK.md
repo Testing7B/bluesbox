@@ -157,7 +157,7 @@ PCM ring at `0x1F29EE0`, inside the cache-way range above (**likely**: the stock
 | `0x00000..0x04000` | flash header, boot config: **never written** |
 | `0x04000..0xA3000` | the application area (the update loader rewrites only this) |
 | `0xA3000..0xFF000` | where the bootloader looks for update records: anything that ends like a record can be erased by an update, so user data there must be skipped by the loader (`loader/ldr_core.c`) |
-| `0xA5000` | stock "VM" (settings; holds the radio calibration records, VM 106..108, 187) |
+| `0xA5000` | stock "VM" (settings; holds the radio calibration records, VM 106..108, 187). On a Pocket X backup (`fm1-1.bin`, its official firmware) the active VM area is at **`0xA1000`**, inside OpenPocket's application area: installing OpenPocket overwrites it, and that pedal's radio records are gone (`ble_rf.c` gives defaults then) |
 | `0xBA000..0xBD000` | stock file `EXT_RESERVED/usr` (12 KB) |
 | `0xBE000` | stock BTIF (Bluetooth pairing) |
 | `0xBF000..0xFF000` | stock file `EXT_RESERVED/pd40j` (256 KB): 20 amp models x 8 KB, 20 cabinets x 4 KB at `+0x28000`, the preset bank at `+0x3C000` (80 x 92 B + `PATCHEND`), the `GLB1` settings log at `+0x3E000` (`STOCK-FIRMWARE.md` 10.4). OpenPocket's own areas below reuse this range: installing OpenPocket overwrites the stock user data |
