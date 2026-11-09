@@ -221,7 +221,11 @@ export class Editor {
   async commit() { return (await this.request(C.COMMIT, [], 4000))[0]; }
   async save(slot) { return (await this.request(C.SAVE, [slot], 4000))[1]; }
   async watch(on) { return (await this.request(C.WATCH, [on ? 1 : 0]))[0]; }
-  async ping() { const r = await this.request(C.PING); return { load: r[0], bypass: !!(r[1] & 1), c1: !!(r[1] & 2) }; }
+  async ping() {
+    const r = await this.request(C.PING), p = { load: r[0], bypass: !!(r[1] & 1), c1: !!(r[1] & 2) };
+    if (r.length >= 8) Object.assign(p, { peak: r[2], peakAll: r[3], xrun: r[4] | r[5] << 7, clip: r[6] | r[7] << 7 });   // v40.1
+    return p;
+  }
   // v37 (protocol 2): NAM models. list -> { nfact, nuser, models: [{ index, user, slot, used, name }] }
   get hasNam() { return !!(this.info && this.info.proto >= 2); }
   async namList() {

@@ -97,6 +97,10 @@ syms=subprocess.run([f"{tc}/common/bin/objdump","-t",f"{out}/openpocket.elf"],ca
 def sym(n):
     m=re.search(rf"^([0-9a-f]+) .*\s{n}$",syms,re.M); return int(m.group(1),16) if m else None
 load=sym("_data_load"); rt_load=sym("_rt_load"); start=sym("_start")
+be,cl,ch,nb=sym("_bss_end"),sym("_cram_lo"),sym("_cram_hi"),sym("_ble_stack_hi")
+if be: print(f"RAM       : {be-0x01C08000} of 98304 bytes ({98304-(be-0x01C08000)} free)")
+if nb and nb >= 0x01C7C000: print(f"NOINIT    : {nb-0x01C7C000} of 15696 bytes up to the BLE task stacks' end")
+if cl is not None and ch is not None: print(f"cache RAM : {ch-cl} of 28672 bytes (the rest, {28672-(ch-cl)}, to the NAM network's vector unit)")
 assert start==0x02000120,hex(start or 0)
 img=bytearray(open(f"{out}/text.bin","rb").read())
 for at,part in sorted([(rt_load,open(f"{out}/rt.bin","rb").read()),(load,open(f"{out}/data.bin","rb").read())]):

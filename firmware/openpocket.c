@@ -544,6 +544,7 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #if !AUDIO_PROBE
 static uint32_t ed_load(void) { return a_bypass ? a_peak : a_load; }   /* PING: the DSP load, as at the bottom right */
 static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u); }
+static uint32_t ed_stat(uint32_t k) { return k == 0u ? a_peak : k == 1u ? a_peak_all : k == 2u ? a_xrun : a_clip; }   /* PING, after the flags */
 static void nm_changed(uint32_t s)   /* v37: a user model was written or erased: the engine reloads it if it plays it */
 {
     if (g_eng.nam_idx == (int)(PX_NAM_NFACT + s)) g_eng.nam_idx = -1;
