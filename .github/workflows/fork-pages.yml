@@ -32,7 +32,7 @@ jobs:
       - name: Build the drive-lab channel
         if: inputs.drive_lab
         run: |
-          OP_CHANNEL=drive-lab OP_TEST_VERSION=41 NATIVE=1 node tools/op.mjs build
+          OP_CHANNEL=drive-lab OP_TEST_VERSION=42 NATIVE=1 node tools/op.mjs build
           node --input-type=module - <<'JS'
           import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
           const dir = 'docs/firmware/drive-lab/';

@@ -2,7 +2,7 @@
 
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
-**[V40 installer](https://testing7b.github.io/openpocket/)** for Pocket X and BlackBox · **[Web editor](https://testing7b.github.io/openpocket/editor.html)** · **[Drive Lab v41 installer](https://testing7b.github.io/openpocket/?channel=drive-lab)** for BlackBox.
+**[V40 installer](https://testing7b.github.io/openpocket/)** for Pocket X and BlackBox · **[Web editor](https://testing7b.github.io/openpocket/editor.html)** · **[Drive Lab v42 installer](https://testing7b.github.io/openpocket/?channel=drive-lab)** for BlackBox.
 
 Drive Lab is this fork's experiment based on V40. It has 11 blocks and 31 drives: the four fitted V40 models and 27 earlier
 drive recipes, including RAT, DS-1, Muff and Fuzz Face. The instrument block and Square Synth are removed. V40 factory

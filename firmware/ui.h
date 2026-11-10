@@ -218,6 +218,9 @@ static void draw_tile(int i)
 static void draw_tiles(int force)
 {
     ui_order_fix();
+    if (force)
+        for (int i = PX_NBLK; i < 2 * T_COLS; i++)
+            lcd_rect(tile_x(i) - 2u, tile_y(i) - 2u, T_W + 4u, T_H + 4u, UI_BG);
     for (int i = 0; i < PX_NBLK; i++) {
         int b = PRESET.order[i], on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
         if (force || uc.tile_blk[i] != b || uc.tile_on[i] != on || uc.tile_sel[i] != sel || uc.tile_mv[i] != mv) draw_tile(i);

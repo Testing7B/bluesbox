@@ -30,7 +30,7 @@ static int st_reset(uint32_t k) { saved_ok[k] = 0; return 0; }
 static int st_saved(uint32_t k) { return saved_ok[k]; }
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 static int a_level_db(int ch) { return ch ? -84 : -62; }
-static uint8_t a_pf[PX_NBLK + 1] = {0, 0, 0, 0, 0, 0, 3, 0, 0, 5, 7, 0, 64};   /* v38: CPU per block (the tuner's footer) */
+static uint8_t a_pf[PX_NBLK + 1] = { [PX_B_CAB] = 3, [PX_B_DELAY] = 5, [PX_B_REVERB] = 7, [PX_NBLK] = 64 };
 static uint32_t a_wcut = 2;                            /* v39: wet blocks cut short */
 static volatile uint8_t a_tmute;
 static int bat_mv = 3920, bat_usb_mv = 0;
