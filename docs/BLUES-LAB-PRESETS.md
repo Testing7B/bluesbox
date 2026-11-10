@@ -124,7 +124,8 @@ own trims to match its amp and cab models.
 - The SRV presets use the Fender side of the Vibroverb/Dumble blend as
   their tonal reference. [Richard Mullen on the Texas Flood sessions](https://www.mixonline.com/recording/classic-tracks/classic-track-stevie-ray-vaughan-pride-and-joy-367582)
 - The local Two-Rock TS1 covers one component of Mayer's multi-amp live sound.
-  The filter in P25 approximates the opening touch-sensitive part.
+  P25 offers a guitar-driven filter sound. Linn documents a separate pulsing
+  filter setting for the opening chords and a different setting for the melody.
   [Chad Franscoviak on Mayer's rig](https://www.mixonline.com/live-sound/tour-profile-john-mayer-367966), [Roger Linn's AdrenaLinn II guide](https://www.rogerlinndesign.com/support/support-adrenalinn-2-faqs)
 - The Albert King presets use a bright, direct Fender-based approximation.
   King's own account describes Acoustic and Roland stage amps.
