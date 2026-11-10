@@ -13,7 +13,7 @@ BluesBox is an experimental guitar firmware for the **M-VAVE BlackBox**, forked 
 
 Start with **P02 Pride & Joy**, **P21 Gravity**, and **P31 Bad Sign**. The web editor works over USB MIDI in Chrome or Edge and reads the firmware's model catalog. It supports local NAM A2 Lite imports and browsing TONE3000 for amp and pedal captures. For stock BlackBox V21 recovery, see the [factory sound restore guide](docs/RESCUE.md#blackbox-v21-factory-sounds).
 
-BluesBox development lives on [`experiment/blues-lab`](https://github.com/Testing7B/openpocket/tree/experiment/blues-lab). The fork's `main` serves the V40 and Drive Lab installer channels. File BluesBox feedback on [this fork](https://github.com/Testing7B/openpocket/issues) with the device model, firmware version, and preset or steps to reproduce. Changes that apply to OpenPocket can be proposed upstream separately.
+BluesBox development lives on [`experiment/blues-lab`](https://github.com/Testing7B/openpocket/tree/experiment/blues-lab). The fork's `main` serves the V40 and Drive Lab installer channels. Changes that apply to OpenPocket can be proposed upstream separately.
 
 **Credits.** BluesBox builds on [OpenPocket by isod89 and contributors](https://github.com/isod89/openpocket), including its DSP engine, editor, and update tools. The board support and loader come from [Leo Kuroshita / Hügelton Instruments and the Felucca contributors](https://github.com/hugelton/felucca-bsp). Thanks to [Steven Atkinson and Neural Amp Modeler](https://github.com/sdatkinson/neural-amp-modeler), the capture authors, and the [Guitar-TECHS](assets/loops/ATTRIBUTION.md) team for the DI material used in testing. See [credits and third-party licences](NOTICE.md) and the [GPL-3.0-only licence](LICENSE).
 
