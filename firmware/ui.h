@@ -539,6 +539,7 @@ static void midi_draw(void)
 {
     uint32_t h = mi_row | (uint32_t)px_midi_cfg_pack(&mid_cfg) << 4 | (uint32_t)mid_usb_up << 12 |
                  (uint32_t)mid_last[0] << 13 | (uint32_t)mid_last[1] << 16 | (uint32_t)mid_last[2] << 23;
+    h ^= (uint32_t)mid_c1_off * 0x27D4EB2Fu;
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
     static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY"};
@@ -561,6 +562,13 @@ static void midi_draw(void)
     else if (mid_last[0] == PXM_CC) { b_str(l, "LAST: CC "); b_num(l, mid_last[1]); b_str(l, " = "); b_num(l, mid_last[2]); }
     else b_str(l, "LAST: NONE");
     ft_box(0, 186, 240, l, &FT_SM, UI_TXT, UI_BG, 1);
+    /* v41: the second core retired (one core left until a power cycle: presets that need both go to BYP), and why */
+    char c[32]; c[0] = 0;
+    if (mid_c1_off) {
+        static const char *const WHY[] = {"", "MISREAD", "LATE", "UNTIL POWER-OFF", "FAULT", "SILENT"};
+        b_str(c, "CORE 2 OFF: "); b_str(c, mid_c1_off <= 5u ? WHY[mid_c1_off] : "?");
+    }
+    ft_box(0, 204, 240, c, &FT_SM, RED, UI_BG, 1);
 }
 static void midi_close(void)
 {

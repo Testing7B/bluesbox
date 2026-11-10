@@ -819,6 +819,7 @@ static void app_main(void)
             static uint8_t ld_shown;
             if (now - t_cpu >= 500u || a_ld != ld_shown) {   /* (LOADING on and off at once) */
                 t_cpu = now; ld_shown = a_ld;
+                mid_c1_off = a_c1 ? 0u : (fm1_cpu1_gave_up ? fm1_cpu1_gave_up : 0xFFu);   /* v41: why the 2nd core stopped (MIDI page) */
                 char c[16];
                 int late = a_xrun && a_blocks - a_xrun_at < 700u;   /* a block ran late in the last 2 s: "2C 88%!" */
                 ui_load_text(c, a_bypass ? a_peak : a_load, safe, a_bypass, a_c1, a_c1 && px_nam_dual(&g_eng), late);
