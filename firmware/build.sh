@@ -41,7 +41,8 @@ CHAN="${OP_CHANNEL:-}"
 : > "$O/channel.h"
 if [ -n "$CHAN" ]; then
   case "$CHAN" in *[!a-z0-9-]*|"") echo "ERROR: OP_CHANNEL must be lowercase letters, digits and -"; exit 1;; esac
-  TESTVER="${OP_TEST_VERSION:-40}"
+  DEFAULTVER=40; case "$CHAN" in blues-v45) DEFAULTVER=45;; blues-v46) DEFAULTVER=46;; esac
+  TESTVER="${OP_TEST_VERSION:-$DEFAULTVER}"
   printf '#define OP_VERSION_NUM "%s"\n#define OP_TAG " %s"\n' "$TESTVER" "$(echo "$CHAN" | tr a-z- A-Z' ')" > "$O/channel.h"
   APP="$HERE/openpocket-$CHAN.bin"; PKG="$HERE/../docs/firmware/$CHAN"
   rm -f "$APP"
@@ -53,8 +54,15 @@ DSPDEF="-DPX_SR=44100.0f -DPX_OVERSAMPLE=4"
 case "$CHAN" in
   blues-lab) DSPDEF="$DSPDEF -DPX_BLUES_LAB";;
   blues-lab-4x) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_NAM_DRIVE_OS=4";;
+  blues-v45) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V45 -DPX_NAM_DRIVE_OS=4";;
+  blues-v46) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V45 -DPX_BLUES_V46 -DPX_NAM_DRIVE_OS=4";;
 esac
 INC="-I$HERE/inc -I$HERE/../engine"
+if [ "$CHAN" = blues-v45 ] || [ "$CHAN" = blues-v46 ]; then
+  PRIVATE="$HERE/../build/blues/v45-private"
+  [ -s "$PRIVATE/px_blues_ts1_private.h" ] || { echo "Missing private Two-Rock TS-1 weights"; exit 1; }
+  INC="$INC -I$PRIVATE"
+fi
 $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF $BLEDEF -DOP_GUARD_STACK=$GUARD_STACK $INC \
     -I"$BSP/chip" -I"$BSP/boards/fm1" -include "$O/channel.h" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
 $CC $FP -O2 -ffunction-sections -fno-builtin $DSPDEF $INC -c "$HERE/../engine/px_dsp.c" -o "$O/px_dsp.o"
@@ -81,7 +89,7 @@ RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_bl
   pxn_serve pxn_srv_begin pxn_srv_end pxn_srv_active pxn_srv_block pxn_help_job pxn_vstart pxn_vwait pxn_kick pxn_venq
   pxn_need pxn_hneed pxn_hstart pxn_hend pxn_layer_block pxn_dual pxn_dot3x4_c pxn_dot4_c pxn_dot1_c pxn_rdot_c pxn_rdl_c
   pxn_post_c pxn_gcopy_c"
-RAM_FW="a_enc a_dec a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job pipe_job dsp_pipe dsp_pipe_run
+RAM_FW="a_enc a_dec px_usb_mix uac_play a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job pipe_job dsp_pipe dsp_pipe_run
   fm1_alnk0_irq tn_capture fm1_cpu1_run fm1_cpu1_wait fm1_cpu1_retire a_hrun a_hwait b_ticks memcpy memset"
 python3 "$HERE/../tools/ramcode.py" "$O/px_dsp.o" --plain $RAM_DSP
 python3 "$HERE/../tools/ramcode.py" "$O/openpocket.o" $RAM_FW

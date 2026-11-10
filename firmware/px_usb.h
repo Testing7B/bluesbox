@@ -14,6 +14,12 @@
 
 #define FELUCCA_OTA 1
 #define FELUCCA_CDC 0
+#ifdef PX_BLUES_V46
+#define FELUCCA_UAC_OUT 1
+#define FELUCCA_UAC_OUT_POOL 1
+#define FELUCCA_UAC_MIDI_LAST 1
+#define HALF_FRAMES A_FR
+#endif
 #define FELUCCA_USB_PRODUCT "OpenPocket"
 #define FELUCCA_USB_MANUFACTURER "OpenPocket"
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
@@ -34,6 +40,20 @@ static int ble_stall_tick(void);                /* ble/ble_status.h, included af
 #include "fm1_cpu1_stop.h"
 #include "usb.c"
 #include "ota.c"
+
+#ifdef PX_BLUES_V46
+/* Mix stereo computer playback after the guitar DSP and before the DAC. */
+static __attribute__((noinline)) void px_usb_mix(int32_t *out, uint32_t frames)
+{
+    if (!uo.alt || a_mute) return;
+    const uint32_t vol = master_vol;
+    uac_play(out, frames, vol * vol * 4096u / 10000u);
+    for (uint32_t i = 0; i < 2u * frames; i++) {
+        if (out[i] > 8388607) out[i] = 8388607;
+        if (out[i] < -8388608) out[i] = -8388608;
+    }
+}
+#endif
 
 static uint8_t px_flash_ok;                     /* the flash is a 1 MiB SPI NOR: the update entry may stage */
 static volatile uint32_t px_t5_sub;

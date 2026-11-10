@@ -52,7 +52,11 @@ enum { PX_PIT_OCTAVER, PX_PIT_POLYOCT, PX_PIT_WHAMMY, PX_PIT_HARMONY, PX_PIT_DET
 enum { PX_SFX_AUTOWAH, PX_SFX_LFOWAH, PX_SFX_RING, PX_SFX_CRUSH, PX_SFX_SLICER, PX_SFX_LOFI, PX_SFX_COUNT };
 enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_V33,
 #ifdef PX_BLUES_LAB
-       PX_DRV_BLUES_808 = PX_DRV_V33 + 27, PX_DRV_BLUES_BOOST, PX_DRV_COUNT
+       PX_DRV_BLUES_808 = PX_DRV_V33 + 27, PX_DRV_BLUES_BOOST,
+#ifdef PX_BLUES_V45
+       PX_DRV_TS808_JP,
+#endif
+       PX_DRV_COUNT
 #else
        PX_DRV_COUNT = PX_DRV_V33 + 27
 #endif
@@ -63,7 +67,12 @@ enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX
  * GAIN (into the model, +-12 dB), BASS, MID, TREBLE (after it). Models: PX_NAM_NFACT in the firmware, PX_NAM_NUSER
  * slots the web editor fills with A2 captures (.nam files, e.g. from TONE3000). */
 #define PX_AMP_NAM    PX_AMP_COUNT
+#ifdef PX_BLUES_V45
+#define PX_AMP_TS1    (PX_AMP_NAM + 1)
+#define PX_AMP_NTYPES (PX_AMP_COUNT + 2)
+#else
 #define PX_AMP_NTYPES (PX_AMP_COUNT + 1)
+#endif
 #define PX_NAM_NFACT  12
 #define PX_NAM_NUSER  16
 #define PX_NAM_N      (PX_NAM_NFACT + PX_NAM_NUSER)
@@ -110,6 +119,7 @@ int         px_dly_value_for_ms(int type, float ms);   /* the TIME value nearest
 int         px_param_text(int blk, int type, int k, int v, char *buf8);
 int         px_preset_count(void);
 /* NAM models: the MODEL knob (0..100) <-> model 0..PX_NAM_N-1 (factory first, then the user slots) */
+void        px_preset_select_type(px_preset_t *p, int block, int type);
 int         px_nam_model(int v);
 int         px_nam_knob(int model);
 int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memory as scratch (PXN_TEST_WORDS+) */

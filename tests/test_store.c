@@ -85,6 +85,7 @@ int main(void)
     CHECK(!memcmp(&q, &f, sizeof q), "other slots stay factory");
 
     /* many saves: the copies alternate, the newest wins; the last slot (in sector 1) works too */
+    px_order_default(p.order);
     for (int i = 0; i < 25; i++) {
         p.p[PX_B_DELAY][0] = (uint8_t)i;
         p.order[0] = (uint8_t)(i % 2 ? PX_B_DRIVE : PX_B_GATE); p.order[4] = (uint8_t)(i % 2 ? PX_B_GATE : PX_B_DRIVE);

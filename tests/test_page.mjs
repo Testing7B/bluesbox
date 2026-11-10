@@ -88,6 +88,27 @@ await page.waitForSelector("#devinfo:not([hidden])", { timeout: 15000 });
 const fw = await page.textContent("#d-fw");
 ok(/OpenPocket v23/.test(fw), `detected: ${fw}`);
 ok(await page.isEnabled("#install"), "Install enabled");
+await page.locator("summary").filter({ hasText: "Install a local build" }).click();
+const fixtures = join(FIX, "firmware");
+const localManifest = join(fixtures, "manifest.json");
+await page.locator("#localfw").setInputFiles(join(fixtures, "PocketX_924.fwsc"));
+ok(await page.isDisabled("#install"), "local firmware: a missing manifest blocks install");
+await page.locator("#localmanifest").setInputFiles(localManifest);
+await page.waitForSelector("#localmsg.ok");
+ok(await page.isEnabled("#install"), "local firmware: valid matching package enables install");
+await page.locator("#localfw").setInputFiles(join(fixtures, "BlackBox_924.fwsc"));
+await page.waitForFunction(() => document.getElementById("localmsg").textContent.includes("Verified BlackBox_924"));
+ok(await page.isDisabled("#install"), "local firmware: a different model blocks install");
+const wrongDigest = JSON.parse(readFileSync(localManifest, "utf8"));
+wrongDigest.packages.find((pkg) => pkg.model === "PocketX").sha256 = "0".repeat(64);
+await page.locator("#localfw").setInputFiles(join(fixtures, "PocketX_924.fwsc"));
+await page.locator("#localmanifest").setInputFiles({
+  name: "manifest.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(wrongDigest)),
+});
+await page.waitForSelector("#localmsg.err");
+ok(await page.isDisabled("#install"), "local firmware: a bad digest blocks install without falling back");
+await page.click("#localclear");
+ok(await page.isEnabled("#install"), "local firmware: clearing the files restores hosted install");
 await page.screenshot({ path: join(OUT, "page_2_found.png"), fullPage: true });
 await page.click("#install");
 await page.waitForFunction(() => /PocketX_924/.test(document.getElementById("msg").textContent) ||

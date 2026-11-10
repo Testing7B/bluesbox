@@ -24,7 +24,7 @@
  * SET_CUR (UAC1 sampling frequency control, two discrete rates in the one alt setting). The engines stay
  * at 44.1 kHz; at 48 kHz uac_tap resamples (polyphase FIR 160 / 147, uac_fir.h) into the ring. 44.1 kHz,
  * the rate until a host asks for another, sends the samples as before, bit for bit.
- * FELUCCA_UAC_OUT=1 (with FELUCCA_UAC) adds a USB audio output too: the computer plays through the FM-1 (16-bit
+ * FELUCCA_UAC_OUT=1 adds a USB audio output: the computer plays through the FM-1 (16-bit
  * stereo, 44.1 kHz, EP4 OUT isochronous adaptive). uac_service takes each packet into a ring (nested in the render
  * too); uac_play, after each render, adds it to the output, resampled to the I2S clock (~44,117.6 Hz): the ring's
  * fill steers the rate, so it neither runs dry nor overflows.
@@ -65,8 +65,8 @@
 #if !FELUCCA_UAC
 #undef FELUCCA_UAC_48K
 #define FELUCCA_UAC_48K 0
-#undef FELUCCA_UAC_OUT
-#define FELUCCA_UAC_OUT 0
+#endif
+#if !FELUCCA_UAC && !FELUCCA_UAC_OUT
 #undef FELUCCA_UAC_AS_FIRST
 #define FELUCCA_UAC_AS_FIRST 0
 #undef FELUCCA_UAC_MIDI_LAST
@@ -181,23 +181,6 @@ static struct {
     uint32_t fill_lo, fill_hi;                   /* range of fill_min since the stream started */
     uint32_t rate_sets;                          /* SET_CUR sampling frequency requests */
 } uac;
-#if FELUCCA_UAC_OUT
-/* USB audio output: the packets in a ring (16-bit L | R << 16), read by uac_play at the I2S clock */
-#define UO_N 2048u               /* frames; a power of two */
-#define UO_MAXF 49u              /* frames in the largest packet the host may send (44.1: 44 or 45) */
-#define UO_MAXP (UO_MAXF * 4u)
-#define UO_TGT (2u * HALF_FRAMES)   /* the fill a render aims to start at: ~11.6 ms with 256-frame halves */
-static uint32_t uo_ring[UO_N];
-static volatile uint32_t uo_w, uo_r;
-static uint32_t ep4rx[UO_MAXF + 1u] __attribute__((aligned(4)));
-static struct {
-    volatile uint8_t alt;        /* the output's streaming interface: 1 = the host plays */
-    uint8_t go;                  /* primed: uac_play reads the ring */
-    uint32_t pos;                /* the read position's fraction, Q16 */
-    float err;                   /* the fill's distance from UO_TGT, smoothed (frames) */
-    uint32_t pkts, frames, underruns, overruns, starts;
-} uo;
-#endif
 #if FELUCCA_UAC_48K
 #include "uac_fir.h"
 /* the resampler's input history: the last 32 frames, written twice so a window of UAC_FIR_N never wraps */
@@ -212,6 +195,29 @@ static struct {
 #endif
 } rs;
 #endif
+#endif
+
+#if FELUCCA_UAC_OUT
+/* USB audio output: the packets in a ring (16-bit L | R << 16), read by uac_play at the I2S clock */
+#define UO_N 2048u               /* frames; a power of two */
+#define UO_MAXF 49u              /* frames in the largest packet the host may send (44.1: 44 or 45) */
+#define UO_MAXP (UO_MAXF * 4u)
+#define UO_TGT (2u * HALF_FRAMES)   /* the fill a render aims to start at: ~11.6 ms with 256-frame halves */
+/* The producer writes each sample before publishing it, so this ring needs no startup clear. */
+#ifdef FELUCCA_UAC_OUT_POOL
+static uint32_t uo_ring[UO_N] __attribute__((section(".pool.usb_out")));
+#else
+static uint32_t uo_ring[UO_N];
+#endif
+static volatile uint32_t uo_w, uo_r;
+static uint32_t ep4rx[UO_MAXF + 1u] __attribute__((aligned(4)));
+static struct {
+    volatile uint8_t alt;        /* the output's streaming interface: 1 = the host plays */
+    uint8_t go;                  /* primed: uac_play reads the ring */
+    uint32_t pos;                /* the read position's fraction, Q16 */
+    float err;                   /* the fill's distance from UO_TGT, smoothed (frames) */
+    uint32_t pkts, frames, underruns, overruns, starts;
+} uo;
 #endif
 
 static struct {
@@ -373,15 +379,17 @@ static uint32_t midi_out_room(void)                  /* free slots in the out ri
  * The interface numbers below follow; the requests (SET_INTERFACE, GET_INTERFACE) use them by name. */
 #if FELUCCA_UAC_MIDI_LAST
 #define IF_AS 1                                            /* from the audio function's first interface */
-#define IF_ASO 2
+#define IF_ASO (1 + FELUCCA_UAC)
 #define IF_MIDI (1 + FELUCCA_UAC + FELUCCA_UAC_OUT)
 #else
 #define IF_MIDI 1
 #define IF_AS 2
-#define IF_ASO 3
+#define IF_ASO (2 + FELUCCA_UAC)
 #endif
-#if FELUCCA_UAC_OUT
+#if FELUCCA_UAC && FELUCCA_UAC_OUT
 #define AC_STREAMS(a) (a) + IF_AS, (a) + IF_ASO
+#elif FELUCCA_UAC_OUT
+#define AC_STREAMS(a) (a) + IF_ASO
 #else
 #define AC_STREAMS(a) (a) + IF_AS
 #endif
@@ -397,29 +405,9 @@ static uint32_t midi_out_room(void)                  /* free slots in the out ri
 #endif
 #define D_AC_HEADER(a, terminals) 8 + AC_NCOLL, 0x24, 1, 0x00, 0x01, 8 + AC_NCOLL + (terminals), 0, AC_NCOLL, AC_COLL(a),
 #if FELUCCA_UAC
-#if FELUCCA_UAC_OUT
-#define D_AC(a)                                                                                      \
-    9, 4, (a), 0, 0, 1, 1, 0, 0,                                                                     \
-    D_AC_HEADER((a), 42)                                   /* AC header: MIDI, both streams */          \
-    12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 1: line, 2 ch (L R) */      \
-    9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,                    /* output terminal 2: USB streaming, from 1 */ \
-    12, 0x24, 2, 3, 0x01, 0x01, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 3: USB streaming, 2 ch */   \
-    9, 0x24, 3, 4, 0x01, 0x03, 0, 3, 0,                    /* output terminal 4: speaker, from 3 */
-#define D_ASO(o)                                                                                     \
-    9, 4, (o), 0, 0, 1, 2, 0, 0,                           /* the output stream, alt 0: no bandwidth */ \
-    9, 4, (o), 1, 1, 1, 2, 0, 0,                           /* alt 1: the stream */                      \
-    7, 0x24, 1, 3, 1, 0x01, 0x00,                          /* AS general: terminal 3, delay 1, PCM */   \
-    11, 0x24, 2, 1, 2, 2, 16, 1, 0x44, 0xAC, 0x00,         /* type I: 2 ch, 16 bit, 44100 */            \
-    9, 5, 0x04, 0x09, UO_MAXP & 0xFF, UO_MAXP >> 8, 1, 0, 0,   /* EP4 OUT isochronous adaptive, 1 ms */ \
-    7, 0x25, 1, 0x00, 0, 0, 0,                             /* CS endpoint: no controls */
-#else
-#define D_AC(a)                                                                                      \
-    9, 4, (a), 0, 0, 1, 1, 0, 0,                                                                     \
-    D_AC_HEADER((a), 21)                                   /* AC header 1.00: MIDI + audio streaming */ \
-    12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0,    /* input terminal 1: line, 2 ch (L R) */      \
-    9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,                    /* output terminal 2: USB streaming, from 1 */
-#define D_ASO(o)
-#endif
+#define D_CAP_TERMINALS \
+    12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0, \
+    9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,
 #define D_AS(s)                                                                                      \
     9, 4, (s), 0, 0, 1, 2, 0, 0,                           /* audio streaming, alt 0: no bandwidth */    \
     9, 4, (s), 1, 1, 1, 2, 0, 0,                           /* alt 1: the stream */                      \
@@ -428,9 +416,31 @@ static uint32_t midi_out_room(void)                  /* free slots in the out ri
     9, 5, 0x84, 0x05, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */   \
     7, 0x25, 1, 0x01, 0, 0, 0,                             /* CS endpoint: sampling frequency control */
 #else
-#define D_AC(a) 9, 4, (a), 0, 0, 1, 1, 0, 0, 9, 0x24, 1, 0x00, 0x01, 9, 0, 1, (a) + 1,
+#define D_CAP_TERMINALS
 #define D_AS(s)
+#endif
+#if FELUCCA_UAC_OUT
+#define D_PLAY_TERMINALS \
+    12, 0x24, 2, 3, 0x01, 0x01, 0, 2, 0x03, 0x00, 0, 0, \
+    9, 0x24, 3, 4, 0x01, 0x03, 0, 3, 0,
+#define D_ASO(o)                                                                                     \
+    9, 4, (o), 0, 0, 1, 2, 0, 0,                           /* the output stream, alt 0: no bandwidth */ \
+    9, 4, (o), 1, 1, 1, 2, 0, 0,                           /* alt 1: the stream */                      \
+    7, 0x24, 1, 3, 1, 0x01, 0x00,                          /* AS general: terminal 3, delay 1, PCM */   \
+    11, 0x24, 2, 1, 2, 2, 16, 1, 0x44, 0xAC, 0x00,         /* type I: 2 ch, 16 bit, 44100 */            \
+    9, 5, 0x04, 0x09, UO_MAXP & 0xFF, UO_MAXP >> 8, 1, 0, 0,   /* EP4 OUT isochronous adaptive, 1 ms */ \
+    7, 0x25, 1, 0x00, 0, 0, 0,                             /* CS endpoint: no controls */
+#else
+#define D_PLAY_TERMINALS
 #define D_ASO(o)
+#endif
+#if FELUCCA_UAC || FELUCCA_UAC_OUT
+#define D_AC(a) \
+    9, 4, (a), 0, 0, 1, 1, 0, 0, \
+    D_AC_HEADER((a), (21 * (FELUCCA_UAC + FELUCCA_UAC_OUT))) \
+    D_CAP_TERMINALS D_PLAY_TERMINALS
+#else
+#define D_AC(a) 9, 4, (a), 0, 0, 1, 1, 0, 0, 9, 0x24, 1, 0x00, 0x01, 9, 0, 1, (a) + 1,
 #endif
 #define D_MIDI(m)                                                                                    \
     9, 4, (m), 0, 2, 1, 3, 0, 0,                                                                     \
@@ -639,6 +649,7 @@ static void uac_ep4_reset(void)                         /* drop a queued packet;
     sie_wr(S_TXCSR1, 0);
     sie_wr(S_TXCSR2, 0x40);                             /* ISO */
 }
+#endif
 
 #if FELUCCA_UAC_OUT
 static void uo_ep4_reset(void)                          /* EP4 OUT: isochronous, nothing pending */
@@ -650,6 +661,7 @@ static void uo_ep4_reset(void)                          /* EP4 OUT: isochronous,
 static void uo_stream(uint32_t alt)                     /* SET_INTERFACE, configuration, bus reset */
 {
     uo.go = 0;
+    uo_r = uo_w;
     RING_PUBLISH();
     uo.alt = (uint8_t)alt;
     if (alt)
@@ -657,6 +669,7 @@ static void uo_stream(uint32_t alt)                     /* SET_INTERFACE, config
 }
 #endif
 
+#if FELUCCA_UAC
 static void uac_stream(uint32_t alt)                    /* SET_INTERFACE, configuration, bus reset */
 {
     uac.go = 0;                                         /* the next render primes the ring again */
@@ -730,6 +743,8 @@ no_cdc:;
     sie_wr(S_INDEX, 4);
     sie_wr(S_TXMAXP, 0xFF);
     uac_ep4_reset();
+    uac_stream(0);
+#endif
 #if FELUCCA_UAC_OUT
     fm1_usb_ep4_rxbuf(ep4rx);
     sie_wr(S_INDEX, 4);
@@ -737,8 +752,8 @@ no_cdc:;
     uo_ep4_reset();
     uo_stream(0);
 #endif
+#if FELUCCA_UAC || FELUCCA_UAC_OUT
     fm1_usb_ep_enable(1u << 4);
-    uac_stream(0);
 #endif
 }
 
@@ -919,8 +934,8 @@ static void ep0_service(void)
         return;
     case 0x0201: {                                      /* CLEAR_FEATURE(ENDPOINT_HALT): data toggle reset */
         uint32_t ep = s[4] & 0x0Fu, last = USB_CDC_ON ? 3u : 1u;
-#if FELUCCA_UAC
-        if (wvalue == 0 && (s[4] == 0x84u || (FELUCCA_UAC_OUT && s[4] == 0x04u)))
+#if FELUCCA_UAC || FELUCCA_UAC_OUT
+        if (wvalue == 0 && ((FELUCCA_UAC && s[4] == 0x84u) || (FELUCCA_UAC_OUT && s[4] == 0x04u)))
             goto ack;                                   /* isochronous: no halt, no toggle */
 #endif
         if (wvalue != 0 || ep > last)
@@ -1502,6 +1517,8 @@ static uint32_t uac_packet(uint32_t *d)
  * next one as soon as the last has gone (TxPktRdy clear). Not paced on SOF-pending (see usb_poll).
  * The ring is fed only while the host reads: it often selects alt 1 long before its first IN token,
  * and a recorder may stop reading without going back to alt 0 (a packet waiting > 20 ms). */
+#endif /* capture */
+
 #if FELUCCA_UAC_OUT
 static void uo_service(void)                            /* an EP4 OUT packet into the ring (TIMER5, nested too) */
 {
@@ -1578,13 +1595,10 @@ static __attribute__((noinline)) void uac_play(int32_t *out, uint32_t n, uint32_
 }
 #endif
 
+#if FELUCCA_UAC
 static void uac_service(void)
 {
     uint32_t csr, n;
-#if FELUCCA_UAC_OUT
-    if (usb.up && usb.config && uo.alt)
-        uo_service();
-#endif
     if (!usb.up || !usb.config || !uac.alt)
         return;
     sie_wr(S_INDEX, 4);
@@ -1710,6 +1724,10 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         if (cdc.dtr)
             ep3_tx();
     }
+#endif
+#if FELUCCA_UAC_OUT
+    if (usb.up && usb.config && uo.alt)
+        uo_service();
 #endif
 #if FELUCCA_UAC
     uac_service();

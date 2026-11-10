@@ -378,6 +378,9 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
 #endif
     dsp_block();
 }
+#ifdef PX_BLUES_V46
+static void px_usb_mix(int32_t *out, uint32_t frames);
+#endif
 static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output block to fill */
 {
     (void)priv; (void)ch;
@@ -386,6 +389,9 @@ static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output 
     uint32_t n = (uint32_t)len / 8u;
     if (n > A_FR) n = A_FR;
     for (uint32_t i = 0; i < n; i++) d[2u * i] = d[2u * i + 1u] = a_res[i];
+#ifdef PX_BLUES_V46
+    px_usb_mix(d, n);
+#endif
 }
 void fm1_alnk0_irq(void) { iis_irq_handler(0); }
 extern void isr_alnk0(void);

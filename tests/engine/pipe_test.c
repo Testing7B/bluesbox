@@ -20,7 +20,12 @@ int main(void)
     for (int f = 0; f < 24; f++) {
         px_preset_t p;
         px_preset_factory(&p, f);
-        if (!p.on[PX_B_AMP] || p.type[PX_B_AMP] != PX_AMP_NAM) continue;
+        int type = p.type[PX_B_AMP];
+        int nam = type == PX_AMP_NAM;
+#ifdef PX_BLUES_V45
+        nam |= type == PX_AMP_TS1;
+#endif
+        if (!p.on[PX_B_AMP] || !nam) continue;
         px_engine_init(&e, 44100.0f); px_engine_set(&e, &p);
         for (int b = 0; b < NB * 2; b++) px_engine_process(&e, sig + 64 * b, ref + 64 * b, 64);
         px_engine_init(&e, 44100.0f); px_engine_set(&e, &p);

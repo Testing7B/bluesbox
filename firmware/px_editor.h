@@ -153,7 +153,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
             v = PRESET.on[b];
         } else if (a[1] == 2u) {
             uint32_t nt = (uint32_t)px_ntypes((int)b);
-            PRESET.type[b] = (uint8_t)(v < nt ? v : nt - 1u);
+            px_preset_select_type(&PRESET, (int)b, (int)(v < nt ? v : nt - 1u));
             v = PRESET.type[b];
             ed_ui_fix();
         } else return;

@@ -10,6 +10,19 @@ static const float AMP_LVL[PX_AMP_COUNT][11] = {
     {2.19f, 1.35f, -2.24f, -5.81f, -7.34f, -6.99f, -5.67f, -4.08f, -2.82f, -1.93f, -1.24f},
     {-5.03f, -6.41f, -11.05f, -14.68f, -15.95f, -15.93f, -15.34f, -14.52f, -13.48f, -12.10f, -11.04f},
     {-13.95f, -14.69f, -16.58f, -17.36f, -17.30f, -16.95f, -16.45f, -15.83f, -14.94f, -14.50f, -14.15f}};
+#ifdef PX_BLUES_V46
+/* Drive output trims at LEVEL 15, anchored to TS9. Median of two DI excerpts
+ * (single notes and chords) at three input levels, with gain and tone at noon.
+ * Keep the clean boost on its independent gain control. */
+static const float DRV_TRIM[PX_DRV_COUNT] = {
+    0.06400000f, 0.06372553f, 0.08460716f, 0.04869393f, 0.04329888f, 0.04268794f,
+    0.03737387f, 0.01506121f, 0.03636406f, 0.02941775f, 0.03114561f, 0.10850320f,
+    0.08684051f, 0.14158830f, 0.08715977f, 0.07855677f, 0.04249210f, 0.06522611f,
+    0.06276438f, 0.06347530f, 0.03417789f, 0.02747488f, 0.02362355f, 0.06949222f,
+    0.02547229f, 0.12684435f, 0.19089119f, 0.01305402f, 0.02919629f, 0.05989861f,
+    0.03210653f, 0.05449142f, 0.00000000f, 0.02434478f,
+};
+#else
 static const float DRV_TRIM[PX_DRV_COUNT] = {
     0.064f, 0.102f, 0.071f, 0.032f,
     /* Legacy recipes: unity at noon on the bundled direct guitar loops, starting from the pre-v34 trims. */
@@ -20,7 +33,11 @@ static const float DRV_TRIM[PX_DRV_COUNT] = {
 #ifdef PX_BLUES_LAB
     [PX_DRV_BLUES_808] = 0.062f,  /* matched to TS9 at the comparison preset settings */
 #endif
+#ifdef PX_BLUES_V45
+    [PX_DRV_TS808_JP] = 0.185874612f,
+#endif
 };
+#endif
 static const float DRV_DB[PX_DRV_COUNT] = {-9.03f, -5.23f, -11.89f, -12.62f};
 static const float CAB_DB[PX_CAB_COUNT] = {0.00f, -0.03f, -2.49f, 0.08f, 0.00f, -0.85f, 2.60f, 0.00f};   /* (USER IR: v38, not measured) */
 static const float CMP_DB[PX_CMP_COUNT] = {

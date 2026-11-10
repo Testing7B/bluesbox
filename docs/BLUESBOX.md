@@ -10,7 +10,14 @@ BluesBox starts with three guitar tone references: Stevie Ray Vaughan's Fender b
 
 The hosted editor supports TONE3000 sign-in and selection of A2 amp and pedal captures. The deployed popup and callback page were checked through the sign-in screen. Completing the signed-in selection and model load remains a separate test. Factory presets use the built-in models. User saves take precedence over factory slots.
 
-## Candidates for the next revision
+## Private BlackBox builds
+
+- **V45** put the 44.1 kHz **TWO-ROCK TS1** capture in its own AMP type. Factory P21 Gravity uses it with OPTO T4. P22 Slow Dance adds the **TS808 JAPAN** drive. V45 was verified on a BlackBox as `BlackBox_945`.
+- **V46** adds stereo 44.1 kHz USB playback mixed after the guitar effects, defaults distortion LEVEL to 15 and adjustable compressor MIX to 100, and orders block navigation from on/off through model and parameters. Drive output trims are calibrated against TS9 using lead and chord DI excerpts. TS808 Japan also has 6 dB less internal input gain than in V45. The V46 update passed in the simulator and the connected V45 pedal passed a read-only package check. USB playback and DSP load with a running stream still need a hardware test.
+
+The V45 and V46 builds require the local Two-Rock capture header. On a machine with permission to use the converted 44.1 kHz A2 Lite capture, generate the header with `python3 tools/mk_blues_ts1.py /path/to/capture.nam`, then build with `OP_CHANNEL=blues-v46 node tools/op.mjs build`. The private capture, weights and packages stay local. For installation use **Install a local build** in the [fork updater](https://testing7b.github.io/openpocket/) and choose the BlackBox package and its matching manifest.
+
+## Capture research
 
 | Candidate | Result | Next decision |
 | --- | --- | --- |
@@ -23,7 +30,7 @@ The listening shortlist came from 316 organized local A2 files plus 41 additiona
 
 ## References and credit
 
-- [Upstream OpenPocket](https://github.com/isod89/openpocket), its [capture fitting notes](FITTED-MODELS.md), and its [NAM engine documentation](NAM.md).
+- OpenPocket by isod89 and contributors. See the [capture fitting notes](FITTED-MODELS.md) and [NAM engine documentation](NAM.md).
 - [Yeh, Abel and Smith's diode clipper analysis](https://dafx.labri.fr/main/papers/p189.pdf) informed 808 Circuit. [Yu et al.'s DAFx compressor study](https://www.dafx.de/paper-archive/2024/papers/DAFx24_paper_75.pdf) and [SignalTrain LA-2A recordings](https://zenodo.org/records/3824876) provided a desktop comparator.
 - [Tokyo Studio Capture](https://www.tone3000.com/tones/tokyo-studio-capture-teletronix-la-2a-tube-compressor-69103) made the tested LA-2A capture. Thanks to the local amp and pedal capture creators and the [Guitar-TECHS DI contributors](../assets/loops/ATTRIBUTION.md).
 - Full component origins and licence details are in [NOTICE.md](../NOTICE.md).

@@ -443,6 +443,16 @@ static const drv_v DV[PX_DRV_COUNT] = {
                          CL_808_FB, TM_LP, 1100, 5800, 0, 0, 0, 0, 0},
     [PX_DRV_BLUES_BOOST] = {.name = "CLEAN BOOST", .role = {R_BOOST}, .np = 1},
 #endif
+#ifdef PX_BLUES_V45
+    [PX_DRV_TS808_JP] = {"TS808 JAPAN", L3(R_DRIVE, R_TONE, R_LEVEL),
+                         35.315168f, 389.945027f, 0, 0, 0, 7,
+#ifdef PX_BLUES_V46
+                         29.477395f, 49.477395f,  /* align the input gain range with the fitted TS9 */
+#else
+                         35.477395f, 55.477395f,
+#endif
+                         CL_SOFT, TM_LP, 901.553659f, 4507.768295f, 0, 0, 0, 0, 0},
+#endif
 };
 
 /* =============================================================== amps ====== */
@@ -545,6 +555,14 @@ static const char *const PN_NAM[] = {"MODEL", "GAIN", "BASS", "MID", "TREBLE"};
 static const char *const PN_CAB[] = {"BODY", "BRIGHT", "MIC"};
 static const char *const PN_CABIR[] = {"IR", "LOW CUT", "HIGH CUT"};   /* v38 */
 
+static int is_nam_type(int type)
+{
+#ifdef PX_BLUES_V45
+    if (type == PX_AMP_TS1) return 1;
+#endif
+    return type == PX_AMP_NAM;
+}
+
 const char *px_block_label(int b) { return (b >= 0 && b < PX_NBLK) ? BLK_LABEL[b] : "?"; }
 const char *px_block_name(int b)  { return (b >= 0 && b < PX_NBLK) ? BLK_NAME[b] : "?"; }
 int px_ntypes(int b)
@@ -571,6 +589,9 @@ const char *px_type_name(int b, int t)
 {
     if (t < 0 || t >= px_ntypes(b)) t = 0;
     if (b == PX_B_DRIVE) return DV[t].name;
+#ifdef PX_BLUES_V45
+    if (b == PX_B_AMP && t == PX_AMP_TS1) return "TWO-ROCK TS1";
+#endif
     if (b == PX_B_AMP) return t == PX_AMP_NAM ? "NAM" : AV[t].name;
     if (b == PX_B_CAB) return CV[t].name;
     const tdef *d = tdef_of(b, t);
@@ -580,6 +601,9 @@ int px_nparams(int b, int t)
 {
     if (t < 0 || t >= px_ntypes(b)) t = 0;
     if (b == PX_B_DRIVE) return DV[t].np;
+#ifdef PX_BLUES_V45
+    if (b == PX_B_AMP && t == PX_AMP_TS1) return 4;
+#endif
     if (b == PX_B_AMP) return 5;
     if (b == PX_B_CAB) return t == PX_CAB_DI ? 0 : 3;
     const tdef *d = tdef_of(b, t);
@@ -590,6 +614,9 @@ const char *px_param_name(int b, int t, int k)
     if (t < 0 || t >= px_ntypes(b)) t = 0;
     if (k < 0 || k >= px_nparams(b, t)) return "";
     if (b == PX_B_DRIVE) return ROLE_NAME[DV[t].role[k]];
+#ifdef PX_BLUES_V45
+    if (b == PX_B_AMP && t == PX_AMP_TS1) return PN_NAM[k + 1];
+#endif
     if (b == PX_B_AMP) return t == PX_AMP_NAM ? PN_NAM[k] : PN_AMP[k];
     if (b == PX_B_CAB) return t == PX_CAB_IR ? PN_CABIR[k] : PN_CAB[k];
     return tdef_of(b, t)->pn[k];
@@ -685,7 +712,7 @@ int px_param_text(int b, int t, int k, int v, char *buf)
             buf[8] = 0;
             return 1;
         }
-        if (t == PX_AMP_NAM && k == 1) { float db = (x - 0.5f) * 24.0f; put_int(buf, (int)(db + (db >= 0 ? 0.5f : -0.5f)), 1); return 1; }
+        if (is_nam_type(t) && k == (t == PX_AMP_NAM ? 1 : 0)) { float db = (x - 0.5f) * 24.0f; put_int(buf, (int)(db + (db >= 0 ? 0.5f : -0.5f)), 1); return 1; }
         break;
     case PX_B_PITCH:
         if (t == PX_PIT_HARMONY && k == 0) { put_str(buf, HARM_TXT[harm_idx(v)]); return 1; }
@@ -722,6 +749,31 @@ static void blk(px_preset_t *p, int b, int on, int type, int a, int c, int d, in
     p->on[b] = (uint8_t)on; p->type[b] = (uint8_t)type;
     p->p[b][0] = (uint8_t)a; p->p[b][1] = (uint8_t)c; p->p[b][2] = (uint8_t)d; p->p[b][3] = (uint8_t)e; p->p[b][4] = (uint8_t)f;
 }
+static void model_defaults(px_preset_t *p, int block)
+{
+#ifdef PX_BLUES_V46
+    int type = p->type[block];
+    if (block == PX_B_DRIVE) {
+        const drv_v *drive = &DV[type];
+        for (int k = 0; k < drive->np; k++)
+            if (drive->role[k] == R_LEVEL) p->p[block][k] = 15;
+    } else if (block == PX_B_COMP) {
+        if (type == PX_CMP_STUDIO) p->p[block][3] = 100;
+        if (type == PX_CMP_OPTO || type == PX_CMP_OPTO_T4) p->p[block][2] = 100;
+    }
+#else
+    (void)p;
+    (void)block;
+#endif
+}
+
+void px_preset_select_type(px_preset_t *p, int block, int type)
+{
+    if (p->type[block] == type) return;
+    p->type[block] = (uint8_t)type;
+    model_defaults(p, block);
+}
+
 static void base_preset(px_preset_t *p)
 {
     memset(p, 0, sizeof(*p));
@@ -763,7 +815,11 @@ void px_preset_factory(px_preset_t *p, int idx)
     if (idx < 0 || idx >= NPRESETS) idx = 0;
     p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
 #ifdef PX_BLUES_LAB
-    if (blues_preset_factory(p, &idx)) return;
+    if (blues_preset_factory(p, &idx)) {
+        model_defaults(p, PX_B_DRIVE);
+        model_defaults(p, PX_B_COMP);
+        return;
+    }
 #endif
     switch (idx) {
     /* ---- clean ---- */
@@ -862,6 +918,8 @@ void px_preset_factory(px_preset_t *p, int idx)
         blk(p, PX_B_REVERB, 1, PX_REV_ROOM, 35, 50, 15, 0, 0);
     } break;
     }
+    model_defaults(p, PX_B_DRIVE);
+    model_defaults(p, PX_B_COMP);
 }
 #undef NAM
 #undef LVL
@@ -1136,6 +1194,10 @@ static void rc_drive(px_engine *e)
 
     float bl = (float)d->blend * 0.01f;
     bl *= (1.0f - 0.8f * dr);                     /* Klon: clean path fades as gain rises */
+#ifdef PX_BLUES_V46
+    /* The legacy Klone's parallel clean path needs the same output correction as its wet path. */
+    if (t == PX_DRV_V33 + 3) bl *= 0.481f;
+#endif
     e->drv_blend = bl;
 #ifdef PX_FIT
     if (px_fit_drv_on) { e->drv_level = px_fit_drv_trim * 2.0f * level; return; }
@@ -1146,6 +1208,16 @@ static void rc_drive(px_engine *e)
 static int px_may_load = 1;                            /* v38: 0 in px_engine_knobs (the audio side): no flash reads there */
 /* ---------------------------------------------------------------- NAM (v37) --- */
 #include "px_nam_factory.h"                            /* the factory models (tools/mk_nam_factory.py) */
+#ifdef PX_BLUES_V45
+#include "px_blues_ts1_private.h"
+#endif
+static int nam_model_of(const px_preset_t *p)
+{
+#ifdef PX_BLUES_V45
+    if (p->type[PX_B_AMP] == PX_AMP_TS1) return PX_NAM_N;
+#endif
+    return px_nam_model(p->p[PX_B_AMP][0]);
+}
 #if defined(__PI32V2__) && !defined(PX_NAM_POOL)       /* the pedal: the big piece in its "POOL" RAM region */
 #define PX_NAM_POOL __attribute__((section(".pool")))
 #endif
@@ -1210,6 +1282,9 @@ static int nam_load(int m, float *level_db)
     const float *w = 0;
     *level_db = 0.0f;
     if (m >= 0 && m < PX_NAM_NFACT) { w = PXN_FW[m]; *level_db = PXN_FLVL[m]; }
+#ifdef PX_BLUES_V45
+    else if (m == PX_NAM_N) { w = PXN_TS1_WEIGHTS; *level_db = PXN_TS1_TRIM; }
+#endif
     else if (m >= PX_NAM_NFACT && m < PX_NAM_N) {
         char nm[12];
         float *tmp = (float *)px_nam_r0;
@@ -1248,9 +1323,9 @@ void px_nam_fast(void *base, unsigned bytes) { pxn_set_fast((int32_t *)base, byt
 static void rc_nam(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
-    const uint8_t *q = p->p[PX_B_AMP];
+    const uint8_t *q = p->p[PX_B_AMP] + (p->type[PX_B_AMP] == PX_AMP_NAM ? 1 : 0);
     float sr = e->sr, lv = 0.0f;
-    int m = px_nam_model(q[0]);
+    int m = nam_model_of(p);
     e->amp_n = 0;
     e->amp_nam = 1;
     if ((m != e->nam_idx || !px_nam_m.ready) && px_may_load) {   /* (v38: never on the audio side) */
@@ -1259,10 +1334,10 @@ static void rc_nam(px_engine *e)
         e->nam_out_g = powf(10.0f, (lv + PX_NAM_REF_DB) * 0.05f);
     }
     /* the pedal's input (hard playing ~ -17 dBFS) -> the captures' DI level (x 1 / 0.15), then GAIN +-12 dB */
-    e->nam_in_g = (1.0f / 0.15f) * powf(10.0f, (f01(q[1]) - 0.5f) * 24.0f * 0.05f);
-    bq_lowshelf(&e->ts_low, sr, 120.0f, (f01(q[2]) - 0.5f) * 20.0f);
-    bq_peak(&e->ts_mid, sr, 800.0f, 0.7f, (f01(q[3]) - 0.5f) * 16.0f);
-    bq_highshelf(&e->ts_high, sr, 2500.0f, (f01(q[4]) - 0.5f) * 20.0f);
+    e->nam_in_g = (1.0f / 0.15f) * powf(10.0f, (f01(q[0]) - 0.5f) * 24.0f * 0.05f);
+    bq_lowshelf(&e->ts_low, sr, 120.0f, (f01(q[1]) - 0.5f) * 20.0f);
+    bq_peak(&e->ts_mid, sr, 800.0f, 0.7f, (f01(q[2]) - 0.5f) * 16.0f);
+    bq_highshelf(&e->ts_high, sr, 2500.0f, (f01(q[3]) - 0.5f) * 20.0f);
 }
 /* the NAM block on n samples of e->nam_buf, in place */
 PX_HOT static void nam_run(px_engine *e, float *b, int n, float trim)
@@ -1282,7 +1357,7 @@ static void rc_amp(px_engine *e)
     int t = p->type[PX_B_AMP];
     if (t >= PX_AMP_NTYPES) t = 0;
     e->amp_nam = 0;
-    if (t == PX_AMP_NAM) { rc_nam(e); return; }
+    if (is_nam_type(t)) { rc_nam(e); return; }
     const amp_v *v = &AV[t];
 #ifdef PX_FIT
     if (px_fit_on) v = &px_fit_amp;                   /* the fitter's candidate (tests/fit/fitlib.c) */
@@ -1896,7 +1971,7 @@ static void px_recalc(px_engine *e)
     rc_sfx(e);
     (void)osr;                                         /* (v38: the half-band filters have fixed coefficients) */
     /* Before a NAM amp only the drive is oversampled. The network keeps its native sample rate. */
-    e->drv_os = (e->cur.on[PX_B_AMP] && e->cur.type[PX_B_AMP] == PX_AMP_NAM) ? PX_NAM_DRIVE_OS : PX_OVERSAMPLE;
+    e->drv_os = (e->cur.on[PX_B_AMP] && is_nam_type(e->cur.type[PX_B_AMP])) ? PX_NAM_DRIVE_OS : PX_OVERSAMPLE;
     rc_drive(e);
     rc_amp(e);
     rc_cab(e);
@@ -1971,7 +2046,6 @@ static const uint32_t GL_F[] = {
 typedef char px_gl_room[GL_N <= PX_GL_MAX ? 1 : -1];
 #define GLP(e, i) ((float *)((char *)(e) + GL_F[i]))
 
-static int nam_model_of(const px_preset_t *p) { return px_nam_model(p->p[PX_B_AMP][0]); }
 int px_engine_change(const px_engine *e, const px_preset_t *p)
 {
     const px_preset_t *c = &e->cur;
@@ -1980,7 +2054,7 @@ int px_engine_change(const px_engine *e, const px_preset_t *p)
     if (!px_order_valid(o)) { px_order_default(od); o = od; }
     if (memcmp(o, e->ord, PX_NBLK)) return PX_CH_FULL;
     int k = 0;
-    const int nam = c->type[PX_B_AMP] == PX_AMP_NAM;
+    const int nam = is_nam_type(c->type[PX_B_AMP]);
     for (int b = 0; b < PX_NBLK; b++) {
         if (c->type[b] != p->type[b]) return PX_CH_FULL;
         if (c->on[b] != p->on[b]) {

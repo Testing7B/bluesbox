@@ -85,7 +85,7 @@ static struct {
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
 static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
-static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = parameters */
+static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = on/off, 1 = type, 2.. = parameters */
 static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
 static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 
@@ -240,10 +240,10 @@ static void draw_info(int force)       /* the selected block: label, model, on/o
 }
 
 /* ===================================================== EDIT ======== */
-static void draw_band(int force)       /* the block's name on its colour, ON / OFF pill (item 1) */
+static void draw_band(int force)       /* the block's name on its colour, ON / OFF pill (item 0) */
 {
-    int on = PRESET.on[ui_blk] != 0, sel = (UI_PAGE && ui_item == 1u);
-    if (!(force || uc.blk != (int)ui_blk || uc.on != on || (uc.item == 1) != sel)) return;
+    int on = PRESET.on[ui_blk] != 0, sel = (UI_PAGE && ui_item == 0u);
+    if (!(force || uc.blk != (int)ui_blk || uc.on != on || (uc.item == 0) != sel)) return;
     uint16_t c = BLK_COL[ui_blk];
     if (force || uc.blk != (int)ui_blk) {
         lcd_rect(0, 0, 240, 4, c); lcd_rect(0, 27, 240, E_BAND - 27u, c); lcd_rect(0, 4, 8, 23, c);
@@ -256,7 +256,7 @@ static void draw_band(int force)       /* the block's name on its colour, ON / O
 }
 static void draw_type(void)
 {
-    int sel = (UI_PAGE && ui_item == 0u), ed = sel && ui_mode == M_EDIT;
+    int sel = (UI_PAGE && ui_item == 1u), ed = sel && ui_mode == M_EDIT;
     uint16_t bg = sel ? C_CARD : UI_BG, fg = ed ? UI_ACC : UI_TXT;
     ui_rbox(4, E_TYPE_Y - 2u, 232, 28, 5, bg, UI_BG);
     ft_box(8, E_TYPE_Y, 20, sel ? "<" : "", &FT_MD, UI_ACC, bg, 1);
@@ -292,8 +292,8 @@ static void draw_row(int k)            /* one full setting row */
 }
 static void draw_item(int it)
 {
-    if (it == 0) draw_type();
-    else if (it == 1) draw_band(1);
+    if (it == 1) draw_type();
+    else if (it == 0) draw_band(1);
     else draw_row(it - 2);
 }
 static void draw_edit(int force)
@@ -385,9 +385,9 @@ static void ui_knob(int dd, int fast)
         int n = ui_nitems();
         ui_item = (uint32_t)(((int)ui_item + n + dd) % n);
     } else if (ui_mode == M_EDIT) {
-        if (ui_item == 0u) {
+        if (ui_item == 1u) {
             int nt = px_ntypes((int)ui_blk);
-            PRESET.type[ui_blk] = (uint8_t)((PRESET.type[ui_blk] + nt + dd) % nt);
+            px_preset_select_type(&PRESET, (int)ui_blk, (PRESET.type[ui_blk] + nt + dd) % nt);
         } else if (ui_item >= 2u) {
             int k = (int)ui_item - 2, v = PRESET.p[ui_blk][k] + dd * (fast ? 5 : 1);
             if (v < 0) v = 0;
@@ -401,7 +401,7 @@ static void ui_push(void)
     if (ui_mode == M_MOVE) { ui_move_drop(); return; }
     if (ui_mode == M_CHAIN) { ui_mode = M_BLOCK; ui_item = 0; }
     else if (ui_mode == M_BLOCK) {
-        if (ui_item == 1u) PRESET.on[ui_blk] ^= 1u;
+        if (ui_item == 0u) PRESET.on[ui_blk] ^= 1u;
         else ui_mode = M_EDIT;
     } else ui_mode = M_BLOCK;
 }

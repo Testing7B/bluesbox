@@ -8,7 +8,7 @@ typedef struct {
     uint8_t model, cab, bass, mid, treble, body, bright, mic;
 } blues_amp;
 
-enum { BL_BLACKFACE, BL_FULL, BL_HEADROOM, BL_DRY };
+enum { BL_BLACKFACE, BL_FULL, BL_HEADROOM, BL_DRY, BL_TWO_ROCK };
 
 static const blues_amp BLUES_AMPS[] = {
     /* model       cabinet        bass mid treble   body bright mic */
@@ -16,6 +16,9 @@ static const blues_amp BLUES_AMPS[] = {
     { M_SUPER59,    PX_CAB_112CREAM,  47, 53, 52,     52, 49, 49 },
     { M_SHIRLCL,    PX_CAB_212BLUE,   48, 53, 49,     50, 46, 43 },
     { M_TWIN,       PX_CAB_112JN,    41, 60, 60,     42, 57, 59 },
+#ifdef PX_BLUES_V45
+    { PX_NAM_N,     PX_CAB_212BLUE,   48, 53, 49,     50, 46, 43 },
+#endif
 };
 
 typedef struct {
@@ -87,8 +90,13 @@ static const blues_preset BLUES_PRESETS[] = {
     { "TESTIFY",     BL_FULL,      60, 38, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(BL_TS808, 29, 55, 54), BL_NONE },
     { "THIRD STONE", BL_FULL,      52, 44, BL_VIBE,     BL_DLY_NONE, BL_PLATE,      BL_DRIVE(BL_OCTAFUZZ, 23, 45, 48), BL_NONE },
     /* John Mayer: 21–30 */
+#ifdef PX_BLUES_V45
+    { "GRAVITY",     BL_TWO_ROCK,  44, 51, BL_TREM,     BL_DLY_NONE, BL_SPRING,     BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 14, 28, 35) },
+    { "SLOW DANCE",  BL_TWO_ROCK,  49, 58, BL_MOD_NONE, BL_BBD,      BL_PLATE,      BL_DRIVE(PX_DRV_TS808_JP, 50, 50, 40), BL_OPTO(PX_CMP_OPTO_T4, 14, 28, 35) },
+#else
     { "GRAVITY",     BL_HEADROOM,  44, 51, BL_TREM,     BL_DLY_NONE, BL_SPRING,     BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 14, 28, 35) },
     { "SLOW DANCE",  BL_HEADROOM,  49, 58, BL_MOD_NONE, BL_BBD,      BL_PLATE,      BL_DRIVE(BL_BREAKER, 25, 47, 51), BL_NONE },
+#endif
     { "VULTURES",    BL_HEADROOM,  56, 51, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_KLON, 21, 51, 50), BL_NONE },
     { "NO DOCTOR",   BL_FULL,      58, 36, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(BL_BREAKER, 31, 54, 52), BL_NONE },
     { "DONT TRUST",  BL_BLACKFACE, 46, 56, BL_ROT_SLOW, BL_BBD,      BL_PLATE,      BL_NONE, BL_NONE },
@@ -155,7 +163,12 @@ static void blues_apply_preset(px_preset_t *p, const blues_preset *preset)
     memcpy(p->order, order, sizeof order);
     blk(p, PX_B_GATE, 1, 0, 13, 53, preset->level, 0, 0);
     blues_apply_block(p, PX_B_DRIVE, &preset->drive);
-    NAM(amp->model, preset->gain, amp->bass, amp->mid, amp->treble);
+#ifdef PX_BLUES_V45
+    if (preset->voice == BL_TWO_ROCK)
+        blk(p, PX_B_AMP, 1, PX_AMP_TS1, preset->gain, amp->bass, amp->mid, amp->treble, 0);
+    else
+#endif
+        NAM(amp->model, preset->gain, amp->bass, amp->mid, amp->treble);
     blk(p, PX_B_CAB, 1, amp->cab, amp->body, amp->bright, amp->mic, 0, 0);
     blues_apply_block(p, PX_B_COMP, &preset->comp);
     blues_apply_block(p, PX_B_MOD, &BLUES_MOD[preset->mod]);
