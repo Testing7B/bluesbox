@@ -57,12 +57,14 @@ await s.ready;
 let ed = new Editor(s.access);
 const info = await ed.connect();
 ok(info && info.proto === 3 && info.version === "v39" && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
-ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 12 blocks, 5 parameters, 52 slots, names of 13");
+ok(info && info.nblk === 11 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 11 blocks, 5 parameters, 52 slots, names of 13");
 const t0 = Date.now();
 const cat = await ed.catalog();
 const ntypes = cat.blocks.reduce((n, b) => n + b.types.length, 0);
-ok(cat.blocks.length === 12 && cat.blocks[5].label === "AMP" && cat.blocks[5].types.length === 9 && cat.blocks[5].types[8].name === "NAM", `catalogue: 12 blocks, ${ntypes} types (${Date.now() - t0} ms)`);
-ok(cat.blocks[11].label === "SYN" && cat.blocks[11].color === "#ff1494", `catalogue: the SYN block and its tile colour (${cat.blocks[11].color})`);
+ok(cat.blocks.length === 11 && cat.blocks[5].label === "AMP" && cat.blocks[5].types.length === 9 && cat.blocks[5].types[8].name === "NAM", `catalogue: 11 blocks, ${ntypes} types (${Date.now() - t0} ms)`);
+ok(cat.blocks[3].types.length === 6 && cat.blocks[4].types.length === 31 &&
+   cat.blocks[4].types[0].name === "TS9" && cat.blocks[4].types.some((t) => t.name === "RAT DIST"),
+   "catalogue: six Special FX and 31 drives, including V40 TS9 and V33 RAT");
 const withTexts = cat.blocks.flatMap((b) => b.types.flatMap((t) => t.params.filter((p) => p.texts))).length;
 ok(withTexts > 0 && cat.blocks[9].types[0].params.some((p) => p.texts && p.texts.some((x) => /ms|\d/.test(x))), `catalogue: value texts for ${withTexts} parameters (delay time...)`);
 let st = await ed.state();
@@ -78,7 +80,7 @@ ok(await ed.setType(amp, 99) === 8, "SET: a type out of range is clamped to the 
 await ed.setOn(9, 1);
 ok((await ed.state()).preset.on[9] === 1, "SET: the delay switched on");
 ok(await ed.name("my toneé longer than thirteen") === "my tone? long", "NAME: 13 characters at most, other characters become ?");
-const ord = [...st.preset.order]; [ord[0], ord[11]] = [ord[11], ord[0]];
+const ord = [...st.preset.order]; [ord[0], ord[10]] = [ord[10], ord[0]];
 ok(await ed.order(ord) === 0 && (await ed.state()).preset.order.join() === ord.join(), "ORDER: the block order changed");
 ok(await ed.order([0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) === 1, "ORDER: not a permutation -> refused");
 const bad = clonePreset(st.preset); bad.p[0][0] = 100; bad.on[3] = 1; bad.type[4] = 60;
@@ -130,8 +132,8 @@ const odd = presetFromJSON({ name: "X", blocks: [{ block: "AMP", on: true, type:
 ok(odd.warn.length === 2 && odd.preset.p[amp][0] === 1, "file: unknown type and block are reported, the rest comes through");
 const v33 = presetFromJSON({ name: "OLD", blocks: [{ block: "AMP", on: true, type: "RECTIFIED" }, { block: "DRV", on: true, type: "MUFF PI" }, { block: "CAB", on: true, type: "4x12 H30" }] }, cat, q);
 const tn = (b, t) => cat.blocks[b].types[t].name;
-ok(v33.warn.length === 3 && tn(amp, v33.preset.type[amp]) === "5150" && tn(4, v33.preset.type[4]) === "M77 OD" && tn(6, v33.preset.type[6]) === "4x12 V30",
-   "file: a v33 preset file -> the nearest v34 amp / drive / cab, each one reported");
+ok(v33.warn.length === 2 && tn(amp, v33.preset.type[amp]) === "5150" && tn(4, v33.preset.type[4]) === "MUFF PI" && tn(6, v33.preset.type[6]) === "4x12 V30",
+   "file: a v33 preset keeps its original drive and maps its amp and cab");
 const dl = cat.blocks.findIndex((b) => b.label === "DLY");
 const oldDly = presetFromJSON({ name: "ECHO", blocks: [{ block: "DLY", on: true, type: "TAPE EP-3", params: [50, 30, 20, 50, 50] }] }, cat, q);
 const newDly = presetFromJSON(presetToJSON(oldDly.preset, cat), cat, q);

@@ -12,5 +12,4 @@ static const uint16_t BLK_COL[PX_NBLK] = {
     0x7D5F,           /* MOD: lavender */
     0x47FF,           /* DLY: cyan */
     0x8FE0,           /* REV: green */
-    0xF8B2,           /* SYN: raspberry */
 };

@@ -37,7 +37,7 @@ let info = await get("/api/info");
 ok(info.kind === "pedal" && info.port === "OpenPocket" && info.controls.includes("fs_up"), `info: ${info.kind} on port "${info.port}"`);
 let s = await state();
 ok(s.slot === 0 && s.name === "TWIN CLEAN" && s.mode === "chain" && s.saved === 0 && s.dirty === 0, `state: slot 1 "${s.name}", chain page, factory sound`);
-ok(s.preset.p.length === 12 && s.preset.order.length === 12 && s.dsp.load === 42 && s.writes_ok === 1, "state: 12 blocks, the DSP load, flash writes allowed");
+ok(s.preset.p.length === 11 && s.preset.order.length === 11 && s.dsp.load === 42 && s.writes_ok === 1, "state: 11 blocks, the DSP load, flash writes allowed");
 
 // ---- 2. footswitches and the screen ----
 const shot0 = await png("/api/screen.rgb565"), f0 = s.frame;
@@ -210,7 +210,7 @@ const ed = new Editor(access);
 const inf = await ed.connect();
 ok(inf && inf.version === `v${VER}` && inf.identity === `PocketX_9${VER}`, "editor (pxedit.js) over the shim: INFO");
 const cat = await ed.catalog();
-ok(cat.blocks.length === 12 && cat.blocks[5].label === "AMP", "editor: the catalogue");
+ok(cat.blocks.length === 11 && cat.blocks[5].label === "AMP", "editor: the catalogue");
 await ed.setParam(5, 1, 33);
 s = await state();
 ok(s.preset.p[5][1] === 33, "editor: SET reaches the simulated pedal (seen in /api/state)");

@@ -83,7 +83,7 @@ await page.waitForSelector("#ui:not([hidden])", { timeout: 20000 });
 ok(/PocketX · OpenPocket v39/.test(await page.textContent("#status")), `status: ${await page.textContent("#status")}`);
 ok(await page.locator("#list .row").count() === 52, "52 presets listed");
 ok(await page.inputValue("#name") === "TWIN CLEAN" && await page.textContent("#num") === "01", "header: 01 TWIN CLEAN");
-ok(await page.locator("#tiles .tile").count() === 12, "12 tiles");
+ok(await page.locator("#tiles .tile").count() === 11, "11 tiles");
 await sleep(1200);
 ok(/C1 42%/.test(await page.textContent("#load")), "footer: the DSP load (PING)");
 await shot("editor_2_connected.png");

@@ -87,13 +87,13 @@ int main(void)
     /* many saves: the copies alternate, the newest wins; the last slot (in sector 1) works too */
     for (int i = 0; i < 25; i++) {
         p.p[PX_B_DELAY][0] = (uint8_t)i;
-        p.order[0] = (uint8_t)(i % 2 ? PX_B_SYN : PX_B_GATE); p.order[4] = (uint8_t)(i % 2 ? PX_B_GATE : PX_B_SYN);
+        p.order[0] = (uint8_t)(i % 2 ? PX_B_DRIVE : PX_B_GATE); p.order[4] = (uint8_t)(i % 2 ? PX_B_GATE : PX_B_DRIVE);
         CHECK(st_save((uint32_t)(i % 2 ? ST_NSLOT - 1u : 0), &p) == 0, "repeated save");
     }
     reboot();
     st_get(0, &q); CHECK(q.p[PX_B_DELAY][0] == 24 && q.order[0] == PX_B_GATE, "slot 1: the newest of 25 saves");
     st_get(ST_NSLOT - 1u, &q);
-    CHECK(q.p[PX_B_DELAY][0] == 23 && q.order[0] == PX_B_SYN && px_order_valid(q.order), "last slot (second sector): its newest save, with its block order");
+    CHECK(q.p[PX_B_DELAY][0] == 23 && q.order[0] == PX_B_DRIVE && px_order_valid(q.order), "last slot (second sector): its newest save, with its block order");
     loader_bytes_clear();
 
     /* factory reset of a slot */
@@ -153,7 +153,7 @@ int main(void)
         memcpy(nor + 0xF2000, &h, sizeof h);
         reboot();
         st_get(27, &q);
-        int ok = !strcmp(q.name, "OLD LEAD") && q.on[PX_B_SYN] == 0 && px_order_valid(q.order) && q.order[4] == PX_B_SYN;
+        int ok = !strcmp(q.name, "OLD LEAD") && q.on[PX_NBLK] == 0 && px_order_valid(q.order) && q.order[4] == PX_B_DRIVE;
         for (int b = 0; b < 11; b++)                           /* amp / drive / cab: moved to the v34 set */
             ok &= q.on[b] == (b & 1) && q.type[b] == ((b == PX_B_AMP || b == PX_B_DRIVE || b == PX_B_CAB) ? px_type_v34(b, b) : b);
         for (int i = 0; i < 55; i++) {                         /* delay TIME: moved to the v35 2 s scale */
@@ -167,7 +167,7 @@ int main(void)
         CHECK(!st_saved(2) && !memcmp(&q, &f, sizeof q), "format 1 store: unsaved slots stay factory");
         st_get(45, &q); px_preset_factory(&f, 45);
         CHECK(!memcmp(&q, &f, sizeof q), "format 1 store: the new slots 43..52 are factory");
-        q.p[PX_B_SYN][0] = 9;                                  /* next save: format 2 in the other copy */
+        q.p[PX_B_DRIVE][0] = 9;                                  /* next save: format 2 in the other copy */
         CHECK(st_save(27, &q) == 0, "save after conversion");
         reboot();
         st_get(27, &f);
@@ -192,8 +192,8 @@ int main(void)
         memcpy(nor + base, &h, sizeof h);
         reboot();
         st_get(5, &f);
-        CHECK(st_saved(5) && !strcmp(f.name, "MY RECTO") && f.type[PX_B_AMP] == PX_AMP_5150 && f.type[PX_B_DRIVE] == PX_DRV_M77 &&
-              f.type[PX_B_CAB] == PX_CAB_412V30 && f.type[PX_B_MOD] == 2, "format 2 store: RECTIFIED -> 5150, MUFF -> M77, H30 -> V30");
+        CHECK(st_saved(5) && !strcmp(f.name, "MY RECTO") && f.type[PX_B_AMP] == PX_AMP_5150 && f.type[PX_B_DRIVE] == PX_DRV_V33 + 13 &&
+              f.type[PX_B_CAB] == PX_CAB_412V30 && f.type[PX_B_MOD] == 2, "format 2 store: RECTIFIED -> 5150, MUFF -> original recipe, H30 -> V30");
         CHECK(px_type_v34(PX_B_AMP, 99) == 0 && px_type_v34(PX_B_DRIVE, -1) == 0, "an unknown old type -> the first one");
         loader_bytes_clear();
     }

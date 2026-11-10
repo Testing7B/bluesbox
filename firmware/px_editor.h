@@ -55,6 +55,8 @@ static int ed_take_preset(const uint8_t *a, px_preset_t *q)
 {
     uint32_t i, k;
     memcpy(q, a, ED_P_SIZE);
+    if (!px_order_valid(q->order)) return 0;
+    px_preset_normalize(q);
     for (i = 0; i < 14u; i++) {
         uint8_t c = (uint8_t)q->name[i];
         if (i >= ED_NAME_MAX || !c) { for (; i < 14u; i++) q->name[i] = 0; break; }
@@ -64,7 +66,7 @@ static int ed_take_preset(const uint8_t *a, px_preset_t *q)
         if (q->on[i] > 1u || q->type[i] >= (uint8_t)px_ntypes((int)i)) return 0;
         for (k = 0; k < PX_NPAR; k++) if (q->p[i][k] > 100u) return 0;
     }
-    return px_order_valid(q->order);
+    return 1;
 }
 
 /* the sound differs from what its slot holds (the pedal's "*") */

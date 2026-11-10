@@ -9,7 +9,7 @@
  *  | 07   JCM900                  |       | <         JCM900          >  |  model
  *  |      4x12 GREEN              |       | GAIN                     55  |
  *  |        BRIT CRUNCH           |       | ==========-----------------  |  up to 5 settings, bar + value
- *  | [GT][CMP][PIT][SFX][SYN][DRV]|       | BASS                     50  |
+ *  | [GT][CMP][PIT][SFX][DRV]|       | BASS                     50  |
  *  | [AMP][CAB][EQ][MOD][DLY][REV]|       | ...                          |
  *  | AMP   JCM900             ON  |       |                              |
  *  | PUSH EDIT   FOOT: PRESETS    |       | PUSH EDIT   HOME BACK C1 42% |
@@ -17,7 +17,7 @@
  *
  * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to PLAY (long press = tuner);
  * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = that block's page (press again = on/off);
- * FX = cycles DRV, SFX, SYN, PIT, CMP, GT, EQ. Hold PUSH = SAVE (into one of the 52 slots, in flash).
+ * FX = cycles DRV, SFX, PIT, CMP, GT, EQ. Hold PUSH = SAVE (into one of the 52 slots, in flash).
  * Double-click PUSH on PLAY = MOVE the selected block: KNOB moves it along the chain, PUSH drops it, HOME puts it back.
  * The preset LEVEL (v36) is the GT page's 3rd setting ("PRESET LVL").
  */
@@ -535,11 +535,12 @@ static void ui_preset_step(int dd)
     if ((int)ui_item >= ui_nitems()) ui_item = 0;
 }
 /* the FX button's blocks, in its order (the FX light follows them: px_lights.h) */
-static const uint8_t UI_FXB[7] = {PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
-static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> SYN -> PIT -> CMP -> GT -> EQ */
+static const uint8_t UI_FXB[] = {PX_B_DRIVE, PX_B_SFX, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
+static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> PIT -> CMP -> GT -> EQ */
 {
     uint32_t nx = PX_B_DRIVE;
-    for (int i = 0; i < 7; i++) if (UI_FXB[i] == ui_blk) nx = UI_FXB[(i + 1) % 7];
+    for (unsigned i = 0; i < sizeof UI_FXB; i++)
+        if (UI_FXB[i] == ui_blk) nx = UI_FXB[(i + 1) % sizeof UI_FXB];
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
 }
 

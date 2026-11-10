@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket — what the button lights show (issue #8). px_leds.h drives them; this decides them, once per main-loop
  * pass, from the preset being played:
- *   FX                          lit while any block of the FX button's group is on (UI_FXB: drive, SFX, synth,
+ *   FX                          lit while any block of the FX button's group is on (UI_FXB: drive, SFX,
  *                               pitch, comp, gate, EQ)
  *   AMP, MOD, DLY, REV, CAB     lit while their block is on
  *   HOME                        blinks (2 Hz) while the tuner is open, dark otherwise
@@ -21,7 +21,7 @@ enum { LT_HOME, LT_FX, LT_AMP, LT_MOD, LT_DLY, LT_REV, LT_CAB };      /* the lig
 static uint8_t lights_of(const px_preset_t *p, int tuner, uint32_t now)   /* the lit lights, 1 = lit */
 {
     uint8_t v = 0;
-    for (int i = 0; i < 7; i++)
+    for (unsigned i = 0; i < sizeof UI_FXB; i++)
         if (p->on[UI_FXB[i]]) v |= 1u << LT_FX;
     if (p->on[PX_B_AMP]) v |= 1u << LT_AMP;
     if (p->on[PX_B_MOD]) v |= 1u << LT_MOD;

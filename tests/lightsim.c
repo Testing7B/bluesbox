@@ -13,7 +13,7 @@
 
 /* the FX button's group, written out again here (ui.h's UI_FXB is the firmware's): drive, SFX, synth, pitch, comp,
  * gate, EQ */
-static const uint8_t UI_FXB[7] = { PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ };
+static const uint8_t UI_FXB[] = { PX_B_DRIVE, PX_B_SFX, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ };
 
 /* ---- port C and the 595: DS PC8, SHCP PC5, STCP PC6, OE PC7 (low = outputs on); a 0 on an output lights it */
 enum { R_OUT = 0, R_DIR = 2, R_PU = 4, R_PD = 5 };

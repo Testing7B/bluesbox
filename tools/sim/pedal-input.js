@@ -5,7 +5,7 @@
 
 export const BUTTONS = ["home", "fx", "amp", "mod", "dly", "rev", "cab", "fs_dn", "fs_up"];
 export const BLOCK = { amp: 5, cab: 6, mod: 8, dly: 9, rev: 10 };
-export const FX_BLOCKS = [4, 3, 11, 2, 1, 0, 7];        // ui_fx_cycle: DRV SFX SYN PIT CMP GT EQ
+export const FX_BLOCKS = [4, 3, 2, 1, 0, 7];            // ui_fx_cycle: DRV SFX PIT CMP GT EQ
 
 export const FAST_MS = 45;                              // openpocket.c: detents closer than this are a fast turn
 export const MASTER_STEP = 2;                           // openpocket.c: the volume's hysteresis, the smallest move it follows

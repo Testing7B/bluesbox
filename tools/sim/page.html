@@ -78,7 +78,7 @@
   </section>
 </main>
 <script>
-const LABELS = ["GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV", "SYN"];
+const LABELS = ["GT", "CMP", "PIT", "SFX", "DRV", "AMP", "CAB", "EQ", "MOD", "DLY", "REV"];
 const $ = (id) => document.getElementById(id);
 const call = (path, method = "POST") => fetch(path, { method }).then((r) => r.json());
 let frame = -1;

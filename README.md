@@ -2,8 +2,8 @@
 
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
-Install here: https://isod89.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
-NEW WEB EDITOR: https://isod89.github.io/openpocket/editor.html · **v40: the effects run the stock firmware's way (from RAM, delays at half rate)**: [docs/WHATS-NEW-v40.md](docs/WHATS-NEW-v40.md) · v39: the delay and the reverb off the critical path: [docs/WHATS-NEW-v39.md](docs/WHATS-NEW-v39.md) · v38: changes without clicks, your own cabinet IRs: [docs/WHATS-NEW-v38.md](docs/WHATS-NEW-v38.md) · v37: neural amp models (NAM A2), load your own from TONE3000: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+Install here: https://testing7b.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
+NEW WEB EDITOR: https://testing7b.github.io/openpocket/editor.html · **v40: the effects run the stock firmware's way (from RAM, delays at half rate)**: [docs/WHATS-NEW-v40.md](docs/WHATS-NEW-v40.md) · v39: the delay and the reverb off the critical path: [docs/WHATS-NEW-v39.md](docs/WHATS-NEW-v39.md) · v38: changes without clicks, your own cabinet IRs: [docs/WHATS-NEW-v38.md](docs/WHATS-NEW-v38.md) · v37: neural amp models (NAM A2), load your own from TONE3000: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.

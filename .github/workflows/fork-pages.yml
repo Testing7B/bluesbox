@@ -32,6 +32,14 @@ jobs:
       - name: Build the drive-lab channel
         if: inputs.drive_lab
         run: OP_CHANNEL=drive-lab OP_TEST_VERSION=41 NATIVE=1 node tools/op.mjs build
+      - name: Build the simulator engine
+        if: inputs.drive_lab
+        run: |
+          if ! command -v wasm-ld >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y lld
+          fi
+          NATIVE=1 node tools/op.mjs wasm
       - name: Upload the drive-lab package and symbols
         if: inputs.drive_lab
         uses: actions/upload-artifact@v4
@@ -41,6 +49,8 @@ jobs:
             docs/firmware/drive-lab/
             firmware/openpocket-drive-lab.bin
             firmware/build/symbols.txt
+            tools/sim/px_engine.wasm
+            tools/sim/px_engine.wasm.sources
           if-no-files-found: error
       - uses: actions/upload-pages-artifact@v4
         if: inputs.publish && github.ref == 'refs/heads/main'

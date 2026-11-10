@@ -57,7 +57,7 @@ static void st_from_v1(uint32_t k, const uint8_t *o)
     px_preset_t q;
     px_preset_factory(&q, (int)k);
     memcpy(q.name, o, 14);
-    memcpy(q.on, o + 14, 11); q.on[PX_B_SYN] = 0;
+    memcpy(q.on, o + 14, 11);
     memcpy(q.type, o + 25, 11);
     memcpy(q.p, o + 36, 55);
     px_order_default(q.order);
@@ -157,7 +157,7 @@ static int st_saved(uint32_t k) { return k < ST_NSLOT && st_slot[k][sizeof(px_pr
 /* the preset in slot k: the saved one, else the factory one */
 static void st_get(uint32_t k, px_preset_t *p)
 {
-    if (st_saved(k)) { memcpy(p, st_slot[k], sizeof *p); if (!px_order_valid(p->order)) px_order_default(p->order); }
+    if (st_saved(k)) { memcpy(p, st_slot[k], sizeof *p); px_preset_normalize(p); }
     else px_preset_factory(p, (int)k);
 }
 

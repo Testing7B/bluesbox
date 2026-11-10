@@ -15,6 +15,7 @@ export function presetBytes(preset) {
   b.set(preset.type, NAME + NBLK);
   b.set(preset.p.flat(), NAME + 2 * NBLK);
   b.set(preset.order, NAME + 2 * NBLK + NBLK * NPAR);
+  if (preset.order.length === NBLK - 1) b[b.length - 1] = NBLK - 1; // reserved V40 row
   return b;
 }
 

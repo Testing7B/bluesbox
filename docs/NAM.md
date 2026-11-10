@@ -56,7 +56,7 @@ A2 captures only), and the chosen tone comes back with its creator and its A2 mo
 user slot chosen beside it. This uses TONE3000's public API ([tone3000.com/api](https://www.tone3000.com/api)), its
 "Select" flow: OAuth 2.0 with PKCE and OpenPocket's publishable key (`T3K_CLIENT_ID` in `docs/pxt3k.js`), the sign-in
 coming back through `docs/t3k.html`. The access token lives in the page only while it is open. It needs that key and
-`https://isod89.github.io/openpocket/t3k.html` registered as a redirect URI in TONE3000's settings.
+`https://testing7b.github.io/openpocket/t3k.html` registered as a redirect URI in TONE3000's settings.
 
 The 16 user slots are in the pedal's flash at 0xC0000..0xE0000, outside the area a firmware update rewrites: your
 models stay through updates. Clear a slot from the same panel.

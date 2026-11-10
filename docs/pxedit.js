@@ -12,6 +12,7 @@ export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 
   NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
+const PRESET_ROWS = 12;           // V40 and Drive Lab share the same preset packet layout.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fail(code, msg) { const e = new Error(msg); e.code = code; return e; }
 
@@ -28,9 +29,11 @@ export function decodePreset(b, nblk = 12, npar = 5) {
   let i = 0;
   const name = String.fromCharCode(...b.slice(0, 14)).replace(/\0.*$/s, "");
   i = 14;
-  const on = [...b.slice(i, i + nblk)].map((x) => x ? 1 : 0); i += nblk;
-  const type = [...b.slice(i, i + nblk)]; i += nblk;
-  const p = []; for (let k = 0; k < nblk; k++) { p.push([...b.slice(i, i + npar)]); i += npar; }
+  const on = [...b.slice(i, i + nblk)].map((x) => x ? 1 : 0); i += PRESET_ROWS;
+  const type = [...b.slice(i, i + nblk)]; i += PRESET_ROWS;
+  const p = [];
+  for (let k = 0; k < nblk; k++) p.push([...b.slice(i + k * npar, i + (k + 1) * npar)]);
+  i += PRESET_ROWS * npar;
   const order = [...b.slice(i, i + nblk)];
   return { name, on, type, p, order };
 }
@@ -38,10 +41,11 @@ export function encodePreset(q, nblk = 12, npar = 5) {
   const out = [];
   const nm = cleanName(q.name);
   for (let i = 0; i < 14; i++) out.push(i < nm.length ? nm.charCodeAt(i) : 0);
-  for (let k = 0; k < nblk; k++) out.push(q.on[k] ? 1 : 0);
-  for (let k = 0; k < nblk; k++) out.push(q.type[k] & 0x7F);
-  for (let k = 0; k < nblk; k++) for (let j = 0; j < npar; j++) out.push(Math.max(0, Math.min(100, q.p[k][j] | 0)));
-  for (let k = 0; k < nblk; k++) out.push(q.order[k] & 0x7F);
+  for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk && q.on[k] ? 1 : 0);
+  for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk ? q.type[k] & 0x7F : 0);
+  for (let k = 0; k < PRESET_ROWS; k++) for (let j = 0; j < npar; j++)
+    out.push(k < nblk ? Math.max(0, Math.min(100, q.p[k][j] | 0)) : 0);
+  for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk ? q.order[k] & 0x7F : k);
   return out;
 }
 export function cleanName(s, max = 13) {
@@ -310,6 +314,11 @@ export function presetFromJSON(o, cat, base) {
   for (const ob of Array.isArray(o.blocks) ? o.blocks : []) {
     const i = byLabel.get(ob.block);
     if (i === undefined) { warn.push(`unknown block ${ob.block}`); continue; }
+    if (cat.blocks.length === 11 && ob.block === "SFX" && (ob.type === "SQUARE SYNTH" || ob.type === 6)) {
+      q.on[i] = 0;
+      warn.push("SFX: Square Synth is unavailable");
+      continue;
+    }
     q.on[i] = ob.on ? 1 : 0;
     let t = typeof ob.type === "number" ? ob.type : cat.blocks[i].types.findIndex((x) => x.name === ob.type);
     const moved = typeof ob.type === "string" && t < 0 && V33_TYPES[ob.block] && V33_TYPES[ob.block][ob.type];
@@ -330,7 +339,8 @@ export function presetFromJSON(o, cat, base) {
     }
   }
   if (Array.isArray(o.order)) {
-    const ord = o.order.map((l) => typeof l === "number" ? l : byLabel.get(l));
+    const labels = cat.blocks.length === 11 ? o.order.filter((l) => l !== "SYN" && l !== 11) : o.order;
+    const ord = labels.map((l) => typeof l === "number" ? l : byLabel.get(l));
     if (ord.length === q.order.length && new Set(ord).size === ord.length && ord.every((x) => x !== undefined && x >= 0 && x < q.order.length)) q.order = ord;
     else warn.push("block order not usable: default order kept");
   }
