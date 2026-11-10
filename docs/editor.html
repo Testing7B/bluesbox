@@ -406,7 +406,7 @@ async function namInstall(text, fileName, slot) {   // a .nam file into user slo
 let t3kSel = null;      // { tone, models }
 $("t3kbrowse").onclick = async () => {
   if (!t3kReady()) {
-    say("TONE3000 browsing is not set up in this editor yet (it needs OpenPocket's TONE3000 app key). Download the A2 " +
+    say("TONE3000 browsing needs a publishable key registered for this editor. Download the A2 " +
       "capture from tone3000.com and load the .nam file with a user slot's Load… button.", "err");
     return;
   }

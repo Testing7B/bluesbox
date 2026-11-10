@@ -54,9 +54,11 @@ The factory presets use them; the fitted amps of v34 are still there as the othe
 Or press **Browse TONE3000** in the same panel: TONE3000's own tone browser opens in a pop-up (sign in there; it shows
 A2 captures only), and the chosen tone comes back with its creator and its A2 models; **Load** puts one into the
 user slot chosen beside it. This uses TONE3000's public API ([tone3000.com/api](https://www.tone3000.com/api)), its
-"Select" flow: OAuth 2.0 with PKCE and OpenPocket's publishable key (`T3K_CLIENT_ID` in `docs/pxt3k.js`), the sign-in
-coming back through `docs/t3k.html`. The access token lives in the page only while it is open. It needs that key and
-`https://testing7b.github.io/openpocket/t3k.html` registered as a redirect URI in TONE3000's settings.
+"Select" flow: OAuth 2.0 with PKCE. The sign-in comes back through `docs/t3k.html` and the token lives in the page
+while it is open. To enable browsing on the fork, register `https://testing7b.github.io/openpocket/t3k.html` in your
+TONE3000 settings, add the publishable key as the GitHub Actions variable `TONE3000_CLIENT_ID`, and redeploy Pages.
+For a local build, set the publishable key in `docs/t3k-config.js` and register the local callback URL. The editor
+can load downloaded A2 `.nam` files without this setup.
 
 The 16 user slots are in the pedal's flash at 0xC0000..0xE0000, outside the area a firmware update rewrites: your
 models stay through updates. Clear a slot from the same panel.

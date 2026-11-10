@@ -4,9 +4,9 @@
 // back to t3k.html, which hands the answer to this page. Then the tone's A2 models are listed and one is downloaded
 // with the access token. Only the publishable key (client_id) is used here: it is meant for browser code.
 
-// The publishable key of OpenPocket's TONE3000 app (www.tone3000.com/settings): public by design (browser code).
-export const T3K_CLIENT_ID = "t3k_pub_OvUHfN4NJJMeMM-5d8Px1XDFBMcTYJ_0";
-const cid = () => globalThis.__t3kClientId || T3K_CLIENT_ID;   // (the page test sets its own)
+import clientId from "./t3k-config.js";
+
+const cid = () => globalThis.__t3kClientId || clientId;   // (the page test sets its own)
 const API = "https://www.tone3000.com/api/v1";
 const REDIRECT = new URL("t3k.html", location.href).href.replace(/[?#].*$/, "");
 
