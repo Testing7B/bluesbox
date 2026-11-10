@@ -56,6 +56,9 @@ last model.
 | REVERB | 30 | 62 | 106 | 107 | 108 | 109 | 110 |
 | SYN | 31 | 63 | 111 | 112 | 113 | 114 | 115 |
 
+The SYN row is for V40. Drive Lab leaves those controller numbers and the SYN toggle (CC 19) unused.
+The other blocks keep their V40 numbers.
+
 **Toggles (footswitches).** CC 8 to 19 flip a block with **value 0** and ignore every other value, so a footswitch that sends
 127 then 0 for a tap flips it once. The pedal holds the state, so a preset change cannot put the footswitch out of step, as
 it can with the on/off numbers above.

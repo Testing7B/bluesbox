@@ -75,7 +75,10 @@ int main(void)
                 for (k = 0; k < sizeof RESERVED; k++) if (RESERVED[k] == cs[i]) bad++;
             }
         }
-        ok(n == 96 && !dup, "96 settings and toggles, each on its own Control Change number");
+        ok(n == 88 && !dup, "88 settings and toggles, each on its own Control Change number");
+        ok(px_cc_tab[19].kind == PXM_NONE && px_cc_tab[31].kind == PXM_NONE &&
+           px_cc_tab[63].kind == PXM_NONE && px_cc_tab[111].kind == PXM_NONE && px_cc_tab[115].kind == PXM_NONE,
+           "the old instrument controllers are unused");
         ok(!bad, "none above 119 (120..127 are channel-mode messages) or on a reserved number (bank, data entry, pedals, RPN)");
         ok(!used[PXM_CC_MASTER], "7 (volume) is not used by a block");
         bad = 0;
@@ -285,7 +288,7 @@ int main(void)
             if (!px_midi_cc_apply(&p, 8u + b, 0, &mv, &ms) || p.on[b] != was) same = 0;
             px_midi_cc_apply(&q, 20u + b, was ? 127u : 0u, &mv, &ms);
         }
-        ok(same, "CC 8 to 19, value 0: each flips the same block as CC 20 to 31, there and back");
+        ok(same, "CC 8 to 18, value 0: each flips the same block as CC 20 to 30, there and back");
         ok(px_midi_cc_apply(&p, 12, 127, &mv, &ms) == 0 && px_midi_cc_apply(&p, 12, 1, &mv, &ms) == 0 && !memcmp(&p, &q, sizeof p),
            "a toggle fires on value 0 only: a 127 then 0 tap flips once");
         p.on[PX_B_DELAY] = 0;
