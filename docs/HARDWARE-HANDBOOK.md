@@ -44,8 +44,25 @@ firmware read in three passes), `docs/NAM.md` (the fixed-point network), `docs/B
 - **Hardware loops** (`rep N { ... }`) have no branch cost. The compiler uses them for simple counted loops. The stock
   firmware's sample loops are all hardware loops.
 - **Flash code runs through the instruction cache** (XIP), shared by both cores. A cache miss on flash is expensive. The
-  stock firmware keeps every per-sample routine in RAM (section 9). We keep the NAM hand routines in flash next to their
-  callers (see the call-range rule in section 2).
+  stock firmware keeps every per-sample routine in RAM (section 9), and so does OpenPocket since v40, with one
+  exception (next point).
+- **Code in RAM is fetched more slowly than code in the cache** (measured, v40.5, sixteen copies of one instruction in a
+  counted loop): a 6-byte instruction that works for 1 cycle takes 2.14 cycles from RAM and 1.49 from the flash; a
+  6-byte `smax` paired with a load 2.27 against 2.08. RAM delivers an instruction word in about 1.5 cycles, the cache
+  one every cycle, and a hardware loop (`rep`, bodies up to 32 bytes) fetches nothing after its first turn. Compiled
+  float code is not affected (a float operation is 4 bytes for 2 cycles), and the effect loops run no faster from the
+  flash (tried: the same load, more jitter). The NAM network's hand loops are multiply-adds paired with loads, 6 bytes
+  for 2 cycles: from RAM they wait for their own instructions. `rdm6`, `rdm15` and `post5` (6.6 KB) therefore lie in
+  the flash (`PXN_HOT`, `engine/px_nam.c`): the whole network takes 6 % less time, and editor traffic and knob turns
+  over USB (flash code on CPU0, 100 requests a second) do not change a heavy chain's load or its peaks.
+- **The cycle costs, in a hardware loop** (measured, v40.4 and v40.5; a timer tick is 15 cycles): a load 2, a store 1.5,
+  an ALU instruction 1, a 32x32 multiply or a 64-bit multiply-add 2, a float add or multiply 2 each, a float division
+  4, a taken branch 6.4, a call and return about 90. A 16-bit load or store written with a multiply or multiply-add in
+  one instruction (`#`) is free; written with a 1-cycle instruction it costs its own time (the instruction is then
+  free). A value used by the instruction after its load costs 1 more cycle. Multiply-adds into the same accumulator
+  one after the other take 3 cycles each (2 when two or more accumulators take turns), and 64-bit shifts of the same
+  pair 2 each (1 when they alternate). Loads and stores in turn cost less than the same number grouped (a load and a
+  store 2.5 to 3 cycles together). The two cores do not slow each other's memory accesses.
 - **libm precision matters.** Our first `cosf` (sin(x + pi/2), error 4e-6) made biquads at 30 Hz with 4x oversampling
   unstable, giving NaN and then permanent silence on the pedal while the PC (system libm) was fine. Always simulate with
   the libm you ship (`firmware/px_math.c`).
@@ -74,6 +91,13 @@ firmware read in three passes), `docs/NAM.md` (the fixed-point network), `docs/B
      on this block, then both share the network. This costs one extra block of latency (`tests/engine/pipe_test.c`: same
      output, one block later).
   4. **v39 "wet lanes"**: delay and reverb run beside the chain, two blocks late (section 8).
+- **Lesson from v40.4 (measured):** a job per interrupt that must end before the next one puts the two cores' work in
+  series. With the network split by layers, CPU1's last network block could only start when CPU0 had finished its own
+  share, so a block needed CPU0's share plus one network block on CPU1 (12 % of the block) within 2.9 ms: loads above
+  about 88 % a core made the interrupt wait. After the interrupt has been held off (a preset change holds it off for
+  10 ms), it runs block after block until it has caught up with the converters, and every such wait then counts as
+  load. Let CPU1 run one worker across the interrupts, ask it for the output-critical work by a counter, and wait only
+  for that.
 - **Lesson from v39 (measured as a defect):** with pattern 3 we gave CPU1 the delay and reverb as a job in the gap
   after the block, before the next interrupt. The gap was too short, because the network shares its work between the
   cores and only half of the freed time came back to the gap. The job was cut every block and the wet sound came out

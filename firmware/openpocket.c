@@ -581,7 +581,7 @@ static uint32_t ed_prof(uint32_t k)
     if (k <= PX_NBLK) return a_pf[k];
     if (k == PX_NBLK + 1u) return (uint32_t)pxn_mode();
     k -= PX_NBLK + 2u;
-    if (k == PXN_MODES + 9u) return g_eng.nam_lp ? 1u + (uint32_t)px_nam_lp_split_now() : 0u;   /* v40.2 */
+    if (k == PXN_MODES + 9u) return g_eng.nam_lp ? 1u + (uint32_t)px_nam_lp_split_used() : 0u;   /* v40.2 (v40.4: the last block's) */
     if (k > PXN_MODES + 9u && k <= PXN_MODES + 13u) {  /* each core's load and peak (%), the layer split only */
         const uint32_t j = k - PXN_MODES - 10u;
         return g_eng.nam_lp ? (j < 2u ? a_cl[j] : a_cpk[j - 2u]) : 0u;
@@ -672,7 +672,7 @@ static void app_main(void)
     }
 #endif
 #if DSP_CPU1
-    fm1_cpu1_bar_build(402u);            /* a new build gives the 2nd core another chance (v40.2: its NAM routines changed) */
+    fm1_cpu1_bar_build(403u);            /* a new build gives the 2nd core another chance (v40.4: its job and the blocks' loops changed) */
     fm1_cpu1_start();                    /* at boot, before audio and interrupts (Felucca) */
 #endif
     lcd_init();

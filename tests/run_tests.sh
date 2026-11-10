@@ -4,6 +4,9 @@
 #  - engine: every block x model x extreme knob, signal / silence / overload, with the pedal's own libm (px_math.c):
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
 #  - the two-core pipeline (PRE / NAM / POST stages) gives the plain engine's output one block later
+#  - NAM hand routines: their start-up check and dispatch with C stand-ins under the sanitizers; post5's assembly text
+#    against the C post through a model of its instructions (tests/test_post5.py)
+#  - (not run here, it needs the git history: tests/equiv.sh REF, this tree's engine against commit REF's, bit for bit)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -36,6 +39,10 @@ $CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DPXN_EMUVEC -
 # would be a boot loop on the pedal)
 $CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DPXN_HAND=1 -Iengine tests/engine/hand_test.c firmware/px_math.c -lm -o build/hand_test && build/hand_test | tail -1
 $CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DPXN_HAND=1 -DPXN_LEAN=1 -Iengine tests/engine/hand_test.c firmware/px_math.c -lm -o build/hand_test_lean && build/hand_test_lean | tail -1   # (the Bluetooth image's)
+# v40.5: post5's assembly text itself, run by a model of its instructions against the C post (tests/test_post5.py), and
+# the same with one offset changed, which must fail
+python3 tests/test_post5.py
+if python3 tests/test_post5.py "r6 = [sp+40]" "r6 = [sp+44]" > /dev/null 2>&1; then echo "test_post5 accepts a wrong routine"; exit 1; fi
 $CC -O2 -Iengine -Ifirmware tests/engine/change_test.c firmware/px_math.c -lm -o build/change_test && build/change_test | tail -1
 $CC -O2 -Iengine -Ifirmware tests/engine/ir_test.c firmware/px_math.c -lm -o build/ir_test && build/ir_test | tail -1
 $CC -O2 -Iengine tests/engine/wet_test.c engine/px_dsp.c firmware/px_math.c -lm -o build/wet_test && build/wet_test | tail -1

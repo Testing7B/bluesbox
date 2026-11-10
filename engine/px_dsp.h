@@ -111,6 +111,11 @@ void        px_nam_fast(void *base, unsigned bytes);   /* memory away from the C
 #define     PX_NAM_LP_BYTES PXN_LP_BYTES
 void        px_nam_lp_mem(void *base, unsigned bytes);
 uint32_t    px_nam_lp_queued(void);
+int         px_nam_lp_split_used(void);               /* v40.4: the last block's share (it follows the one asked without */
+void        px_nam_lp_force(void);                    /* waiting for the other core, unless forced: px_nam.c pxn_lp_a) */
+uint32_t    px_nam_lp_handed(void);                   /* v40.4: blocks handed over so far; one handed over before that */
+int         px_nam_lp_before(uint32_t upto);          /* count is not finished; the network's work in layers 0..s, in */
+uint32_t    px_nam_lp_share(int s);                   /* 1/1024 of the whole */
 void        px_nam_lp_split(int s);
 int         px_nam_lp_split_now(void);
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
