@@ -10,10 +10,25 @@ static const float AMP_LVL[PX_AMP_COUNT][11] = {
     {2.19f, 1.35f, -2.24f, -5.81f, -7.34f, -6.99f, -5.67f, -4.08f, -2.82f, -1.93f, -1.24f},
     {-5.03f, -6.41f, -11.05f, -14.68f, -15.95f, -15.93f, -15.34f, -14.52f, -13.48f, -12.10f, -11.04f},
     {-13.95f, -14.69f, -16.58f, -17.36f, -17.30f, -16.95f, -16.45f, -15.83f, -14.94f, -14.50f, -14.15f}};
-static const float DRV_TRIM[PX_DRV_COUNT] = {0.064f, 0.102f, 0.071f, 0.032f};
+static const float DRV_TRIM[PX_DRV_COUNT] = {
+    0.064f, 0.102f, 0.071f, 0.032f,
+    /* Legacy recipes: unity at noon on the bundled direct guitar loops, starting from the pre-v34 trims. */
+    0.066f, 0.064f, 0.056f, 0.086f, 0.042f, 0.037f, 0.041f, 0.127f,
+    0.125f, 0.239f, 0.153f, 0.124f, 0.062f, 0.054f, 0.054f, 0.053f,
+    0.043f, 0.030f, 0.023f, 0.068f, 0.026f, 0.185f, 0.307f, 0.015f,
+    0.026f, 0.092f, 0.043f,
+#ifdef PX_BLUES_LAB
+    [PX_DRV_BLUES_808] = 0.062f,  /* matched to TS9 at the comparison preset settings */
+#endif
+};
 static const float DRV_DB[PX_DRV_COUNT] = {-9.03f, -5.23f, -11.89f, -12.62f};
 static const float CAB_DB[PX_CAB_COUNT] = {0.00f, -0.03f, -2.49f, 0.08f, 0.00f, -0.85f, 2.60f, 0.00f};   /* (USER IR: v38, not measured) */
-static const float CMP_DB[PX_CMP_COUNT] = {-4.97f, -2.14f, -1.97f, 9.34f};
+static const float CMP_DB[PX_CMP_COUNT] = {
+    -4.97f, -2.14f, -1.97f, 9.34f,
+#ifdef PX_BLUES_LAB
+    -1.97f,  /* OPTO T4 shares the original opto's steady-state gain curve. */
+#endif
+};
 static const float PIT_DB[PX_PIT_COUNT] = {0.54f, 0.34f, 2.96f, -0.58f, 1.49f};
 static const float SFX_DB[PX_SFX_COUNT] = {5.45f, 3.54f, 3.82f, -0.15f, 1.58f, -1.23f};
 static const float MOD_DB[PX_MOD_COUNT] = {1.41f, 2.83f, 3.07f, 2.49f, 0.08f, 5.70f, 4.01f, 2.50f, 0.09f, -0.45f, 0.03f};

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # OpenPocket — fit one of the engine's amp models to a NAM capture (docs/FITTED-MODELS.md).
 #
-# The capture is the reference: a real guitar DI goes through NAM's official engine (namrender) and through OUR engine
+# The capture is the reference: a real guitar DI goes through the NAM teacher and through our engine
 # (build/fitlib.so: the real px_dsp.c, AMP block alone, knobs at noon), and scipy's least_squares moves the amp's
 # numbers (tube stages, filters, tone stack, power amp) until our output matches. What comes out is a row of the
 # engine's amp table: the same code runs on the pedal, only the numbers change.
@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 from scipy import signal
 from scipy.optimize import least_squares
+import nam_teacher
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SR = 44100
@@ -62,20 +63,10 @@ class Engine:
         return y.astype(np.float64)
 
 
-def nam_render(capture, x, cache):
-    """the capture's output for x (44.1 kHz): resampled to its rate (48 kHz), the A1 network (tools/nam_a1.py), DC
-    removed (a real amp's output is AC-coupled), back to 44.1 kHz"""
-    if os.path.exists(cache):
-        return np.fromfile(cache, dtype=np.float32).astype(np.float64)
-    import nam_a1
-    m = nam_a1.load(capture)
-    sr = int(m["sr"])
-    g = np.gcd(sr, SR)
-    y = nam_a1.run(m, signal.resample_poly(x, sr // g, SR // g))
-    y = signal.sosfilt(signal.butter(2, 8.0, "highpass", fs=sr, output="sos"), y)
-    y = signal.resample_poly(y, SR // g, sr // g)[:len(x)]
-    y.astype(np.float32).tofile(cache)
-    return y
+def nam_render(teacher, x, cache):
+    if not isinstance(teacher, nam_teacher.Teacher):
+        teacher = nam_teacher.Teacher(teacher)
+    return teacher.render(x, SR, cache, highpass=8.0)
 
 
 def pre(x):                                         # pre-emphasis: the ear's weight on the upper mids
@@ -134,6 +125,8 @@ def best_lag(y, ref, maxlag=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", required=True)
+    ap.add_argument("--teacher", choices=nam_teacher.CHOICES, default="auto",
+                    help="reference model variant (auto prefers A2 Full, then A2 Lite, then A1)")
     ap.add_argument("--start", required=True, help="the table row to start from")
     ap.add_argument("--stages", type=int)
     ap.add_argument("--name", required=True)
@@ -146,6 +139,7 @@ def main():
     ap.add_argument("--loss", choices=("time", "spectral"), default="time",
                     help="time: sample by sample (clean amps); spectral: spectrum + dynamics (distortion)")
     a = ap.parse_args()
+    teacher = nam_teacher.Teacher(a.capture, a.teacher)
 
     eng = Engine()
     n, hard, v0 = table_row(a.start)
@@ -161,8 +155,8 @@ def main():
     tag = os.path.splitext(os.path.basename(a.capture))[0].replace(" ", "_")
     cache = os.path.join(os.path.dirname(a.out) or ".", "cache")
     os.makedirs(cache, exist_ok=True)
-    ref = nam_render(a.capture, x, os.path.join(cache, "%s_fit_%d_%d.f32" % (tag, s0, len(x))))
-    refv = nam_render(a.capture, xv, os.path.join(cache, "%s_val.f32" % tag))
+    ref = nam_render(teacher, x, os.path.join(cache, "%s_fit_%d_%d.f32" % (tag, s0, len(x))))
+    refv = nam_render(teacher, xv, os.path.join(cache, "%s_val.f32" % tag))
 
     # the free numbers, in a space the optimizer likes (log for frequencies)
     free = [f for f in FIELDS[:16] if int(f[-1]) < n] + ["tight", "bass", "mid", "midq10", "treb", "scoop", "pres",
@@ -253,7 +247,7 @@ def main():
         # the delay (for the short-term spectra) from a quiet probe, where even a high-gain amp is nearly linear
         rng = np.random.default_rng(1)
         probe = signal.sosfilt(signal.butter(2, [100, 5000], "bandpass", fs=SR, output="sos"), rng.standard_normal(SR * 2)) * 0.01
-        pref_ = nam_render(a.capture, probe, os.path.join(cache, "%s_probe.f32" % tag))
+        pref_ = nam_render(teacher, probe, os.path.join(cache, "%s_probe.f32" % tag))
         lag = delay_of(eng.run(v0, n, hard, probe), pref_)
         print("delay %.1f samples" % lag, flush=True)
     base = report(u0, "start (%s)" % a.start)
@@ -267,7 +261,8 @@ def main():
     v[FIELDS.index("trim")] = (fit["gain"] if a.loss == "time" else
                                float(np.sqrt(np.mean(refv ** 2)) / max(np.sqrt(np.mean(yv_ ** 2)), 1e-12)))
     # (the capture's output level; the table's trims are normalised afterwards, as px_trim.h)
-    out = {"name": a.name, "capture": os.path.basename(a.capture), "start": a.start, "stages": n, "hard": hard,
+    out = {"name": a.name, "capture": os.path.basename(a.capture), "teacher": teacher.variant,
+           "start": a.start, "stages": n, "hard": hard,
            "lag": float(lag), "values": dict(zip(FIELDS, [float(t) for t in v])), "before": base, "after": fit,
            "seconds": round(time.time() - t0)}
     json.dump(out, open(a.out, "w"), indent=1)

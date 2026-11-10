@@ -351,7 +351,11 @@ static const char *const PN_CMP[] = {"SUSTAIN", "ATTACK", "LEVEL", "MIX"};
 static const char *const PN_OPTO[] = {"COMPRESS", "LEVEL", "MIX"};
 static const char *const PN_SWELL[] = {"RISE", "SENS", "LEVEL"};
 static const tdef T_COMP[PX_CMP_COUNT] = {
-    {"SQUASH", 3, PN_CMP}, {"STUDIO", 4, PN_CMP}, {"OPTO LA-2", 3, PN_OPTO}, {"SLOW SWELL", 3, PN_SWELL}};
+    {"SQUASH", 3, PN_CMP}, {"STUDIO", 4, PN_CMP}, {"OPTO LA-2", 3, PN_OPTO}, {"SLOW SWELL", 3, PN_SWELL},
+#ifdef PX_BLUES_LAB
+    {"OPTO T4", 3, PN_OPTO},
+#endif
+};
 
 static const char *const PN_OCT[] = {"DRY", "SUB -1", "SUB -2", "UP +1", "TONE"};
 static const char *const PN_POLY[] = {"DRY", "OCT -1", "OCT +1"};
@@ -379,7 +383,11 @@ static const char *const ROLE_NAME[R_NROLE] = {"DRIVE", "DIST", "FUZZ", "SUSTAIN
                                                "BASS", "VOICE", "GATE", "BIAS", "LOW", "HIGH", "TIGHT", "BRIGHT", "BLEND"};
 
 /* ============================================================== drives ===== */
-enum { CL_SOFT, CL_ASYM, CL_HARD, CL_GE, CL_LED, CL_MOS, CL_MUFF, CL_FUZZ, CL_OCTA, CL_BOOST };
+enum { CL_SOFT, CL_ASYM, CL_HARD, CL_GE, CL_LED, CL_MOS, CL_MUFF, CL_FUZZ, CL_OCTA, CL_BOOST,
+#ifdef PX_BLUES_LAB
+       CL_808_FB,
+#endif
+};
 enum { TM_LP, TM_MUFF, TM_HM2, TM_MT2 };
 typedef struct {
     const char *name;
@@ -430,6 +438,11 @@ static const drv_v DV[PX_DRV_COUNT] = {
     {"METAL ZONE",  L4(R_DIST, R_LOW, R_HIGH, R_LEVEL),     106,   0,   0, 1000, 8, 7, 30, 60, CL_HARD, TM_MT2,   105, 4900, 800,-8, 0, 0, 0},
     {"PRECISION",   L4(R_DRIVE, R_TIGHT, R_BRIGHT, R_LEVEL),100,   0,   0,    0, 0, 7,  6, 30, CL_LED,  TM_LP,  6000, 6000, 0,   0, 0, 0, 0},
     {"BASS DI 7K",  L4(R_DRIVE, R_TONE, R_BLEND, R_LEVEL),   40,   0,   0,    0, 0, 7, 10, 40, CL_LED,  TM_LP,  1500, 8000, 0,   0, 0, 0, 0},
+#ifdef PX_BLUES_LAB
+    [PX_DRV_BLUES_808] = {"808 CIRCUIT", L3(R_DRIVE, R_TONE, R_LEVEL), 18, 0, 0, 0, 0, 7, 0, 0,
+                         CL_808_FB, TM_LP, 1100, 5800, 0, 0, 0, 0, 0},
+    [PX_DRV_BLUES_BOOST] = {.name = "CLEAN BOOST", .role = {R_BOOST}, .np = 1},
+#endif
 };
 
 /* =============================================================== amps ====== */
@@ -741,11 +754,17 @@ int px_preset_count(void) { return NPRESETS; }
 #define NOGATE (p->on[PX_B_GATE] = 0)
 #define NAM(m, g, b, md, t) blk(p, PX_B_AMP, 1, PX_AMP_NAM, px_nam_knob(m), g, b, md, t)
 enum { M_TWIN, M_AC15, M_SUPER59, M_SHIRLCL, M_JCM900, M_SHIRLEY, M_JCM2000, M_MARK4, M_JVM, M_PROMOD, M_5150, M_6505 };
+#ifdef PX_BLUES_LAB
+#include "px_blues_presets.inc"
+#endif
 void px_preset_factory(px_preset_t *p, int idx)
 {
     base_preset(p);
     if (idx < 0 || idx >= NPRESETS) idx = 0;
     p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
+#ifdef PX_BLUES_LAB
+    if (blues_preset_factory(p, &idx)) return;
+#endif
     switch (idx) {
     /* ---- clean ---- */
     case 0: setname(p, "TWIN CLEAN"); blk(p, PX_B_GATE, 1, 0, 15, 50, 50, 0, 0); LVL(54);
@@ -904,12 +923,24 @@ static void rc_dyn(px_engine *e)
         e->cmp_make = db2lin(-6.0f + f01(q[2]) * 18.0f) * (1.0f + e->cmp_k * 0.15f);
         e->cmp_mix = f01(q[3]);
         break;
-    case PX_CMP_OPTO:                                  /* optical cell: 10 ms attack, slow program-like release */
+    case PX_CMP_OPTO:                                  /* legacy optical-style envelope */
+#ifdef PX_BLUES_LAB
+    case PX_CMP_OPTO_T4:
+#endif
         e->cmp_k = f01(q[0]) * 6.0f;
         e->cmp_att = expf(-1.0f / (0.010f * sr));
         e->cmp_rel = expf(-1.0f / (0.6f * sr));
         e->cmp_make = db2lin(-6.0f + f01(q[1]) * 18.0f) * (1.0f + e->cmp_k * 0.15f);
         e->cmp_mix = f01(q[2]);
+#ifdef PX_BLUES_LAB
+        if (t == PX_CMP_OPTO_T4) {
+            /* T4-inspired: a fast cell and slower light-history state.
+             * Keep the legacy gain curve and controls for the timing comparison. */
+            e->cmp_rel = expf(-1.0f / (0.087f * sr));
+            e->cmp_cell_charge = onepole_k(sr, 0.40f);
+            e->cmp_cell_release = onepole_k(sr, 1.45f);
+        }
+#endif
         break;
     default:                                           /* slow gear: volume swell after each pick attack */
         e->cmp_rise = onepole_k(sr, 0.05f + f01(q[0]) * f01(q[0]) * 1.95f);
@@ -1025,6 +1056,13 @@ static void rc_drive(px_engine *e)
     if (px_fit_drv_on) { d = &px_fit_drv; t = -1; }     /* the fitter's candidate: no per-type special case */
 #endif
     const uint8_t *q = p->p[PX_B_DRIVE];
+#ifdef PX_BLUES_LAB
+    if (t == PX_DRV_BLUES_BOOST) {
+        const float boost = f01(q[0]);
+        e->drv_gain = db2lin(10.8f * boost * boost);
+        return;
+    }
+#endif
     float dr = role_val(d, q, R_DRIVE, -1.0f);
     if (dr < 0.0f) dr = role_val(d, q, R_DIST, -1.0f);
     if (dr < 0.0f) dr = role_val(d, q, R_FUZZ, -1.0f);
@@ -1052,6 +1090,12 @@ static void rc_drive(px_engine *e)
         bq_peak(&e->drv_mid, sr, f, (float)d->mid_q10 * 0.1f, db);
         e->drv_pre |= 4;
     }
+#ifdef PX_BLUES_LAB
+    if (t == PX_DRV_BLUES_808) {
+        bq_hp1(&e->drv_shelf, osr, 720.0f);
+        e->drv_gain = (51000.0f + 500000.0f * dr) / 4700.0f;
+    }
+#endif
 
     /* clipper */
     e->drv_clip = d->clip;
@@ -1851,8 +1895,8 @@ static void px_recalc(px_engine *e)
     rc_pitch(e);
     rc_sfx(e);
     (void)osr;                                         /* (v38: the half-band filters have fixed coefficients) */
-    /* v37: before a NAM amp the drive runs at x2 (the network does not alias; x4 cost 18% of the CPU) */
-    e->drv_os = (e->cur.on[PX_B_AMP] && e->cur.type[PX_B_AMP] == PX_AMP_NAM) ? 2 : PX_OVERSAMPLE;
+    /* Before a NAM amp only the drive is oversampled. The network keeps its native sample rate. */
+    e->drv_os = (e->cur.on[PX_B_AMP] && e->cur.type[PX_B_AMP] == PX_AMP_NAM) ? PX_NAM_DRIVE_OS : PX_OVERSAMPLE;
     rc_drive(e);
     rc_amp(e);
     rc_cab(e);
@@ -1886,6 +1930,13 @@ void px_engine_init(px_engine *e, float sr)
 static void wl_clear(px_engine *e);
 void px_engine_set(px_engine *e, const px_preset_t *p)
 {
+#ifdef PX_BLUES_LAB
+    if (e->cur.type[PX_B_COMP] != p->type[PX_B_COMP] &&
+        (e->cur.type[PX_B_COMP] == PX_CMP_OPTO_T4 || p->type[PX_B_COMP] == PX_CMP_OPTO_T4)) {
+        e->cmp_env = 0.0f;
+        e->cmp_slow = 0.0f;
+    }
+#endif
     e->cur = *p;
     px_preset_normalize(&e->cur);
     memcpy(e->ord, e->cur.order, PX_NBLK);
@@ -2057,9 +2108,20 @@ static inline float drive_pre(px_engine *e, float x)   /* base rate */
     if (e->drv_pre & 1) x = x * e->drv_shelf_lo + bq_run(&e->drv_shelf, x);
     return x;
 }
+#ifdef PX_BLUES_LAB
+#include "px_blues_drive.inc"
+#endif
+PX_INL static inline float drive_shape(px_engine *e, float x)
+{
+#ifdef PX_BLUES_LAB
+    if (e->drv_clip == CL_808_FB)
+        return x + px_blues_808_clip(bq_run(&e->drv_shelf, x) * e->drv_gain);
+#endif
+    return clip_run(e, x * e->drv_gain);
+}
 PX_INL static inline float drive_run(px_engine *e, float x)   /* oversampled */
 {
-    float d = clip_run(e, x * e->drv_gain) + e->dn;
+    float d = drive_shape(e, x) + e->dn;
     if (e->drv_dcb) { e->drv_dcs += (d - e->drv_dcs) * e->drv_dck; d -= e->drv_dcs; }
     if (e->drv_tm == TM_MUFF) {
         float lo = bq_run(&e->drv_t1, d), hi = bq_run(&e->drv_t2, d);
@@ -2158,7 +2220,7 @@ static void drive_block(px_engine *e, float *u, int n, int os)   /* (static buff
     float *t = px_os_t, *h = px_os_h;
     for (int i = 0; i < n; i++) {
         const float dn = ((i / os) & 1) ? 1e-15f : -1e-15f;
-        float d = clip_run(e, u[i] * e->drv_gain) + dn;
+        float d = drive_shape(e, u[i]) + dn;
         if (e->drv_dcb) { e->drv_dcs += (d - e->drv_dcs) * e->drv_dck; d -= e->drv_dcs; }
         t[i] = d;
     }
@@ -2592,6 +2654,11 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     const int mod_t = p->type[PX_B_MOD] % PX_MOD_COUNT;
     const int dly_t = p->type[PX_B_DELAY] % PX_DLY_COUNT;
     const int drv_on = p->on[PX_B_DRIVE], amp_on = p->on[PX_B_AMP], amp_os = amp_on && e->amp_n > 0;
+#ifdef PX_BLUES_LAB
+    const int linear_boost = p->type[PX_B_DRIVE] == PX_DRV_BLUES_BOOST;
+#else
+    const int linear_boost = 0;
+#endif
     /* the blocks to run, in this preset's order (GATE always: it carries the anti-denormal offset) */
     uint8_t st[PX_NBLK];
     float tr[PX_NBLK];                                 /* each block's level trim */
@@ -2607,7 +2674,7 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     const float pg = e->patch_g;
     /* DRIVE right before AMP: one oversampled section for both (set A). Otherwise each its own: the amp keeps
      * set A, a drive elsewhere takes set B (set A when the amp does not oversample). */
-    const int pair = drv_on && amp_on && ip_amp == ip_drv + 1 &&
+    const int pair = drv_on && !linear_boost && amp_on && ip_amp == ip_drv + 1 &&
                      e->bf[PX_B_DRIVE] == 1.0f && e->bfa[PX_B_DRIVE] == 1.0f && e->bf[PX_B_AMP] == 1.0f &&
                      e->bfa[PX_B_AMP] == 1.0f;         /* v38: not while one of them fades (each fades on its own) */
     /* supply sag: slow (~11 ms), its two divisions once a block (divisions are slow on the pedal's FPU) */
@@ -2678,6 +2745,12 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         if (sblk == PX_B_DRIVE) {                        /* drive (+ the fitted amp's preamp when it comes right after:
                                                             pair), oversampled, stage by stage over the block. Set A, or B
                                                             when the amp oversamples on its own; set C at x2 before NAM */
+#ifdef PX_BLUES_LAB
+            if (drv_on && linear_boost) {
+                for (int k = 0; k < n; k++) xb[k] *= e->drv_gain;
+                goto faded;
+            }
+#endif
             if (drv_on) {
                 const int both = pair && amp_os;
                 const int os = (!both && e->drv_os == 2) ? 2 : PX_OVERSAMPLE, no = os * n;
@@ -2779,7 +2852,15 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     e->cmp_lw = (e->cmp_lw + 1) & 127;
                     x = e->cmp_la[e->cmp_lw] * e->cmp_sw * e->cmp_sw * e->cmp_make;
                 } else {
-                    float y = x * e->cmp_make / (1.0f + e->cmp_k * e->cmp_env * 4.0f);
+                    float env = e->cmp_env;
+#ifdef PX_BLUES_LAB
+                    if (cmp_t == PX_CMP_OPTO_T4) {
+                        float speed = a > e->cmp_slow ? e->cmp_cell_charge : e->cmp_cell_release;
+                        e->cmp_slow += (a - e->cmp_slow) * speed;
+                        env = 0.60f * env + 0.40f * e->cmp_slow;
+                    }
+#endif
+                    float y = x * e->cmp_make / (1.0f + e->cmp_k * env * 4.0f);
                     x = x + (y - x) * e->cmp_mix;
                 }
             }

@@ -6,6 +6,10 @@ on:
         description: Build the experimental drive-lab firmware
         type: boolean
         default: true
+      blues_lab:
+        description: Build both BlackBox blues-lab oversampling variants as artifacts
+        type: boolean
+        default: false
       publish:
         description: Publish the installer and editor on GitHub Pages (main only)
         type: boolean
@@ -16,6 +20,7 @@ permissions:
 
 jobs:
   build:
+    if: '!inputs.blues_lab'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -92,3 +97,59 @@ jobs:
     steps:
       - uses: actions/deploy-pages@v4
         id: deployment
+
+  blues:
+    if: inputs.blues_lab
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - channel: blues-lab
+            version: 43
+          - channel: blues-lab-4x
+            version: 44
+    env:
+      OP_CHANNEL: ${{ matrix.channel }}
+      OP_TEST_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned JieLi toolchain
+        run: sh firmware/setup.sh
+      - name: Build and verify the BlackBox package
+        run: |
+          NATIVE=1 node tools/op.mjs build
+          node --input-type=module - <<'JS'
+          import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+          const dir = 'docs/firmware/' + process.env.OP_CHANNEL + '/';
+          const manifest = JSON.parse(readFileSync(dir + 'manifest.json'));
+          for (const pkg of manifest.packages)
+            if (pkg.model !== 'BlackBox') unlinkSync(dir + pkg.file);
+          manifest.packages = manifest.packages.filter(pkg => pkg.model === 'BlackBox');
+          if (manifest.packages.length !== 1) throw new Error('Expected one BlackBox package');
+          writeFileSync(dir + 'manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          JS
+          sha256sum "firmware/openpocket-$OP_CHANNEL.bin" "docs/firmware/$OP_CHANNEL/"*.fwsc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.channel }}
+          path: |
+            docs/firmware/${{ matrix.channel }}/
+            firmware/openpocket-${{ matrix.channel }}.bin
+            firmware/build/symbols.txt
+          if-no-files-found: error
+      - name: Rebuild the default simulator engine
+        if: matrix.channel == 'blues-lab'
+        run: |
+          if ! command -v wasm-ld >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y lld
+          fi
+          NATIVE=1 node tools/op.mjs wasm
+      - uses: actions/upload-artifact@v4
+        if: matrix.channel == 'blues-lab'
+        with:
+          name: blues-default-simulator
+          path: |
+            tools/sim/px_engine.wasm
+            tools/sim/px_engine.wasm.sources
+          if-no-files-found: error

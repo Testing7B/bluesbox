@@ -6,18 +6,16 @@
 #
 #   train_a2.py --capture "X.nam" --di train.wav --val val.wav --out model.nam [--steps 3000] [--seconds 120]
 #
-# 1. The DI (44.1 kHz) is resampled to the capture's 48 kHz, played through the A1 capture (tools/nam_a1.py) and
-#    the result resampled back: the target, at 44.1 kHz.
+# 1. The DI (44.1 kHz) is resampled to the capture's rate, played through the A1 or A2 capture, and the result
+#    resampled back: the target, at 44.1 kHz.
 # 2. A2-Lite is trained on (DI, target) with Adam (JAX): error-to-signal ratio on the pre-emphasised signals plus a
 #    multi-resolution spectral term, random 1.2 s segments.
 # 3. The result is written as a standard .nam file (a WaveNet entry the NAM plugin and tools/nam_a2.py read), with
 #    the validation error and the loudness of the output in its metadata.
 import argparse, json, os, sys, time, wave
 import numpy as np
-from scipy.signal import resample_poly
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import nam_a1, nam_a2
+import nam_a2, nam_teacher
 
 SR = 44100
 C = 3
@@ -32,22 +30,6 @@ def read_wav(path):
     if sr != SR:
         raise ValueError("%s: %d Hz, want %d" % (path, sr, SR))
     return x
-
-
-def reference(capture, x, cache):
-    if os.path.exists(cache):
-        y = np.fromfile(cache, dtype=np.float32).astype(np.float64)
-        if len(y) == len(x):
-            return y
-    m = nam_a1.load(capture)
-    sr = int(m["sr"])
-    x48 = resample_poly(x, sr // 300, SR // 300) if sr != SR else x       # 44100 -> 48000: 160 / 147
-    y48 = nam_a1.run(m, x48)
-    y = resample_poly(y48, SR // 300, sr // 300)[:len(x)] if sr != SR else y48
-    y = np.concatenate([y, np.zeros(len(x) - len(y))]) if len(y) < len(x) else y
-    os.makedirs(os.path.dirname(cache) or ".", exist_ok=True)
-    y.astype(np.float32).tofile(cache)
-    return y
 
 
 # ------------------------------------------------------------------------------------------------ JAX model ---
@@ -147,6 +129,9 @@ def preemph(x, jnp):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", required=True)
+    ap.add_argument("--teacher", choices=nam_teacher.CHOICES, default="auto",
+                    help="reference model variant (auto prefers A2 Full, then A2 Lite, then A1)")
+    ap.add_argument("--source-license", help="record the input capture's known license in the output metadata")
     ap.add_argument("--di", required=True)
     ap.add_argument("--val", required=True)
     ap.add_argument("--out", required=True)
@@ -159,13 +144,14 @@ def main():
     ap.add_argument("--lr", type=float, default=4e-3)
     ap.add_argument("--init", help="start from this A2-Lite .nam (go on training it) instead of random weights")
     a = ap.parse_args()
+    teacher = nam_teacher.Teacher(a.capture, a.teacher)
     t0 = time.time()
     cache = os.path.join(os.path.dirname(os.path.abspath(a.out)), "cache")
     tag = os.path.splitext(os.path.basename(a.capture))[0].replace(" ", "_").replace(",", "_")
     x = read_wav(a.di)[: int(a.seconds * SR)]
     xv = read_wav(a.val)[: 20 * SR]
-    y = reference(a.capture, x, os.path.join(cache, "%s_train_%d.f32" % (tag, len(x))))
-    yv = reference(a.capture, xv, os.path.join(cache, "%s_val_%d.f32" % (tag, len(xv))))
+    y = teacher.render(x, SR, os.path.join(cache, "%s_train_%d.f32" % (tag, len(x))))
+    yv = teacher.render(xv, SR, os.path.join(cache, "%s_val_%d.f32" % (tag, len(xv))))
     print("%s: reference ready (%.0f s), peaks in %.2f out %.2f" % (tag, time.time() - t0, np.max(abs(x)), np.max(abs(y))),
           flush=True)
 
@@ -240,9 +226,11 @@ def main():
     net = nam_a2.unpack(w, C)
     yh = nam_a2.run(net, xv)
     esr = float(np.sum((yh - yv) ** 2) / np.sum(yv ** 2))
-    meta = {"name": a.name or tag, "trained_from": os.path.basename(a.capture), "val_esr": round(esr, 5),
-            "loudness": float(10 * np.log10(np.mean(yh ** 2) + 1e-12)), "trainer": "OpenPocket tools/train_a2.py",
-            "licence": "GPL-3.0 (derived from a GPL-3.0 capture of pelennor2170/NAM_models)"}
+    meta = {"name": a.name or tag, "trained_from": os.path.basename(a.capture), "teacher": teacher.variant,
+            "val_esr": round(esr, 5), "loudness": float(10 * np.log10(np.mean(yh ** 2) + 1e-12)),
+            "trainer": "OpenPocket tools/train_a2.py"}
+    if a.source_license:
+        meta["source_license"] = a.source_license
     json.dump(nam_json(w, meta), open(a.out, "w"))
     print("%s -> %s: val ESR %.4f (%.0f s)" % (tag, a.out, esr, time.time() - t0), flush=True)
 

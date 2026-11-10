@@ -13,6 +13,7 @@ import { parseWav, prepareIr, packIr, irName, resample, IR_LEN } from "../docs/p
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SIM = process.env.EDSIM || join(ROOT, "build", "edsim");
+const BLUES = process.env.EDSIM_BLUES === "1";
 const TMP = mkdtempSync(join(tmpdir(), "opedit-"));
 globalThis.localStorage = { getItem: () => null, setItem: () => {} };
 let failed = 0;
@@ -62,13 +63,37 @@ const t0 = Date.now();
 const cat = await ed.catalog();
 const ntypes = cat.blocks.reduce((n, b) => n + b.types.length, 0);
 ok(cat.blocks.length === 11 && cat.blocks[5].label === "AMP" && cat.blocks[5].types.length === 9 && cat.blocks[5].types[8].name === "NAM", `catalogue: 11 blocks, ${ntypes} types (${Date.now() - t0} ms)`);
-ok(cat.blocks[3].types.length === 6 && cat.blocks[4].types.length === 31 &&
+ok(cat.blocks[3].types.length === 6 && cat.blocks[4].types.length === (BLUES ? 33 : 31) &&
    cat.blocks[4].types[0].name === "TS9" && cat.blocks[4].types.some((t) => t.name === "RAT DIST"),
-   "catalogue: six Special FX and 31 drives, including V40 TS9 and V33 RAT");
+   "catalogue: six Special FX and all drives, including V40 TS9 and V33 RAT");
 const withTexts = cat.blocks.flatMap((b) => b.types.flatMap((t) => t.params.filter((p) => p.texts))).length;
 ok(withTexts > 0 && cat.blocks[9].types[0].params.some((p) => p.texts && p.texts.some((x) => /ms|\d/.test(x))), `catalogue: value texts for ${withTexts} parameters (delay time...)`);
 let st = await ed.state();
 ok(st.slot === 0 && !st.dirty && st.preset.name.length > 0, `STATE: slot 1 "${st.preset.name}", not changed`);
+if (BLUES) {
+  const labels = cat.blocks.map((b) => b.label);
+  const activeOrder = (q) => q.order.filter((i) => q.on[i]).map((i) => labels[i]).join(",");
+  ok(st.preset.name === "LENNY" && cat.blocks[1].types.at(-1).name === "OPTO T4" &&
+     cat.blocks[4].types.at(-2).name === "808 CIRCUIT" && cat.blocks[4].types.at(-1).name === "CLEAN BOOST",
+     "Blues Lab: factory bank and experimental catalogue visible to the editor");
+  for (const [slot, name] of [[2, "PRIDE & JOY"], [21, "GRAVITY"], [31, "BAD SIGN"]]) {
+    await ed.select(slot - 1);
+    const selected = await ed.state();
+    ok(selected.slot === slot - 1 && selected.preset.name === name, `Blues Lab: select slot ${slot} ${name}`);
+  }
+  await ed.select(44);
+  st = await ed.state();
+  ok(st.preset.name === "AB OPTO T4" && activeOrder(st.preset) === "GT,AMP,CAB,CMP" &&
+     await ed.setParam(1, 0, 39) === 39 && (await ed.state()).preset.p[1][0] === 39,
+     "Blues Lab: post-cab opto and live compression edit round-trip");
+  await ed.select(46);
+  st = await ed.state();
+  ok(st.preset.name === "AB TS808 LAB" && activeOrder(st.preset) === "GT,DRV,AMP,CAB" &&
+     await ed.setParam(4, 0, 25) === 25 && (await ed.state()).preset.p[4][0] === 25,
+     "Blues Lab: circuit drive and live gain edit round-trip");
+  await ed.select(0);
+  st = await ed.state();
+}
 
 // ---- 2. live editing ----
 const amp = 5;

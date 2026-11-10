@@ -5,10 +5,13 @@
 # same cabinet so it sounds like a guitar amp, levels matched, and written as one WAV: capture / fitted / current.
 #   fit_ab.py FIT.json CAPTURE.nam DI.wav OUT.wav [--seconds 10 --offset 0]
 import argparse, json, os, sys, wave
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import numpy as np
 from scipy import signal
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fit_amp as F
+import nam_teacher
 
 
 def cab(x):
@@ -38,7 +41,9 @@ def main():
     eng = F.Engine()
     s0 = int(a.offset * F.SR)
     x = F.read_wav(a.di)[s0:s0 + int(a.seconds * F.SR)]
-    ref = F.nam_render(a.capture, x, a.out + ".ref.f32")
+    teacher = nam_teacher.Teacher(a.capture, fit.get("teacher", "auto"))
+    with TemporaryDirectory() as directory:
+        ref = F.nam_render(teacher, x, Path(directory) / "reference.f32")
     v = np.array([fit["values"][f] for f in F.FIELDS])
     yf = eng.run(v, fit["stages"], fit["hard"], x)
     n0, h0, v0 = F.table_row(fit["start"])
@@ -56,7 +61,6 @@ def main():
     parts = [cab(ref), cab(yf), cab(y0)]
     peak = max(np.abs(p).max() for p in parts)
     write(a.out, np.concatenate([np.concatenate([p / peak * 0.8, gap]) for p in parts]))
-    os.remove(a.out + ".ref.f32")
     print(json.dumps(res))
 
 

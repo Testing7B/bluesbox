@@ -29,6 +29,12 @@ extern "C" {
 #ifndef PX_OVERSAMPLE
 #define PX_OVERSAMPLE 4
 #endif
+#ifndef PX_NAM_DRIVE_OS
+#define PX_NAM_DRIVE_OS 2
+#endif
+#if PX_NAM_DRIVE_OS != 2 && PX_NAM_DRIVE_OS != PX_OVERSAMPLE
+#error "PX_NAM_DRIVE_OS must be 2 or the full drive oversampling factor"
+#endif
 #define PX_MAX_BLOCK 64
 
 /* --------------------------------------------------------------- blocks --- */
@@ -37,10 +43,20 @@ enum { PX_B_GATE, PX_B_COMP, PX_B_PITCH, PX_B_SFX, PX_B_DRIVE, PX_B_AMP, PX_B_CA
 #define PX_PRESET_ROWS 12  /* V40 flash and editor packets reserve the former synth row. */
 #define PX_NPAR 5
 
-enum { PX_CMP_SQUASH, PX_CMP_STUDIO, PX_CMP_OPTO, PX_CMP_SWELL, PX_CMP_COUNT };
+enum { PX_CMP_SQUASH, PX_CMP_STUDIO, PX_CMP_OPTO, PX_CMP_SWELL,
+#ifdef PX_BLUES_LAB
+       PX_CMP_OPTO_T4,
+#endif
+       PX_CMP_COUNT };
 enum { PX_PIT_OCTAVER, PX_PIT_POLYOCT, PX_PIT_WHAMMY, PX_PIT_HARMONY, PX_PIT_DETUNE, PX_PIT_COUNT };
 enum { PX_SFX_AUTOWAH, PX_SFX_LFOWAH, PX_SFX_RING, PX_SFX_CRUSH, PX_SFX_SLICER, PX_SFX_LOFI, PX_SFX_COUNT };
-enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_V33, PX_DRV_COUNT = PX_DRV_V33 + 27 };
+enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_V33,
+#ifdef PX_BLUES_LAB
+       PX_DRV_BLUES_808 = PX_DRV_V33 + 27, PX_DRV_BLUES_BOOST, PX_DRV_COUNT
+#else
+       PX_DRV_COUNT = PX_DRV_V33 + 27
+#endif
+};
 enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX_AMP_SHIRLEY, PX_AMP_PROMOD,
        PX_AMP_5150, PX_AMP_COUNT };
 /* v37: Neural Amp Modeler A2-Lite (px_nam.c) as one more AMP type, after the 8 fitted amps. Its 5 settings: MODEL,
@@ -140,6 +156,9 @@ typedef struct {
     float gate_env, gate_g, gate_thr, gate_rel;
     /* comp */
     float cmp_env, cmp_slow, cmp_att, cmp_rel, cmp_k, cmp_make, cmp_mix, cmp_sw, cmp_thr, cmp_rise, cmp_slowk;
+#ifdef PX_BLUES_LAB
+    float cmp_cell_charge, cmp_cell_release;
+#endif
     /* pitch: delay-line shifters (2 voices) + analog octaver */
     float ps_buf[PX_PS_N]; int ps_w, ps_nv;
     float ps_ph[2], ps_inc[2], ps_W[2], ps_lvl[2], ps_off[2][2], ps_dry, ps_r, ps_rt, ps_glide, ps_invW;

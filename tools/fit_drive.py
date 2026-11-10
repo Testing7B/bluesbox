@@ -10,6 +10,7 @@ from scipy import signal
 from scipy.optimize import least_squares
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fit_amp as F
+import nam_teacher
 
 ROOT = F.ROOT
 SR = F.SR
@@ -60,23 +61,29 @@ class Engine:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", required=True); ap.add_argument("--start", required=True)
+    ap.add_argument("--teacher", choices=nam_teacher.CHOICES, default="auto",
+                    help="reference model variant (auto prefers A2 Full, then A2 Lite, then A1)")
     ap.add_argument("--name", required=True); ap.add_argument("--di", required=True); ap.add_argument("--val", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--nfev", type=int, default=250)
+    ap.add_argument("--fit-offset", type=float, default=20.0)
+    ap.add_argument("--fit-seconds", type=float, default=8.0)
     ap.add_argument("--loss", choices=("time", "spectral"), default="time")
     ap.add_argument("--clip", help="force a clipper (e.g. CL_LED)")
     a = ap.parse_args()
+    teacher = nam_teacher.Teacher(a.capture, a.teacher)
     eng = Engine()
     clip, tm, roles, np_, v0 = table_row(a.start)
     if a.clip:
         clip = CLIPS.index(a.clip)
     di = F.read_wav(a.di)
-    x = di[20 * SR:28 * SR]
+    start = int(a.fit_offset * SR)
+    x = di[start:start + int(a.fit_seconds * SR)]
     xv = F.read_wav(a.val)[:20 * SR]
     tag = os.path.splitext(os.path.basename(a.capture))[0].replace(" ", "_")[:60]
     cache = os.path.join(os.path.dirname(a.out) or ".", "cache")
     os.makedirs(cache, exist_ok=True)
-    ref = F.nam_render(a.capture, x, os.path.join(cache, "%s_fit.f32" % tag))
-    refv = F.nam_render(a.capture, xv, os.path.join(cache, "%s_val.f32" % tag))
+    ref = F.nam_render(teacher, x, os.path.join(cache, "%s_fit.f32" % tag))
+    refv = F.nam_render(teacher, xv, os.path.join(cache, "%s_val.f32" % tag))
 
     # free numbers: (name, getter -> u, setter u -> v); frequencies in log; the gain range and the tone range move as
     # a whole (only noon is captured)
@@ -175,7 +182,8 @@ def main():
     v = from_u(r.x)
     yv = eng.run(v, clip, tm, roles, np_, xv)
     v[FIELDS.index("trim")] = abs(fit["gain"]) if a.loss == "time" else float(rms(refv) / max(rms(yv), 1e-12))
-    json.dump({"name": a.name, "capture": os.path.basename(a.capture), "start": a.start, "clip": CLIPS[clip],
+    json.dump({"name": a.name, "capture": os.path.basename(a.capture), "teacher": teacher.variant,
+               "start": a.start, "clip": CLIPS[clip],
                "tm": TMS[tm], "roles": [ROLES[r_] for r_ in roles[:np_]], "lag": float(lag),
                "values": dict(zip(FIELDS, [float(t) for t in v])), "before": base, "after": fit,
                "loss": a.loss, "seconds": round(time.time() - t0)}, open(a.out, "w"), indent=1)
