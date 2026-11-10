@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only
-     OpenPocket web editor: the pedal's presets and its current sound, live, over USB-MIDI (Chrome / Edge).
+     BluesBox web editor: the pedal's presets and its current sound, live, over USB-MIDI (Chrome / Edge).
      Protocol: EDITOR-PROTOCOL.md; transport: pxedit.js. One file, no library. -->
 <html lang="en">
 <head>
@@ -219,7 +219,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
         <div class="idle" id="idle">
           <h3>Connect your pedal</h3>
           <p>Plug the Pocket X or BlackBox in with USB, then press <b>Connect</b> and allow MIDI devices. The pedal needs
-          OpenPocket v32 or newer: older versions can be updated from the <a href="./">installer</a>.</p>
+          A compatible firmware is required. Update older firmware from the <a href="./">installer</a>.</p>
           <p>Everything you change here plays at once on the pedal, and what you change on the pedal shows here.</p>
         </div>
         <div id="ui" hidden>
@@ -290,12 +290,12 @@ async function connect() {
     const e = new Editor(access);
     info = await e.connect();
     if (!info) {
-      say("No pedal with the editor found. Is it plugged in and running OpenPocket v32 or newer? (Update it from the installer.)", "err");
+      say("No pedal with the editor found. Is it plugged in and running compatible firmware? (Update it from the installer.)", "err");
       return;
     }
     ed = e;
     ed.onLost = lost;
-    $("status").textContent = `${info.identity.replace("_9", " · OpenPocket v").replace(/v(\d+)$/, "v$1")}`;
+    $("status").textContent = `${info.identity.replace("_9", " · BluesBox v").replace(/v(\d+)$/, "v$1")}`;
     $("dot").classList.add("on");
     say("Reading the pedal's catalogue…"); progress(0);
     cat = await ed.catalog(progress);
@@ -609,12 +609,16 @@ function renderPage(fromPush) {
   $("onoff").textContent = on ? "ON" : "OFF";
   $("onoff").classList.toggle("on", !!on);
   const sel = $("type");
-  if (sel.dataset.b !== String(b) || sel.options.length !== B.types.length) {
-    sel.textContent = "";
-    B.types.forEach((t, i) => { const o = document.createElement("option"); o.value = i; o.textContent = t.name; sel.appendChild(o); });
-    sel.dataset.b = b;
+  const typeId = st.preset.type[b];
+  const menu = `${b}:${T.hidden ? typeId : ""}`;
+  if (sel.dataset.menu !== menu) {
+    sel.replaceChildren();
+    B.types.forEach((t, i) => {
+      if (!t.hidden || i === typeId) sel.add(new Option(t.name, i));
+    });
+    sel.dataset.menu = menu;
   }
-  sel.value = st.preset.type[b];
+  sel.value = typeId;
   const box = $("params");
   const sig = `${b}:${st.preset.type[b]}`;
   if (box.dataset.sig !== sig) {
@@ -711,13 +715,18 @@ function toggle(b) {
 }
 $("onoff").onclick = () => toggle(focus);
 function setType(t) {
-  const n = blk(focus).types.length;
-  t = (t + n) % n;
+  if (blk(focus).types[t]?.hidden) return;
   act(async () => { st.preset.type[focus] = await ed.setType(focus, t); await syncState(); renderPage(); });
 }
 $("type").onchange = () => setType(+$("type").value);
-$("tprev").onclick = () => setType(st.preset.type[focus] - 1);
-$("tnext").onclick = () => setType(st.preset.type[focus] + 1);
+function stepType(dir) {
+  const types = blk(focus).types;
+  let t = st.preset.type[focus];
+  do { t = (t + types.length + dir) % types.length; } while (types[t].hidden);
+  setType(t);
+}
+$("tprev").onclick = () => stepType(-1);
+$("tnext").onclick = () => stepType(1);
 $("name").onchange = () => act(async () => { st.preset.name = await ed.name($("name").value); $("name").value = st.preset.name; await syncState(); renderHeader(); });
 $("name").onkeydown = (e) => { if (e.key === "Enter") $("name").blur(); };
 
@@ -831,7 +840,7 @@ $("file").onchange = async () => {
   $("file").value = "";
   if (!f || !ed) return;
   let list;
-  try { list = parsePresetFile(await f.text()); } catch (e) { say(`${f.name}: not an OpenPocket preset file.`, "err"); return; }
+  try { list = parsePresetFile(await f.text()); } catch (e) { say(`${f.name}: not a supported preset file.`, "err"); return; }
   if (!list.length) { say(`${f.name} holds no preset.`, "err"); return; }
   if (list.length === 1) {
     // one preset: it becomes the current sound (listen, then Save or Save as)

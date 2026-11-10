@@ -83,6 +83,8 @@ footer a,.note a{color:inherit}
   <section class="card" id="installCard">
     <h2><b>2</b><span data-t="s2"></span></h2>
     <p class="note"><span data-t="s2note"></span> <strong id="pkgver">…</strong></p>
+    <p class="note"><a href="?channel=blues-v47-public">Latest hosted BluesBox firmware · V47</a>.
+      For the build with the local A2 amp and cab fits, use <strong>Install a local build</strong>.</p>
     <p class="note warnbox" data-t="s2warn"></p>
     <p class="note warnbox" id="bbwarn" hidden data-t="bbwarn"></p>
     <p class="note warnbox" id="testchan" hidden data-t="testchan"></p>
@@ -115,7 +117,15 @@ footer a,.note a{color:inherit}
     <div class="row"><button class="alt" id="backoff" disabled data-t="backoff"></button></div>
     <div class="note warnbox" id="v21-factory" hidden>
       <strong>BlackBox V21 factory sounds</strong>
-      <p>The V21 firmware file contains no amps, cabinets, or presets. After it boots, verify the factory sounds here. If verification fails, start the Terminal tool in the <a href="RESCUE.md#blackbox-v21-factory-sounds">macOS recovery steps</a> before pressing the USB recovery button.</p>
+      <p>The V21 download contains the firmware. To restore the original sounds at the same time, select both AM4 files from your M-EFCS installation. The page checks and combines the three files on your computer.</p>
+      <fieldset id="factory-files">
+        <p><label>AM4 amp/cab bank <input type="file" id="factory-amps" accept=".bin"></label></p>
+        <p><label>AM4 preset bank <input type="file" id="factory-presets" accept=".bin"></label></p>
+        <label class="chk"><input type="checkbox" id="factory-confirm">I have backed up the sounds I want to keep. Restoring the factory bank replaces saved presets, amp captures and cabinet IRs on the pedal.</label>
+      </fieldset>
+      <p class="msg" id="factory-msg" role="status"></p>
+      <div class="row"><button class="go" id="factory-install" disabled>Install V21 with factory sounds</button></div>
+      <p class="note">For a pedal already on stock V21, verify its sounds or follow the <a href="RESCUE.md#blackbox-v21-factory-sounds">macOS recovery steps</a>. Those steps also show where to find the AM4 files.</p>
       <div class="row">
         <button class="alt" id="verify-factory" disabled>Verify factory sounds</button>
         <button class="alt" id="factory-uboot" disabled>Enter BlackBox USB recovery</button>
@@ -139,14 +149,14 @@ footer a,.note a{color:inherit}
   <footer>
     <span data-t="foot1"></span>
     <span data-t="foot2"></span>
-    <a href="https://github.com/Testing7B/openpocket">BluesBox source and documentation</a>
+    <a href="https://github.com/Testing7B/bluesbox">BluesBox source and documentation</a>
   </footer>
 </div>
 
 <script type="module">
 import { Updater, IS_OTA, IS_OPENPOCKET, OUR_LOADER, MODELS } from "./pxota.js";
 import { productOf, logicalImage, checkOfficial, verifyPackage } from "./pxpkg.js";
-import { BLACKBOX_V21, verifyFactorySounds } from "./pxfactory.js";
+import { BLACKBOX_V21, factoryBank, factoryUpdate, verifyFactorySounds } from "./pxfactory.js";
 
 const T = {
   en: {
@@ -155,7 +165,7 @@ const T = {
     s1: "Connect the pedal", s1note: "Turn the pedal on, plug it in over USB (a data cable) and close any other app using it. The browser asks for MIDI access: allow it.",
     connect: "Connect", idle: "waiting", searching: "searching…", found: "pedal found", none: "no pedal", busy: "working…",
     pedal: "Pedal", firmware: "Firmware", port: "MIDI port",
-    official: "official", opfw: "OpenPocket", loader: "update mode (loader)",
+    official: "official", opfw: "BluesBox", loader: "update mode (loader)",
     s2: "Install firmware", s2note: "Hosted version:",
     s2warn: "During the install (about 1 to 2 minutes): do not unplug or switch the pedal off, keep this tab open. Nothing is written before the pedal has checked the package. First install over the official firmware: keep your backup (SD card / fm1buddy) at hand.",
     install: "Install", resume: "Resume the update",
@@ -179,7 +189,7 @@ toeditor: "Preset editor →",
     e_model: "This package is not for this pedal: ", e_lost: "The pedal was disconnected. Plug it back in and press Resume.",
     e_stopped: "The pedal stopped answering. ", e_noloader: "The update loader did not appear. Replug the cable, then Resume.",
     e_noreturn: "The pedal did not come back: switch it off and on.", e_mismatch: "Written, but the pedal reports: ",
-    e_foreign: "The pedal is in the update mode of another firmware: ", e_pkg: "OpenPocket package missing on this site: ",
+    e_foreign: "The pedal is in the update mode of another firmware: ", e_pkg: "Firmware package missing on this site: ",
   },
 };
 const lang = "en";
@@ -208,6 +218,11 @@ const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").repl
 const FW = "firmware/" + (CHANNEL ? CHANNEL + "/" : "");
 let access = null, up = null, manifest = null, lastDev = null, busy = false, official = null;
 let sawV21 = false;
+let bank = null, bankRevision = 0;
+const recoveryChannel = "firmware/blues-v47-public/";
+const recoveryPending = () => stored("bluesbox-v21-recovery", "") === "pending";
+const recoveryReady = () => official?.product === BLACKBOX_V21 && official.known &&
+  bank && $("factory-confirm").checked;
 let localPackage = null, localRevision = 0;
 const localSelected = () => $("localfw").files.length > 0 || $("localmanifest").files.length > 0;
 const canInstall = (model) => localSelected()
@@ -217,6 +232,8 @@ const canInstall = (model) => localSelected()
 if (!navigator.requestMIDIAccess) { $("nomidi").hidden = false; $("connect").disabled = true; }
 $("testchan").hidden = !CHANNEL;
 if (CHANNEL === "drive-lab") $("testchan").textContent = t("drivelab");
+if (CHANNEL === "blues-v47-public")
+  $("testchan").textContent = "BluesBox V47 for BlackBox. This hosted build uses the public amp and cab models.";
 
 async function loadManifest() {
   try {
@@ -231,18 +248,21 @@ function showDev(d) {
   $("devinfo").hidden = !d;
   const onV21 = d?.id.text === BLACKBOX_V21;
   if (d) sawV21 = onV21;
+  if (onV21) try { localStorage.removeItem("bluesbox-v21-recovery"); } catch (_) {}
   $("v21-factory").hidden = !sawV21 && official?.product !== BLACKBOX_V21;
   $("verify-factory").disabled = busy || !onV21;
   $("factory-uboot").disabled = busy || !onV21;
+  $("factory-install").disabled = busy || !d || d.id.model !== "BlackBox" ||
+    !IS_OPENPOCKET(d.id) || !recoveryReady();
   $("resume").hidden = !d || !IS_OTA(d.id);
-  $("resume").disabled = busy || (localSelected() && d && OUR_LOADER(d.id) &&
+  $("resume").disabled = busy || (recoveryPending() && (!d || !OUR_LOADER(d.id) || !recoveryReady())) || (!recoveryPending() && localSelected() && d && OUR_LOADER(d.id) &&
     localPackage?.model !== stored("op-model", ""));
   $("install").disabled = busy || !d || IS_OTA(d.id) || !canInstall(d.id.model);
   $("install").textContent = localPackage ? "Install " + localPackage.product : t("install");
   $("uboot").disabled = busy || !d || !IS_OPENPOCKET(d.id);
   $("backoff").disabled = busy || !d || IS_OTA(d.id) || !official || official.model !== d.id.model ||
     (!official.known && !$("offok").checked);
-  $("backoff").textContent = official?.product === BLACKBOX_V21 ? "Install V21 firmware" : t("backoff");
+  $("backoff").textContent = official?.product === BLACKBOX_V21 ? "Install V21 firmware only" : t("backoff");
   if (!d) return;
   const id = d.id;
   const ota = IS_OTA(id);
@@ -306,7 +326,8 @@ async function run(job, resultMessage) {
   busy = true; stepAt = resultMessage ? -1 : 0; drawSteps(); $("bar").style.width = "0";
   setState(t("busy"), "warn");
   ["install", "resume", "backoff", "uboot", "connect", "verify-factory", "factory-uboot"].forEach((id) => $(id).disabled = true);
-  $("localfiles").disabled = true;
+  $("localfiles").disabled = $("factory-files").disabled = $("offfile").disabled = true;
+  $("factory-install").disabled = true;
   setMsg($("msg"), "");
   try {
     const res = await job();
@@ -321,7 +342,7 @@ async function run(job, resultMessage) {
     log(`error ${e.code || ""}: ${e.message}`);
   } finally {
     busy = false;
-    $("localfiles").disabled = false;
+    $("localfiles").disabled = $("factory-files").disabled = $("offfile").disabled = false;
     $("connect").disabled = false;
     await scan();
   }
@@ -402,7 +423,11 @@ $("install").onclick = () => run(async () => {
 });
 $("resume").onclick = () => run(async () => {
   const d = lastDev;
-  // our loader: finish the OpenPocket package of the model picked by the official file or the last model seen
+  if (recoveryPending() && OUR_LOADER(d.id)) {
+    await restoreFactory(true);
+    return BLACKBOX_V21;
+  }
+  // our loader: finish the selected package of the model picked by the official file or the last model seen
   if (OUR_LOADER(d.id)) {
     const model = localSelected() ? stored("op-model", "") : (official && official.model) || stored("op-model", "PocketX");
     const { product, image } = await packageFor(model);
@@ -412,7 +437,52 @@ $("resume").onclick = () => run(async () => {
   if (!official) throw Object.assign(new Error(d.id.text), { code: "foreign", detail: d.id.text });
   await up.resume(official.image, official.product, (s, n) => progress(s, n), { official: true });
   return official.product;
-});
+}, recoveryPending() ? "V21 installed and all factory sounds verified." : undefined);
+async function loadFactoryFiles() {
+  const revision = ++bankRevision;
+  bank = null;
+  $("factory-confirm").checked = false;
+  showDev(lastDev);
+  const models = $("factory-amps").files[0], presets = $("factory-presets").files[0];
+  setMsg($("factory-msg"), models || presets ? "Choose both AM4 files." : "");
+  if (!models || !presets) return;
+  try {
+    const files = await Promise.all([models.arrayBuffer(), presets.arrayBuffer()]);
+    const checked = await factoryBank(...files.map(file => new Uint8Array(file)));
+    if (revision !== bankRevision) return;
+    bank = checked;
+    setMsg($("factory-msg"), "Both AM4 files verified.", "ok");
+  } catch (e) {
+    if (revision === bankRevision) setMsg($("factory-msg"), e.message, "err");
+  }
+  showDev(lastDev);
+}
+$("factory-amps").onchange = $("factory-presets").onchange = loadFactoryFiles;
+$("factory-confirm").onchange = () => showDev(lastDev);
+
+async function restoreFactory(resume) {
+  if (!recoveryReady()) throw new Error("Choose V21 and both verified AM4 files, then confirm the backup.");
+  const response = await fetch(recoveryChannel + "manifest.json", { cache: "no-store" });
+  if (!response.ok) throw new Error("The BluesBox recovery loader is unavailable.");
+  const entry = (await response.json()).packages.find(p => p.product === "BlackBox_947");
+  if (!entry) throw new Error("The BlackBox recovery loader is missing from the manifest.");
+  const binary = await fetch(recoveryChannel + entry.file);
+  if (!binary.ok) throw new Error("Could not load the BluesBox recovery package.");
+  const carrier = await verifyPackage(new Uint8Array(await binary.arrayBuffer()), entry);
+  const image = factoryUpdate(official, bank, carrier);
+  const step = (kind, n) => progress(kind, n);
+  try { localStorage.setItem("bluesbox-v21-recovery", "pending"); } catch (_) {}
+  if (resume) {
+    if (!await up.resume(image, BLACKBOX_V21, step)) throw new Error("Reconnect the recovery loader and try Resume again.");
+  } else {
+    await up.install(image, BLACKBOX_V21, step);
+  }
+  try { localStorage.removeItem("bluesbox-v21-recovery"); } catch (_) {}
+  await verifyFactorySounds(up, p => { $("bar").style.width = (100 * p).toFixed(1) + "%"; });
+  return BLACKBOX_V21;
+}
+$("factory-install").onclick = () => run(() => restoreFactory(false), "V21 installed and all factory sounds verified.");
+
 $("backoff").onclick = () => run(async () => {
   log(`return to ${official.product}`);
   return up.install(official.image, official.product, (s, n) => progress(s, n));

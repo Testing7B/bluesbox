@@ -29,6 +29,21 @@ jobs:
           (cd "$RUNNER_TEMP/openpocket-v40" && NATIVE=1 node tools/op.mjs package)
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/*.fwsc docs/firmware/
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/manifest.json docs/firmware/
+      - name: Build the public BluesBox V47 channel
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/bluesbox-v47" 9eef967e9f63fa3c5904527c53cc460a70ef466e
+          (cd "$RUNNER_TEMP/bluesbox-v47" && OP_CHANNEL=blues-v47-public NATIVE=1 node tools/op.mjs build)
+          dir=docs/firmware/blues-v47-public
+          mkdir -p "$dir"
+          cp "$RUNNER_TEMP/bluesbox-v47/$dir/BlackBox_947.fwsc" "$RUNNER_TEMP/bluesbox-v47/$dir/manifest.json" "$dir/"
+          node --input-type=module - <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = 'docs/firmware/blues-v47-public/manifest.json';
+          const manifest = JSON.parse(readFileSync(path));
+          manifest.packages = manifest.packages.filter(p => p.product === 'BlackBox_947');
+          if (manifest.packages.length !== 1) throw new Error('Missing the BlackBox V47 package');
+          writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');
+          JS
       - name: Build the drive-lab channel
         if: inputs.drive_lab
         run: |

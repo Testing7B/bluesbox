@@ -62,6 +62,10 @@ OpenPocket's NAM, preset and loader storage overlap parts of the stock sound ban
 V21 checks all 20 amp and 20 cabinet records at startup and disables the sound bank
 when any of them are invalid. In that state M-EFCS cannot restore it one model at a time.
 
+From a BlackBox running BluesBox or a compatible 9xx firmware, open the updater's stock firmware section. Choose the original V21 file and the two files from M-EFCS, `blackbox_am4_ampCab.bin` and `blackbox_am4_preset.bin`. On macOS these are inside the M-EFCS app bundle at `Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/lib/resources/bin/blackbox`. Back up any saved presets, captures and IRs you want to keep, confirm the backup on the page, and choose **Install V21 with factory sounds**. The updater checks the files locally, installs the bank and firmware over USB MIDI, and reads the sound bank back after restart.
+
+If a combined update is interrupted in the BluesBox loader, reopen the updater, reconnect, select the same three files, confirm the backup, and click **Resume the update**. The steps below also cover a BlackBox that has already booted V21 with a missing bank.
+
 Use the web installer to install the official [BlackBox V21 package](https://www.m-vave.com/appdownload)
 if the pedal is running another version. When it shows `BlackBox_021`, click **Verify factory sounds**.
 If the check fails, use the steps below on a Mac with M-EFCS, Python 3 and libusb installed

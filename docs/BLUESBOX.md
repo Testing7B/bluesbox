@@ -6,11 +6,24 @@ BluesBox starts with three guitar tone references: Stevie Ray Vaughan's Fender b
 
 - **V43:** 20 SRV, 10 Mayer, and 10 Albert King presets; three V40 references; and nine comparison presets. The new drives are **808 Circuit**, an independent feedback-diode approximation, and **Clean Boost**. V43 also restores wet gain for the 27 legacy drive recipes and adds **OPTO T4**, whose recovery changes with the duration of the input.
 - **V44:** same preset bank, with drive oversampling increased from 2× to 4× ahead of the 44.1 kHz NAM amp. Across 16 synthetic stress cases, the 4× build reduced nonharmonic energy at the drive output by roughly 8–34 dB. This measures aliasing under stress; the audible benefit and real-time DSP cost on the pedal remain open.
-- Both builds passed the host engine sweep, the simulated BlackBox update, and package checks. V43 was installed on a physical BlackBox, which rebooted as `BlackBox_943`. The editor protocol read the 52-slot bank and verified the new effect types. V44 has passed the physical pedal's read-only package check. [Source and packages](https://github.com/Testing7B/openpocket/releases/tag/bluesbox-v43) · [Preset catalog](https://github.com/Testing7B/openpocket/blob/experiment/blues-lab/docs/BLUES-LAB-PRESETS.md) · [Build run](https://github.com/Testing7B/openpocket/actions/runs/42793280441)
+- Both builds passed the host engine sweep, the simulated BlackBox update, and package checks. V43 was installed on a physical BlackBox, which rebooted as `BlackBox_943`. The editor protocol read the 52-slot bank and verified the new effect types. V44 has passed the physical pedal's read-only package check. [Source and packages](https://github.com/Testing7B/bluesbox/releases/tag/bluesbox-v43) · [Preset catalog](https://github.com/Testing7B/bluesbox/blob/experiment/blues-lab/docs/BLUES-LAB-PRESETS.md) · [Build run](https://github.com/Testing7B/bluesbox/actions/runs/42793280441)
 
 The hosted editor supports TONE3000 sign-in and selection of A2 amp and pedal captures. The deployed popup and callback page were checked through the sign-in screen. Completing the signed-in selection and model load remains a separate test. Factory presets use the built-in models. User saves take precedence over factory slots.
 
-## Candidates for the next revision
+## Private BlackBox builds
+
+- **V45** put the 44.1 kHz **TWO-ROCK TS1** capture in its own AMP type. Factory P21 Gravity uses it with OPTO T4. P22 Slow Dance adds the **TS808 JAPAN** drive. V45 was verified on a BlackBox as `BlackBox_945`.
+- **V46** adds stereo 44.1 kHz USB playback mixed after the guitar effects, defaults distortion LEVEL to 15 and adjustable compressor MIX to 100, and orders block navigation from on/off through model and parameters. Drive output trims are calibrated against TS9 using lead and chord DI excerpts. TS808 Japan also has 6 dB less internal input gain than in V45. The V46 update passed in the simulator and the connected V45 pedal passed a read-only package check. USB playback and DSP load with a running stream still need a hardware test.
+
+The V45 and V46 builds require the local Two-Rock capture header. On a machine with permission to use the converted 44.1 kHz A2 Lite capture, generate the header with `python3 tools/mk_blues_ts1.py /path/to/capture.nam`, then build with `OP_CHANNEL=blues-v46 node tools/op.mjs build`. The private capture, weights and packages stay local. For installation use **Install a local build** in the [fork updater](https://testing7b.github.io/bluesbox/) and choose the BlackBox package and its matching manifest.
+
+## V47
+
+V47 gives guitar audio priority over USB polling, increases the USB playback buffer target to about 17 ms, and mixes stereo USB audio with fixed-point interpolation. The USB device appears as **Blackbox**. The play screen uses the cab tile's colour for the active cab name and shows **USB PLAY** when a stream is active.
+
+The local build adds six fitted circuit amp models and four fitted cabinet responses. The A2 Full models and original IRs are reference inputs for the offline fit. Neither is needed by the pedal at runtime. Two-Rock TS1 uses the private A2 Lite capture. Slots 48–52 default to USER1–USER5. The hosted V47 build uses public voices and carries the same USB and preset editing improvements.
+
+## Capture research
 
 | Candidate | Result | Next decision |
 | --- | --- | --- |

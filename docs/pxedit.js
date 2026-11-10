@@ -136,7 +136,7 @@ export class Editor {
 
   // ---- the catalogue: blocks, types, parameter names and value texts (cached per firmware) ----
   async catalog(progress = () => {}) {
-    const key = `openpocket-cat-${this.info.identity}-${this.info.version}`;
+    const key = `bluesbox-cat-${this.info.identity}-${this.info.version}`;
     try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && c.blocks && c.blocks.length === this.info.nblk) { this.cat = c; if (this.hasNam) await this.namTexts(); if (this.hasIr) await this.irTexts(); return c; } } catch (_) { }
     const blocks = [];
     for (let b = 0; b < this.info.nblk; b++) {
@@ -163,7 +163,7 @@ export class Editor {
           const texts = []; for (let v = 0; v <= 100; v++) texts.push(q.s());
           params[k].texts = texts;
         }
-        blocks[b].types[t] = { name, params };
+        blocks[b].types[t] = { name, params, hidden: !!(mask & 64) };
         progress(++done / total);
       }
     }
@@ -225,6 +225,15 @@ export class Editor {
   async commit() { return (await this.request(C.COMMIT, [], 4000))[0]; }
   async save(slot) { return (await this.request(C.SAVE, [slot], 4000))[1]; }
   async watch(on) { return (await this.request(C.WATCH, [on ? 1 : 0]))[0]; }
+  async audioStats() {
+    const r = new Reader(await this.request(28));
+    const keys = ["blocks", "late", "peakPct", "usbPackets", "usbUnderruns", "usbOverruns", "mixClips"];
+    return Object.fromEntries(keys.map(key => {
+      let n = 0;
+      for (let i = 0; i < 5; i++) n += r.b() * 2 ** (7 * i);
+      return [key, n];
+    }));
+  }
   async ping() { const r = await this.request(C.PING); return { load: r[0], bypass: !!(r[1] & 1), c1: !!(r[1] & 2) }; }
   // v37 (protocol 2): NAM models. list -> { nfact, nuser, models: [{ index, user, slot, used, name }] }
   get hasNam() { return !!(this.info && this.info.proto >= 2); }
