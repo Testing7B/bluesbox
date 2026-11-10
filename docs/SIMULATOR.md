@@ -95,7 +95,7 @@ sound. MASTER is the firmware's output gain, so it sets the level through the sa
 | Input | a bundled loop, a file (drop one on the page, or choose one), or a device of the computer |
 | Play, Stop | start and stop the source. The first click also starts the audio, because browsers require a gesture |
 | Loop | repeat the loop or file |
-| Bypass | the firmware's bypass: the dry input at MASTER, and "BYP" on the screen. It stays on across presets, unlike the pedal's, which is an overload guard and has no switch |
+| Bypass | the firmware's bypass: the dry input at MASTER, and the overload banner on the screen. It stays on across presets, unlike the pedal's, which is an overload guard and has no switch |
 | Input level | the level into the pedal: 100 % puts a full-scale recording at guitar level (below) |
 | Input, Output meters | peak dBFS going into and out of the engine, before the output volume |
 | Output volume | the computer's master volume, after the pedal; MASTER is the pedal's own |
@@ -158,7 +158,7 @@ before it is answered, so a state read right after a press shows the press.
 | `POST volume/N` | the MASTER knob, 0..100 |
 | `POST battery/MV[/USB_MV]` | the battery voltage the screen shows; `USB_MV` above 4300 shows "USB" |
 | `POST tuner/HZ` | the pitch the tuner page hears (0: none) |
-| `POST bypass/0`, `POST bypass/1` | the bypass: `dsp.bypass`, "BYP" on the screen, the dry input in the sound |
+| `POST bypass/0`, `POST bypass/1` | the bypass: `dsp.bypass`, the overload banner on the screen, the dry input in the sound |
 | `POST load/N` | the load in the status text and `dsp.load`, 0..999. The page sets it while the sound runs |
 | `GET screen.png[?scale=N]` | the screen as a PNG, 240 x 240 times N (1..8, nearest neighbour) |
 | `GET screen.rgb565` | the raw frame buffer: 240 x 240 pixels, 2 bytes each, big endian, row by row |

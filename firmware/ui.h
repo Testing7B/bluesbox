@@ -58,6 +58,9 @@ static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 #define E_ROW    30u
 #define BAR_X    10u
 #define BAR_W    220u
+#define ST_X     164u                  /* the load figure's box: top right of PLAY, bottom right of a block page */
+#define ST_W     72u                   /* (wide enough for "SAFE 999%", 70 px, and "PEAK 999%", 71 px) */
+#define C_ALERT  0xB000                /* the overload banner: white text on it reads (contrast 7.1) */
 
 static void num3(char *b, uint32_t v)  /* number without leading zeros */
 {
@@ -71,6 +74,10 @@ static uint16_t ui_dark(uint16_t c)    /* a colour at ~1/3: the "off" version of
     return (uint16_t)((((c >> 11) & 31u) / 3u) << 11 | (((c >> 5) & 63u) / 3u) << 5 | ((c & 31u) / 3u));
 }
 
+/* what the load figure stands for: the overload banner (BYPASS), LOADING a NAM model (amber on the MODEL row, the amp name
+ * greyed on PLAY), a late block (the figure in red) */
+enum { UI_ST_NORM, UI_ST_LATE, UI_ST_BYPASS, UI_ST_LOADING };
+
 /* ---- cache of what is on screen ---- */
 static struct {
     int full, screen;                  /* screen: 0 PLAY, 1 EDIT */
@@ -80,8 +87,8 @@ static struct {
     int info_b, info_t, info_on;
     int blk, type, np, item, mode, on;
     uint8_t val[PX_NPAR];
-    int hint;
-    char status[12]; int status_red;
+    int hint, amp_ld, row_ld; uint32_t bnum;
+    char status[12]; int status_kind;
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
 static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
@@ -134,36 +141,68 @@ static int ui_dirty(void)              /* the preset differs from what its slot 
 static void draw_status(int force)
 {
     if (uc.screen != 0) return;        /* (EDIT: its band takes the top) */
+    if (uc.status_kind == UI_ST_BYPASS) {                /* overload: the whole bar is the banner */
+        if (force) { lcd_rect(0, 0, 240, 3, C_ALERT); ft_box(0, 3, 240, "OVERLOAD: SOUND BYPASSED", &FT_SM, WHT, C_ALERT, 1); lcd_rect(0, 18, 240, S_H - 18u, C_ALERT); }
+        return;
+    }
     if (force || uc.vol != master_vol) {
         char b[10] = "VOL "; num3(b + 4, master_vol);
         ft_box(0, 3, 66, b, &FT_SM, UI_DIM, UI_PANEL, 1);     /* (v36: 66 px; v35's 48 px cut "VOL 100" to "VOL 10") */
         uc.vol = master_vol;
     }
-    lcd_rect(66, 0, 18, S_H, UI_PANEL); lcd_rect(158, 0, 12, S_H, UI_PANEL);
+    lcd_rect(66, 0, 18, S_H, UI_PANEL); lcd_rect(158, 0, ST_X - 158u, S_H, UI_PANEL);
     draw_battery(force);
 }
-/* the DSP load, from the main loop: "C1 42%" (2nd core), "C0", "BYP" (red) */
-static void ui_status(const char *s, int red)
+/* the DSP load, from the main loop: "C1 42%" (2nd core), "2C 88%!" (a block ran late), "SAFE 42%", "PEAK 150%" (bypassed).
+ * Every text fits ST_W (tests/uisim.c checks the worst ones). */
+static void ui_load_text(char *c, uint32_t l, int safe, int bypass, int c1, int dual, int late)
+{
+    if (l > 999u) l = 999u;
+    c[0] = 0;
+    b_str(c, safe ? "SAFE " : bypass ? "PEAK " : c1 && dual ? "2C " : c1 ? "C1 " : "C0 ");
+    b_num(c, l); b_str(c, "%");
+    if (!safe && !bypass && late) b_str(c, "!");
+}
+static void ui_status(const char *s, int kind)
 {
     if (ui_mode == M_TUNER || ui_mode == M_SAVE || ui_mode == M_MIDI) return;
-    int same = uc.status_red == red;
+    int same = uc.status_kind == kind;
     for (int i = 0; i < 12; i++) { if (uc.status[i] != s[i]) same = 0; if (!s[i]) break; }
     if (same && !uc.full) return;
-    if (uc.screen == 0) ft_box(170, 3, 66, s, &FT_SM, red ? RED : UI_DIM, UI_PANEL, 2);
-    else ft_box(178, F_Y + 3u, 58, s, &FT_SM, red ? RED : UI_DIM, UI_PANEL, 2);
+    int was = uc.status_kind;
     for (int i = 0; i < 12; i++) { uc.status[i] = s[i]; if (!s[i]) break; }
-    uc.status_red = red;
+    uc.status[11] = 0;
+    uc.status_kind = kind;
+    if ((was == UI_ST_BYPASS) != (kind == UI_ST_BYPASS)) { uc.full = 1; return; }   /* the banner comes or goes: redraw the page */
+    if (kind == UI_ST_BYPASS) { uc.hint = -1; return; }                              /* (the footer shows the peak) */
+    int ld = kind == UI_ST_LOADING && uc.screen == 0;     /* on a block page the MODEL row says it instead */
+    ft_box(ST_X, uc.screen ? F_Y + 3u : 3u, ST_W, ld ? "LOADING" : s, &FT_SM, kind == UI_ST_LATE ? RED : ld ? UI_ACC : UI_DIM, UI_PANEL, 2);
 }
 static void draw_hint(int force)
 {
-    int h = (int)ui_mode;
-    if (!force && uc.hint == h) return;
+    int h = (int)ui_mode, alert = uc.status_kind == UI_ST_BYPASS;
+    int save = !alert && h == M_CHAIN && uc.dirty;       /* EDITED shows on PLAY: the footer names SAVE */
+    int key = h | alert << 4 | save << 5;
+    if (!force && uc.hint == key) return;
+    uc.hint = key;
+    if (alert) {                                         /* overload: what to do (a block page's whole footer turns red) */
+        char t[40]; t[0] = 0;
+        b_str(t, uc.screen ? "OVERLOAD: TURN A BLOCK OFF" : "TURN A BLOCK OFF  ");
+        if (!uc.screen) b_str(t, uc.status);
+        if (uc.screen) lcd_rect(0, F_Y, 240, 3, C_ALERT);
+        ft_box(0, F_Y + 3u, 240, t, &FT_SM, WHT, uc.screen ? C_ALERT : UI_PANEL, 1);
+        return;
+    }
+    if (save) {
+        ft_box(0, F_Y + 3u, 116, "PUSH: EDIT", &FT_SM, UI_DIM, UI_PANEL, 2);
+        ft_box(116, F_Y + 3u, 124, "  HOLD: SAVE", &FT_SM, UI_ACC, UI_PANEL, 0);
+        return;
+    }
     const char *t = h == M_MOVE ? "KNOB: MOVE    PUSH: DROP"
                   : h == M_EDIT ? "KNOB: VALUE   PUSH: OK"
                   : h == M_BLOCK ? "KNOB: SELECT  PUSH: EDIT"
                   : "KNOB: BLOCK    PUSH: EDIT";
-    ft_box(0, F_Y + 3u, uc.screen ? 174u : 240u, t, &FT_SM, UI_DIM, UI_PANEL, uc.screen ? 0 : 1);
-    uc.hint = h;
+    ft_box(0, F_Y + 3u, uc.screen ? ST_X - 2u : 240u, t, &FT_SM, UI_DIM, UI_PANEL, uc.screen ? 0 : 1);
 }
 
 /* ===================================================== PLAY ======== */
@@ -177,12 +216,13 @@ static void draw_play_top(int force)
     }
     int at = PRESET.type[PX_B_AMP], ct = PRESET.type[PX_B_CAB], ao = PRESET.on[PX_B_AMP], co = PRESET.on[PX_B_CAB];
     int am = at == PX_AMP_NAM ? px_nam_model(PRESET.p[PX_B_AMP][0]) : -1;   /* v37: a NAM amp shows its model */
-    if (force || at != uc.amp_t || ao != uc.amp_on || am != uc.amp_m) {
+    int ald = uc.status_kind == UI_ST_LOADING && at == PX_AMP_NAM;   /* a NAM model loads: the name greys until it plays */
+    if (force || at != uc.amp_t || ao != uc.amp_on || am != uc.amp_m || ald != uc.amp_ld) {
         char nm[12];
         const char *an = px_type_name(PX_B_AMP, at);
         if (am >= 0) { px_nam_name(am, nm); an = nm; }
-        ft_box(94, P_NUM_Y + 4u, 142, ao ? an : "NO AMP", &FT_MD, ao ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
-        uc.amp_t = at; uc.amp_on = ao; uc.amp_m = am;
+        ft_box(94, P_NUM_Y + 4u, 142, ao ? an : "NO AMP", &FT_MD, ao && !ald ? BLK_COL[PX_B_AMP] : UI_DIM, UI_BG, 0);
+        uc.amp_t = at; uc.amp_on = ao; uc.amp_m = am; uc.amp_ld = ald;
     }
     int cm = ct == PX_CAB_IR ? px_ir_slot(PRESET.p[PX_B_CAB][0]) : -1;   /* v38: a user IR shows its name */
     if (force || ct != uc.cab_t || co != uc.cab_on || cm != uc.cab_m) {
@@ -209,7 +249,7 @@ static void draw_tile(int i)
     int b = PRESET.order[i];
     uint32_t x = tile_x(i), y = tile_y(i);
     int on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
-    uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : (uint16_t)((BLK_COL[b] >> 1) & 0x7BEF);
+    uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : ft_mix(BLK_COL[b], C_OFF, 11);   /* (an off label: the block's colour at 11/15, contrast 2.6 to 7.2) */
     ui_rbox(x - 2u, y - 2u, T_W + 4u, T_H + 4u, 5, sel ? WHT : UI_BG, UI_BG);   /* selection ring (or nothing) */
     ui_rbox(x, y, T_W, T_H, 4, bg, sel ? WHT : UI_BG);
     ft_box(x + 2u, y + 5u, T_W - 4u, px_block_label(b), &FT_SM, fg, bg, 1);
@@ -240,12 +280,17 @@ static void draw_info(int force)       /* the selected block: label, model, on/o
 static void draw_band(int force)       /* the block's name on its colour, ON / OFF pill (item 1) */
 {
     int on = PRESET.on[ui_blk] != 0, sel = (UI_PAGE && ui_item == 1u);
-    if (!(force || uc.blk != (int)ui_blk || uc.on != on || (uc.item == 1) != sel)) return;
+    if (!(force || uc.blk != (int)ui_blk || uc.bnum != cur_preset || uc.on != on || (uc.item == 1) != sel)) return;
     uint16_t c = BLK_COL[ui_blk];
-    if (force || uc.blk != (int)ui_blk) {
+    if (force || uc.blk != (int)ui_blk || uc.bnum != cur_preset) {   /* (the preset number: a change over MIDI does not leave the page) */
+        char n[4]; num3(n, cur_preset + 1u);
         lcd_rect(0, 0, 240, 4, c); lcd_rect(0, 27, 240, E_BAND - 27u, c); lcd_rect(0, 4, 8, 23, c);
-        ft_box(8, 4, 160, px_block_name((int)ui_blk), &FT_MD, BLK, c, 0);
-        lcd_rect(168, 4, 8, 23, c); lcd_rect(232, 4, 8, 23, c);
+        lcd_rect(8, 4, 24, 23, c); ui_rbox(8, 6, 24, 19, 5, BLK, c);
+        ft_box(10, 8, 20, n, &FT_SM, c, BLK, 1);
+        lcd_rect(32, 4, 4, 23, c);
+        ft_box(36, 4, 136, px_block_name((int)ui_blk), &FT_MD, BLK, c, 0);
+        lcd_rect(172, 4, 4, 23, c); lcd_rect(232, 4, 8, 23, c);
+        uc.bnum = cur_preset;
     }
     ui_rbox(176, 4, 56, 23, 6, sel ? WHT : c, c);
     ui_rbox(178, 6, 52, 19, 5, on ? BLK : ui_dark(c), sel ? WHT : c);
@@ -260,6 +305,10 @@ static void draw_type(void)
     ft_box(28, E_TYPE_Y, 184, px_type_name((int)ui_blk, PRESET.type[ui_blk]), &FT_MD, fg, bg, 1);
     ft_box(212, E_TYPE_Y, 20, sel ? ">" : "", &FT_MD, UI_ACC, bg, 1);
 }
+static int ui_loading_row(int k)       /* the NAM amp's MODEL row while its model loads */
+{
+    return uc.status_kind == UI_ST_LOADING && ui_blk == PX_B_AMP && PRESET.type[PX_B_AMP] == PX_AMP_NAM && k == 0;
+}
 static void draw_bar(int k)            /* value + bar: the only thing that moves while adjusting */
 {
     uint32_t y = E_P0 + (uint32_t)k * E_ROW;
@@ -268,7 +317,7 @@ static void draw_bar(int k)            /* value + bar: the only thing that moves
     uint32_t v = PRESET.p[ui_blk][k]; if (v > 100u) v = 100u;
     char b[10];
     if (!px_param_text((int)ui_blk, PRESET.type[ui_blk], k, (int)v, b)) num3(b, v);   /* "+5TH", "440 MS"... */
-    ft_box(140, y + 1u, 90, b, &FT_MD, ed ? UI_ACC : UI_TXT, bg, 2);
+    ft_box(140, y + 1u, 90, b, &FT_MD, ui_loading_row(k) ? UI_DIM : ed ? UI_ACC : UI_TXT, bg, 2);   /* (the new name stays grey until it plays) */
     uint32_t w = v * BAR_W / 100u;
     uint16_t fc = ed ? UI_ACC : BLK_COL[ui_blk];
     if (w) lcd_rect(BAR_X, y + 24u, w, 4, fc);
@@ -284,7 +333,9 @@ static void draw_row(int k)            /* one full setting row */
     ui_rbox(4, y, 232, E_ROW - 1u, 5, bg, UI_BG);
     lcd_rect(0, y + E_ROW - 1u, 240, 1, UI_BG);
     if (sel) lcd_rect(4, y + 6u, 3, 14, UI_ACC);                 /* accent marker */
-    ft_box(BAR_X, y + 5u, 130, px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, sel ? WHT : UI_DIM, bg, 0);
+    int ld = ui_loading_row(k);
+    ft_box(BAR_X, y + 5u, 130, ld ? "LOADING" : px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, ld ? UI_ACC : sel ? WHT : UI_DIM, bg, 0);
+    if (k == 0) uc.row_ld = ld;
     draw_bar(k);
 }
 static void draw_item(int it)
@@ -310,7 +361,8 @@ static void draw_edit(int force)
         if (old != (int)ui_item) draw_item(old);
         draw_item((int)ui_item);
     }
-    if (uc.on != on) { draw_band(1); uc.on = on; }
+    if (uc.on != on || uc.bnum != cur_preset) { draw_band(1); uc.on = on; }
+    if (np > 0 && ui_loading_row(0) != uc.row_ld) draw_row(0);
     for (int k = 0; k < np; k++) if (uc.val[k] != PRESET.p[ui_blk][k]) draw_bar(k);
 }
 
@@ -342,7 +394,7 @@ static void ui_render(void)
             lcd_rect(0, E_BAND + 4u, 4, F_Y - E_BAND - 4u, UI_BG); lcd_rect(236, E_BAND + 4u, 4, F_Y - E_BAND - 4u, UI_BG);
         }
         lcd_rect(0, F_Y, 240, 3, UI_PANEL); lcd_rect(0, F_Y + 18u, 240, 240u - F_Y - 18u, UI_PANEL);
-        if (scr) { lcd_rect(174, F_Y + 3u, 4, 15, UI_PANEL); lcd_rect(236, F_Y + 3u, 4, 15, UI_PANEL); }
+        if (scr) { lcd_rect(ST_X - 2u, F_Y + 3u, 2, 15, UI_PANEL); lcd_rect(ST_X + ST_W, F_Y + 3u, 240u - ST_X - ST_W, 15, UI_PANEL); }
         uc.full = 0;
     }
     if (scr == 0) {
@@ -352,7 +404,7 @@ static void ui_render(void)
         draw_info(f);
     } else draw_edit(f);
     draw_hint(f);
-    if (f) { char s[12]; for (int i = 0; i < 12; i++) s[i] = uc.status[i]; uc.full = 1; ui_status(s, uc.status_red); uc.full = 0; }
+    if (f) { char s[12]; for (int i = 0; i < 12; i++) s[i] = uc.status[i]; uc.full = 1; ui_status(s, uc.status_kind); uc.full = 0; }
 }
 
 /* ---- actions ---- */
@@ -531,8 +583,7 @@ static void ui_preset_step(int dd)
     int n = px_preset_count();
     cur_preset = (uint32_t)(((int)cur_preset + n + dd) % n);
     load_preset(cur_preset);
-    if (ui_mode == M_EDIT) ui_mode = M_BLOCK;
-    if ((int)ui_item >= ui_nitems()) ui_item = 0;
+    if (UI_PAGE) { ui_mode = M_CHAIN; ui_item = 0; }   /* a footswitch on a block page goes back to PLAY, where the preset shows */
 }
 /* the FX button's blocks, in its order (the FX light follows them: px_lights.h) */
 static const uint8_t UI_FXB[7] = {PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};

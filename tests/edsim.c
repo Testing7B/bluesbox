@@ -282,8 +282,8 @@ static void frame_draw(void)                           /* what the main loop doe
 {
     ui_render();
     char c[12];
-    snprintf(c, sizeof c, "%s %u%%", dsp_bypass ? "BYP" : "C1", dsp_load);
-    ui_status(c, dsp_bypass);
+    ui_load_text(c, dsp_load, 0, dsp_bypass, 1, 0, 0);
+    ui_status(c, dsp_bypass ? UI_ST_BYPASS : UI_ST_NORM);
     if (ui_mode == M_TUNER) tuner_draw(tuner_hz);
 }
 static void json_str(const char *s)

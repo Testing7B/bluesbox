@@ -144,15 +144,19 @@ block type, with its knobs at noon, keeps the loudness when switched on; each pr
 | PUSH **double-click** (PLAY) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
 | PUSH **long press (0.8 s)** | **SAVE**: store the current sound (see below) |
 | HOME | back to PLAY · **long press (0.7 s) = tuner** |
-| Right / left footswitch | next / previous preset |
+| Right / left footswitch | next / previous preset (on a block's EDIT page it also goes back to PLAY, where the preset shows) |
 | AMP, CAB, DLY, REV, MOD | jump to the block; press again = on/off |
 | FX | steps through DRV → SFX → SYN → PIT → CMP → GT → EQ |
 | MASTER | output volume |
 
 **Screen (v36)**: PLAY shows the preset number and name large, the amp and cab, the chain in colour (on = filled,
 off = dark) and the selected block; EDIT shows the block on its colour, the model, and up to 5 settings with value and
-bar. `C1 xx%` (top right on PLAY, bottom right on EDIT) = DSP load on the second core (`C0` = fallback on the main
-core, `BYP` = overload guard: turn a block off). `EDITED`: the sound differs from its saved slot.
+bar; the EDIT band also shows the preset number. `C1 xx%` (top right on PLAY, bottom right on EDIT) = DSP load on the
+second core (`C0` = fallback on the main core, `2C` = both cores, `!` = a block ran late). **Overload guard**: the
+effects are bypassed until the next change, a red bar says `OVERLOAD: SOUND BYPASSED` (on EDIT the whole footer turns
+red) and the footer says `TURN A BLOCK OFF` (with `PEAK xxx%` on PLAY). While a NAM model loads, the MODEL row of the
+EDIT page reads `LOADING` in amber (on PLAY the corner does, and the amp name goes grey). Labels of blocks that are off
+are dimmer than those of blocks that are on. `EDITED`: the sound differs from its saved slot.
 Top centre of PLAY: the **battery** (v36), from the chip's own VBAT/4 channel (green, amber below 30 %, red below 15 %;
 `USB` when the 5 V supply is there); the tuner page shows the same reading in volts.
 
@@ -179,7 +183,7 @@ On / off: 64 and up is on. Settings 0 to 127 are 0 to 100. Model: the whole 0 to
 CC 7 is the MASTER volume. Details, the clock sync and the limits: [MIDI.md](MIDI.md).
 
 ## Saving your sounds (v25)
-- `EDITED` at the top of the PLAY screen means the sound has been edited since the preset was loaded.
+- `EDITED` at the top of the PLAY screen means the sound has been edited since the preset was loaded; the footer then reads `HOLD: SAVE`.
 - **Long press on PUSH**: SAVE page. The knob picks the slot (1 to 52; the current preset is offered first; the
   screen shows the name of the sound that will be replaced), PUSH saves, HOME cancels.
 - At the very end of the list: **RESTORE FACTORY** puts the current slot back to its factory preset.

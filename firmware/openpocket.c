@@ -817,22 +817,9 @@ static void app_main(void)
             if (now - t_cpu >= 500u || a_ld != ld_shown) {   /* (LOADING on and off at once) */
                 t_cpu = now; ld_shown = a_ld;
                 char c[16];
-                uint32_t l = a_bypass ? a_peak : a_load; int i = 0;
-                if (l > 999u) l = 999u;
-                if (safe) { c[i++]='S'; c[i++]='A'; c[i++]='F'; c[i++]='E'; c[i++]=' '; }
-                else if (a_bypass) {     /* "BYP 2C 150%": which cores ran when it gave up (the peak follows) */
-                    c[i++]='B'; c[i++]='Y'; c[i++]='P'; c[i++]=' ';
-                    if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; } else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); }
-                    c[i++]=' ';
-                }
-                else if (a_c1 && px_nam_dual(&g_eng)) { c[i++]='2'; c[i++]='C'; c[i++]=' '; }   /* NAM: both cores */
-                else { c[i++]='C'; c[i++]=(char)(a_c1 ? '1' : '0'); c[i++]=' '; }
-                if (l >= 100u) c[i++] = (char)('0' + l / 100u);
-                if (l >= 10u) c[i++] = (char)('0' + (l / 10u) % 10u);
-                c[i++] = (char)('0' + l % 10u); c[i++] = '%';
-                if (!a_bypass && a_xrun && a_blocks - a_xrun_at < 700u) c[i++] = '!';   /* a block ran late in the last 2 s: "2C 88%!" */
-                c[i] = 0;
-                if (a_ld) { const char *t = "LOADING"; for (i = 0; t[i]; i++) c[i] = t[i]; c[i] = 0; }   /* v40.3: a NAM model */
+                int late = a_xrun && a_blocks - a_xrun_at < 700u;   /* a block ran late in the last 2 s: "2C 88%!" */
+                ui_load_text(c, a_bypass ? a_peak : a_load, safe, a_bypass, a_c1, a_c1 && px_nam_dual(&g_eng), late);
+                int kind = a_ld ? UI_ST_LOADING : a_bypass ? UI_ST_BYPASS : late ? UI_ST_LATE : UI_ST_NORM;   /* v40.3: LOADING a NAM model */
                 bat_raw[2] = (int32_t)a_xrun; bat_raw[3] = (int32_t)a_clip; bat_raw[4] = (int32_t)a_peak_all;   /* tuner page */
 #if OP_BLE_TEST
                 {   /* "STARTING 4 C1 42%": the Bluetooth state first; FAILED and ADVERTISING scroll their long lines instead (ble_status.h) */
@@ -848,10 +835,10 @@ static void app_main(void)
                         for (j = 0; c[j]; j++) b[k++] = c[j];
                         b[k] = 0;
                     }
-                    ui_status(b, !a_ld && a_bypass);
+                    ui_status(b, kind);
                 }
 #else
-                ui_status(c, !a_ld && (a_bypass || (a_xrun && a_blocks - a_xrun_at < 700u)));   /* (red: bypassed, or a late block) */
+                ui_status(c, kind);
 #endif
             }
         } else if (now - t_tuner >= 100u) { t_tuner = now; tuner_draw(tuner_estimate()); }
