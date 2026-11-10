@@ -6,6 +6,11 @@
 #include <stddef.h>
 #include "ble_os.h"
 
+/* the library's memcpy and memset (firmware/build.sh renames its calls): flash code, in its call range; the firmware's
+ * own are RAM code since v40, more than 4 MiB from the library's end of the flash */
+void *ble_memcpy(void *d, const void *s, size_t n) { uint8_t *p = d; const uint8_t *q = s; while (n--) *p++ = *q++; return d; }
+void *ble_memset(void *d, int c, size_t n) { uint8_t *p = d; while (n--) *p++ = (uint8_t)c; return d; }
+
 size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }
 int strcmp(const char *a, const char *b) { while (*a && *a == *b) { a++; b++; } return (uint8_t)*a - (uint8_t)*b; }
 char *strcpy(char *d, const char *s) { char *r = d; while ((*d++ = *s++)) {} return r; }

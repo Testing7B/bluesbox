@@ -54,7 +54,7 @@ int main(void)
         const int N = 64 * 200;
         float *x = malloc(sizeof(float) * N), *y = malloc(sizeof(float) * N);
         for (int i = 0; i < N; i++) { r = r * 1664525u + 1013904223u; x[i] = 0.3f * sinf((float)i * 0.031f) + 0.2f * ((float)(r >> 8) / 16777216.0f - 0.5f); y[i] = x[i]; }
-        ir_load_h(IRS[0]); ir_clear(); ir_ok = 1;
+        ir_load_h(IRS[0], &ir_X[IR_P / 2][0]); ir_clear(); ir_ok = 1;
         for (int i = 0; i < N; i += 64) ir_run(y + i);
         double en = 0; for (int i = 0; i < PX_IR_LEN; i++) en += (double)IRS[0][i] * IRS[0][i];
         const double g = 1.0 / sqrt(en * 2.0);

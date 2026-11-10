@@ -71,7 +71,7 @@ With the MIDI monitor listening to the pedal's port and SEND ON:
 ## 5. Audio with MIDI flowing
 
 - [ ] Play a high-gain preset continuously for 5 minutes while the DAW sends a CC sweep and clock: no crackle, no dropout, no
-      mute, no "BYP" at the bottom right. Note the load: ______ % (baseline above). A rise of more than a few percent is worth reporting.
+      mute, no red overload bar. Note the load: ______ % (baseline above). A rise of more than a few percent is worth reporting.
 - [ ] Same with a long note flood (a keyboard or a DAW sending 100 notes a second): the pedal ignores the notes and the sound
       stays clean.
 - [ ] While the flood runs, use the **web editor** (change a preset, rename, save): it keeps working. (Before this release a

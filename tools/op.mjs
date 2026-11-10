@@ -5,6 +5,7 @@
 //   node tools/op.mjs doctor | build | ble | test | package | clean | shell | image | serve [editor|build|ble]
 //   node tools/op.mjs flash --dry-run | --confirm-flash [--rescue] [--package FILE]   (writes to a connected pedal: docs/BUILDING.md)
 //   node tools/op.mjs log [--follow] [--json] [--wait SEC] [--scan SEC]   (reads a connected pedal's state: docs/BLE-TEST.md)
+//   node tools/op.mjs dsp [--presets A,B] [--seconds SEC] [--json]   (the DSP's load, late blocks and bypass per preset, over USB)
 //   node tools/op.mjs render in.wav [out.wav] [preset]   |   node tools/op.mjs appimage [fm1-1.bin]
 //   node tools/op.mjs rescue [--write] [options]   (restore a looping BlackBox from its UBOOT state; read-only without --write; docs/RESCUE.md)
 //   node tools/op.mjs rescue-check   (the UBOOT rescue tool against a simulated pedal: Python 3 only, no Docker)
@@ -103,6 +104,9 @@ const commands = {
   },
   async log(args) {                            // the same: reads the connected pedal, writes nothing
     return (await import("./log.mjs")).main(args);
+  },
+  async dsp(args) {                            // the same: the DSP's load, late blocks and bypass per preset (selects, saves nothing)
+    return (await import("./dsp.mjs")).main(args);
   },
   serve([arg]) {
     const ble = arg === "ble";                 // the Bluetooth test packages (build/ble) instead of docs/firmware

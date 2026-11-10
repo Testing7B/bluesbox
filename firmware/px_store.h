@@ -178,7 +178,6 @@ static void st_audio_hold(int on)
 /* write the whole store as a new copy (the one not in use); 0 = ok */
 static int st_commit(void)
 {
-    static uint8_t buf[16 + ST_S0N * ST_SLOT] __attribute__((aligned(4)));
     uint32_t base = st_cur == ST_A ? ST_B : ST_A, k;
     st_hdr_t h;
     int rc = 0;
@@ -187,12 +186,10 @@ static int st_commit(void)
     h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = ST_VER; h.nslot = ST_NSLOT; h.last = st_last; h.pad[0] = st_midi;
     st_audio_hold(1);
     if (fl_erase4k(base, &k) || fl_erase4k(base + 0x1000u, &k)) rc = -2;
-    for (k = 0; !rc && k < ST_NSLOT; k++) {
-        if (k < ST_S0N) memcpy(buf + 16u + k * ST_SLOT, st_slot[k], ST_SLOT);
-        else if (fl_write(st_slot_off(base, k), st_slot[k], ST_SLOT)) rc = -3;
-    }
-    if (!rc && fl_write(base + 16u, buf + 16u, ST_S0N * ST_SLOT)) rc = -3;
-    if (!rc) { memcpy(buf, &h, sizeof h); if (fl_write(base, buf, sizeof h)) rc = -4; }   /* header last */
+    for (k = ST_S0N; !rc && k < ST_NSLOT; k++)
+        if (fl_write(st_slot_off(base, k), st_slot[k], ST_SLOT)) rc = -3;
+    if (!rc && fl_write(base + 16u, st_slot[0], ST_S0N * ST_SLOT)) rc = -3;   /* sector 0's slots: st_slot's rows are contiguous */
+    if (!rc && fl_write(base, (const uint8_t *)&h, sizeof h)) rc = -4;      /* header last */
     if (!rc) {                                    /* read back */
         st_hdr_t r;
         static uint8_t chk[ST_SLOT];

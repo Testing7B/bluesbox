@@ -50,6 +50,7 @@ fi
 # AC791N hardware FPU (same options as the JieLi SDK for the WL82) + DSP engine at 44.1 kHz
 FP="-mcpu=r3 -mfprev1"
 DSPDEF="-DPX_SR=44100.0f -DPX_OVERSAMPLE=4"
+[ -n "$OP_BLE" ] && DSPDEF="$DSPDEF -DPXN_LEAN=1 -DPXN_HOT_RAM=1 -DPX_RUNS=0"   # v40.2: the test image's flash is full (engine/px_nam.c; v40.4: px_dsp.c PX_RUNS)
 INC="-I$HERE/inc -I$HERE/../engine"
 $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF $BLEDEF -DOP_GUARD_STACK=$GUARD_STACK $INC \
     -I"$BSP/chip" -I"$BSP/boards/fm1" -include "$O/channel.h" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
@@ -63,6 +64,9 @@ if [ -n "$OP_BLE" ]; then
   for b in "$HERE"/../third_party/jieli-ble/*/*.bc; do
     $CC -Os -c -x ir "$b" -o "$O/jl/$(basename "$(dirname "$b")")_$(basename "$b" .bc).o"
   done
+  # v40 made memcpy and memset RAM code, out of the call range of the library's code at the end of the flash: the
+  # library calls flash copies instead (ble/ble_libc.c)
+  for o in "$O"/jl/*.o; do python3 "$HERE/../tools/elfsym.py" "$o" memcpy=ble_memcpy memset=ble_memset; done
   rm -f "$O/libjl.a"; "$TC/pi32v2/bin/ar" rcs "$O/libjl.a" "$O"/jl/*.o   # an archive: the linker takes only the objects the image calls
   $CC -c "$HERE/ble/ble_ctx.S" -o "$O/ble_ctx.o"; $CC -c "$HERE/ble/ble_isr.S" -o "$O/ble_isr.o"; BLEOBJ="$O/ble_ctx.o $O/ble_isr.o $O/libjl.a"
 fi
@@ -73,11 +77,15 @@ $CC -Os -c -x ir "$HERE/sdk/iis.bc" -o "$O/iis.o"
 # linker puts them in the RAM code window (firmware/app.ld). --plain: px_dsp.o's hand-written routines (NAM, filters).
 RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_block rv_front clip_run os_up os_down
   ir_run fft64 rfft128 cab_detail ps_voice_al ps_align amp_stage bq_block bq_block2 drive_block nam_run fq_loop_c px_nam_dual
-  pxn_process pxn_block pxn_issue pxn_layers_pipe pxn_direct pxn_post_part pxn_rows pxn_rows_cpu pxn_gather pxn_range_cpu
-  pxn_serve pxn_srv_begin pxn_srv_end pxn_srv_active pxn_srv_block pxn_help_job pxn_vstart pxn_vwait pxn_kick pxn_venq
-  pxn_need pxn_hneed pxn_hstart pxn_hend pxn_layer_block pxn_dual pxn_dot3x4_c pxn_dot4_c pxn_dot1_c pxn_rdot_c pxn_rdl_c
-  pxn_post_c pxn_gcopy_c"
-RAM_FW="a_enc a_dec a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job pipe_job dsp_pipe dsp_pipe_run
+  pxn_process pxn_block pxn_direct pxn_post_part pxn_rows pxn_rows_cpu pxn_gather pxn_range_cpu pxn_dual
+  px_nam_lp_b px_nam_lp_queued px_nam_lp_split px_nam_lp_split_now pxn_lp_a pxn_lp_b pxn_lp_queued pxn_lp_split
+  pxn_lp_split_now pxn_frame_ticks px_nam_lp_handed px_nam_lp_before pxn_lp_handed pxn_lp_before
+  px_nam_lp_split_used px_nam_lp_force pxn_lp_split_used pxn_lp_force
+  ps_voice_run syn_organ_run pitch_run cab_detail_run gate_run comp_run bq_chain"
+# v40.2: the layer split's path (pxn_lp_*, lp_job, dsp_lp_run) in RAM; out of it, to make the room: the frame split's serving
+# (now the fallback when the layer split cannot run), the vector unit's paths (never chosen: slower) and the C versions
+# of the hand routines (used only if a hand one fails its start-up check: the network is then too slow anyway)
+RAM_FW="a_enc a_dec a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job post_run dsp_pipe lp_job dsp_lp_run a_lp_post lp_split
   fm1_alnk0_irq tn_capture fm1_cpu1_run fm1_cpu1_wait fm1_cpu1_retire a_hrun a_hwait b_ticks memcpy memset"
 python3 "$HERE/../tools/ramcode.py" "$O/px_dsp.o" --plain $RAM_DSP
 python3 "$HERE/../tools/ramcode.py" "$O/openpocket.o" $RAM_FW
@@ -97,6 +105,16 @@ syms=subprocess.run([f"{tc}/common/bin/objdump","-t",f"{out}/openpocket.elf"],ca
 def sym(n):
     m=re.search(rf"^([0-9a-f]+) .*\s{n}$",syms,re.M); return int(m.group(1),16) if m else None
 load=sym("_data_load"); rt_load=sym("_rt_load"); start=sym("_start")
+be,cl,ch,nb=sym("_bss_end"),sym("_cram_lo"),sym("_cram_hi"),sym("_ble_stack_hi")
+re_,hs,he=sym("_rt_end"),sym("_bss_hi_start"),sym("_bss_hi_end")
+ls_,le=sym("_bss_lo_start"),sym("_bss_lo_end")
+if ls_ is not None and le and le > ls_: print(f"low RAM   : {le-ls_} of 24576 bytes (below the RAM)")
+ps_,pe=sym("_pool_tail_start"),sym("_pool_tail_end")
+if ps_ and pe: print(f"pool tail : {pe-ps_} bytes, {0x01C5E000-pe} left before the RAM code")
+if re_ and he: print(f"hi RAM    : RAM code {re_-0x01C5E000}, data {he-hs}, free {0x01C74000-he} of 90112 bytes (the RAM code window)")
+if be: print(f"RAM       : {be-0x01C08000} of 98304 bytes ({98304-(be-0x01C08000)} free)")
+if nb and nb >= 0x01C7C000 and nb > sym("_ble_stack_lo"): print(f"NOINIT    : {nb-0x01C7C000} of 15696 bytes up to the BLE task stacks' end")
+if cl is not None and ch is not None: print(f"cache RAM : {ch-cl} of 28672 bytes (the rest, {28672-(ch-cl)}, to the NAM network's vector unit)")
 assert start==0x02000120,hex(start or 0)
 img=bytearray(open(f"{out}/text.bin","rb").read())
 for at,part in sorted([(rt_load,open(f"{out}/rt.bin","rb").read()),(load,open(f"{out}/data.bin","rb").read())]):

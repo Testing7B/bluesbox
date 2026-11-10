@@ -131,6 +131,7 @@ static uint32_t dsp_load = 42u;
 static int dsp_bypass;
 static uint32_t ed_load(void) { return dsp_load; }
 static uint32_t ed_flags(void) { return (dsp_bypass ? 1u : 0u) | 2u; }
+static uint32_t ed_stat(uint32_t k) { return k < 2u ? dsp_load : k < 4u ? 0u : 4096u; }
 
 /* ---- SysEx in/out ---- */
 static uint8_t frame[2048];
@@ -281,8 +282,8 @@ static void frame_draw(void)                           /* what the main loop doe
 {
     ui_render();
     char c[12];
-    snprintf(c, sizeof c, "%s %u%%", dsp_bypass ? "BYP" : "C1", dsp_load);
-    ui_status(c, dsp_bypass);
+    ui_load_text(c, dsp_load, 0, dsp_bypass, 1, 0, 0);
+    ui_status(c, dsp_bypass ? UI_ST_BYPASS : UI_ST_NORM);
     if (ui_mode == M_TUNER) tuner_draw(tuner_hz);
 }
 static void json_str(const char *s)

@@ -27,6 +27,10 @@
 #define OTA_AREA_LEN 0x5000u
 #define OTA_RES (OTA_AREA + OTA_AREA_LEN - 0x100u)  /* 0xE4F00 = 4K boundary - 256: SPL scan */
 #define OTA_FRAME_MAX 640u                       /* 512-B response = 605 wire bytes */
+#ifndef OTA_SCRATCH                              /* OpenPocket: ota_stage's 1.5 KB (header, one block); a firmware may lend */
+static uint8_t ota_scratch_own[0x400 + 512];     /* a buffer that nothing uses while the session runs */
+#define OTA_SCRATCH ota_scratch_own
+#endif
 
 static int ota_wire_send(const uint8_t *p, uint32_t n);
 static int ota_frame_get(const uint8_t **p, uint32_t *n);
@@ -318,7 +322,7 @@ static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *o
 
 static int ota_stage(void)                       /* steps 1..6; 0 = host said success */
 {
-    static uint8_t hdr[0x400], b[512];
+    uint8_t *const hdr = OTA_SCRATCH, *const b = OTA_SCRATCH + 0x400;   /* 0x400 and 512 bytes */
     uint32_t i, n, ota_off, ota_len, fl_off, fl_len, c, len, own;
     int rc;
     /* 1. UFW header + entry list */

@@ -22,6 +22,9 @@
 #define ED_PROTO 3u                             /* 3: v38, cabinet IRs (IR_LIST .. IR_ERASE); 2: v37, NAM models */
 #define ED_NAME_MAX 13u
 #define ED_P_SIZE 110u
+#ifndef ED_STATS
+#define ED_STATS 6u                             /* PING's figures after the flags (ed_stat): the Bluetooth test image has 8 */
+#endif
 typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
 enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_ORDER, ED_NAME, ED_PUT, ED_SELECT,
        ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING,
@@ -235,6 +238,13 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         break;
     case ED_PING:
         ed_b(ed_load() > 127u ? 127u : ed_load()); ed_b(ed_flags());
+        for (k = 0; k < 2u; k++) ed_b(ed_stat(k) > 127u ? 127u : ed_stat(k));   /* v40.1: the peaks, the late blocks, the clips */
+        for (k = 2; k < 4u; k++) { ed_b(ed_stat(k)); ed_b(ed_stat(k) >> 7); }
+        for (k = 4; k < ED_STATS; k++) { ed_b(ed_stat(k) >> 2); ed_b(ed_stat(k) >> 9); }   /* free bytes / 4: the stacks (BLE image: its heap, its tasks) */
+#ifdef ED_PROF
+        ed_b(ED_PROF);                                 /* v40.2: where the DSP time goes (ed_prof), after their count */
+        for (k = 0; k < ED_PROF; k++) { ed_b(ed_prof(k)); ed_b(ed_prof(k) >> 7); }
+#endif
         break;
     case ED_NAM_LIST: {                                /* v37: every model, factory first, then the user slots */
         char nm[12];
