@@ -20,8 +20,14 @@
 #define FELUCCA_UAC_MIDI_LAST 1
 #define HALF_FRAMES A_FR
 #endif
+#ifdef PX_BLUES_V47
+#define FELUCCA_USB_PRODUCT "Blackbox"
+#define FELUCCA_USB_MANUFACTURER "BluesBox"
+#define FELUCCA_UAC_OUT_PRIME (6u * HALF_FRAMES)
+#else
 #define FELUCCA_USB_PRODUCT "OpenPocket"
 #define FELUCCA_USB_MANUFACTURER "OpenPocket"
+#endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 /* the app may only write the OTA staging area (its loader + update record), the preset store (px_store.h) and,
  * v37, the NAM user models (px_models.h) */
@@ -48,10 +54,12 @@ static __attribute__((noinline)) void px_usb_mix(int32_t *out, uint32_t frames)
     if (!uo.alt || a_mute) return;
     const uint32_t vol = master_vol;
     uac_play(out, frames, vol * vol * 4096u / 10000u);
+#ifndef PX_BLUES_V47
     for (uint32_t i = 0; i < 2u * frames; i++) {
         if (out[i] > 8388607) out[i] = 8388607;
         if (out[i] < -8388608) out[i] = -8388608;
     }
+#endif
 }
 #endif
 
@@ -149,7 +157,11 @@ static void px_usb_start(void)                  /* interrupts still off (before 
     if (px_flash_ok)
         ota_boot_cleanup();                     /* a staging area left by an update: the SPL must not re-enter it */
     usb_start();
+#ifdef PX_BLUES_V47
+    fm1_timer5_start(isr_timer5, 2);            /* the guitar interrupt (3) takes precedence */
+#else
     fm1_timer5_start(isr_timer5, 4);            /* above ALNK0 (3), as felucca-bsp */
+#endif
 }
 static void px_audio_halt(void)                 /* before any flash write: nothing may run from XIP but us */
 {

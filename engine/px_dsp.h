@@ -53,7 +53,7 @@ enum { PX_SFX_AUTOWAH, PX_SFX_LFOWAH, PX_SFX_RING, PX_SFX_CRUSH, PX_SFX_SLICER, 
 enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_V33,
 #ifdef PX_BLUES_LAB
        PX_DRV_BLUES_808 = PX_DRV_V33 + 27, PX_DRV_BLUES_BOOST,
-#ifdef PX_BLUES_V45
+#if defined(PX_BLUES_V45) || defined(PX_BLUES_V47)
        PX_DRV_TS808_JP,
 #endif
        PX_DRV_COUNT
@@ -67,7 +67,10 @@ enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX
  * GAIN (into the model, +-12 dB), BASS, MID, TREBLE (after it). Models: PX_NAM_NFACT in the firmware, PX_NAM_NUSER
  * slots the web editor fills with A2 captures (.nam files, e.g. from TONE3000). */
 #define PX_AMP_NAM    PX_AMP_COUNT
-#ifdef PX_BLUES_V45
+#if defined(PX_BLUES_FITTED)
+enum { PX_AMP_TS1 = PX_AMP_NAM + 1, PX_AMP_SUPER_CLEAN, PX_AMP_SUPER_EDGE,
+       PX_AMP_DELUXE, PX_AMP_TWIN_A2, PX_AMP_TWIN_EDGE, PX_AMP_BASSMAN, PX_AMP_NTYPES };
+#elif defined(PX_BLUES_V45)
 #define PX_AMP_TS1    (PX_AMP_NAM + 1)
 #define PX_AMP_NTYPES (PX_AMP_COUNT + 2)
 #else
@@ -77,7 +80,11 @@ enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX
 #define PX_NAM_NUSER  16
 #define PX_NAM_N      (PX_NAM_NFACT + PX_NAM_NUSER)
 enum { PX_CAB_112JN, PX_CAB_212BLUE, PX_CAB_412GB, PX_CAB_412T75, PX_CAB_412V30, PX_CAB_112CREAM, PX_CAB_DI,
-       PX_CAB_IR, PX_CAB_COUNT };      /* v38: USER IR, a cabinet impulse response loaded from the editor */
+       PX_CAB_IR,
+#ifdef PX_BLUES_FITTED
+       PX_CAB_CTS, PX_CAB_P12Q, PX_CAB_JBL, PX_CAB_BASSMAN,
+#endif
+       PX_CAB_COUNT };      /* v38: USER IR, a cabinet impulse response loaded from the editor */
 /* v38: user cabinet IRs. PX_IR_N slots (the firmware keeps them in flash: firmware/px_irs.h); the engine plays the first
  * PX_IR_LEN taps (23 ms at 44.1 kHz) by uniform partitioned FFT convolution, 64-frame partitions. Its settings: IR (the
  * slot), LOW CUT, HIGH CUT. */
@@ -108,6 +115,7 @@ int  px_order_valid(const uint8_t *order);   /* 1 = a permutation of 0..PX_NBLK-
 const char *px_block_label(int blk);
 const char *px_block_name(int blk);
 int         px_ntypes(int blk);
+int         px_type_visible(int blk, int type);
 const char *px_type_name(int blk, int type);
 int         px_nparams(int blk, int type);
 const char *px_param_name(int blk, int type, int k);

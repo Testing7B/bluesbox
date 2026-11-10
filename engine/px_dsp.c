@@ -443,7 +443,7 @@ static const drv_v DV[PX_DRV_COUNT] = {
                          CL_808_FB, TM_LP, 1100, 5800, 0, 0, 0, 0, 0},
     [PX_DRV_BLUES_BOOST] = {.name = "CLEAN BOOST", .role = {R_BOOST}, .np = 1},
 #endif
-#ifdef PX_BLUES_V45
+#if defined(PX_BLUES_V45) || defined(PX_BLUES_V47)
     [PX_DRV_TS808_JP] = {"TS808 JAPAN", L3(R_DRIVE, R_TONE, R_LEVEL),
                          35.315168f, 389.945027f, 0, 0, 0, 7,
 #ifdef PX_BLUES_V46
@@ -506,6 +506,10 @@ static const cab_v CV[PX_CAB_COUNT] = {
     {"DI (NO CAB)", 0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},
     {"USER IR", 0, 0,   0, 0,     0, 0,    0, 0,     0, 0,    0, 0,     0},    /* v38: an impulse response (px_ir_*) */
 };
+
+#ifdef PX_BLUES_FITTED
+#include "px_blues_fitted.h"
+#endif
 
 /* ================================================================== EQ ===== */
 static const char *const PN_EQ5[] = {"100 HZ", "400 HZ", "1 KHZ", "2.5 KHZ", "6 KHZ"};
@@ -585,12 +589,29 @@ static const tdef *tdef_of(int b, int t)
     }
     return 0;
 }
+int px_type_visible(int b, int t)
+{
+#ifdef PX_BLUES_FITTED
+    if (b == PX_B_AMP)
+        return t != PX_AMP_5150 && t != PX_AMP_PROMOD && t != PX_AMP_MARK4 &&
+               t != PX_AMP_JCM2000 && t != PX_AMP_JCM900 && t != PX_AMP_SHIRLEY;
+    if (b == PX_B_CAB)
+        return t != PX_CAB_412T75 && t != PX_CAB_412V30;
+#else
+    (void)b; (void)t;
+#endif
+    return 1;
+}
 const char *px_type_name(int b, int t)
 {
     if (t < 0 || t >= px_ntypes(b)) t = 0;
     if (b == PX_B_DRIVE) return DV[t].name;
 #ifdef PX_BLUES_V45
     if (b == PX_B_AMP && t == PX_AMP_TS1) return "TWO-ROCK TS1";
+#endif
+#ifdef PX_BLUES_FITTED
+    if (b == PX_B_AMP && t >= PX_AMP_SUPER_CLEAN) return BLUES_AMP_MODELS[t - PX_AMP_SUPER_CLEAN].name;
+    if (b == PX_B_CAB && t >= PX_CAB_CTS) return BLUES_CAB_MODELS[t - PX_CAB_CTS].name;
 #endif
     if (b == PX_B_AMP) return t == PX_AMP_NAM ? "NAM" : AV[t].name;
     if (b == PX_B_CAB) return CV[t].name;
@@ -1358,7 +1379,11 @@ static void rc_amp(px_engine *e)
     if (t >= PX_AMP_NTYPES) t = 0;
     e->amp_nam = 0;
     if (is_nam_type(t)) { rc_nam(e); return; }
+#ifdef PX_BLUES_FITTED
+    const amp_v *v = t >= PX_AMP_SUPER_CLEAN ? &BLUES_AMP_MODELS[t - PX_AMP_SUPER_CLEAN] : &AV[t];
+#else
     const amp_v *v = &AV[t];
+#endif
 #ifdef PX_FIT
     if (px_fit_on) v = &px_fit_amp;                   /* the fitter's candidate (tests/fit/fitlib.c) */
 #endif
@@ -1390,7 +1415,12 @@ static void rc_amp(px_engine *e)
     {   /* v36: the level at each GAIN setting, measured (px_trim.h): every amp at the same loudness at noon, +-3 dB
          * over the whole knob, so a clean and a high-gain preset sit together */
         float gi = gain * 10.0f; int i0 = (int)gi; if (i0 > 9) i0 = 9;
-        float db = AMP_LVL[t][i0] + (AMP_LVL[t][i0 + 1] - AMP_LVL[t][i0]) * (gi - (float)i0);
+#ifdef PX_BLUES_FITTED
+        const float *levels = t >= PX_AMP_SUPER_CLEAN ? BLUES_AMP_LEVELS[t - PX_AMP_SUPER_CLEAN] : AMP_LVL[t];
+#else
+        const float *levels = AMP_LVL[t];
+#endif
+        float db = levels[i0] + (levels[i0 + 1] - levels[i0]) * (gi - (float)i0);
         e->amp_out = powf(10.0f, db * 0.05f);
     }
 #ifdef PX_FIT
@@ -1422,7 +1452,11 @@ typedef struct { px_bq f[8]; int n; px_cabd cd; float g; } cab_set;
 static void cab_make(float sr, const px_preset_t *p, cab_set *o)
 {
     int t = p->type[PX_B_CAB] % PX_CAB_COUNT;
+#ifdef PX_BLUES_FITTED
+    const cab_v *c = t >= PX_CAB_CTS ? &BLUES_CAB_MODELS[t - PX_CAB_CTS] : &CV[t];
+#else
     const cab_v *c = &CV[t];
+#endif
 #ifdef PX_FIT
     if (px_fit_cab_on) c = &px_fit_cab;               /* the fitter's candidate (the type still sets open back) */
 #endif
@@ -1449,7 +1483,11 @@ static void cab_make(float sr, const px_preset_t *p, cab_set *o)
      * off-axis comb, the back wave of open cabinets) + the cone's breakup modes as 2-pole resonators: the same
      * impulse response as v25's 128-tap FIR (A dec^k sin kw per mode), without its cost on the pedal. */
     {
-        uint32_t rnd = 0x9E3779B9u * (uint32_t)(t + 1);
+        int shape = t;
+#ifdef PX_BLUES_FITTED
+        if (t >= PX_CAB_CTS) shape = PX_CAB_112JN; /* same open-back response used by the fitter */
+#endif
+        uint32_t rnd = 0x9E3779B9u * (uint32_t)(shape + 1);
 #define RND() (rnd = rnd * 1664525u + 1013904223u, (float)(rnd >> 8) * (1.0f / 16777216.0f))
         int nt = 0;
         float dc = 0.0f;
@@ -1461,7 +1499,7 @@ static void cab_make(float sr, const px_preset_t *p, cab_set *o)
         if (ti == 0) cd->tg[0] += 0.20f * (1.0f - tf); else { cd->ti[nt] = (uint8_t)ti; cd->tg[nt++] = 0.20f * (1.0f - tf); }
         cd->ti[nt] = (uint8_t)(ti + 1); cd->tg[nt++] = 0.20f * tf;
         /* open back: the rear wave comes round, inverted, ~0.8 ms later */
-        if (t == PX_CAB_112JN || t == PX_CAB_212BLUE) {
+        if (shape == PX_CAB_112JN || shape == PX_CAB_212BLUE) {
             static const float BW[5] = {-0.01f, -0.025f, -0.03f, -0.025f, -0.01f};
             int d = (int)(0.0008f * sr);
             if (d > 61) d = 61;

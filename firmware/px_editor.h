@@ -26,7 +26,7 @@ typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
 enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_ORDER, ED_NAME, ED_PUT, ED_SELECT,
        ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING,
        ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE, ED_DIAG,
-       ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE };   /* v38: 24..27 */
+       ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE, ED_STATS };   /* v38: 24..27 */
 
 static uint8_t ed_out[1024];
 static uint32_t ed_n;
@@ -124,6 +124,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         for (k = 0; k < (uint32_t)np; k++)
             for (i = 0; i <= 100u && !(mask >> k & 1u); i++)
                 if (px_param_text(a[0], a[1], (int)k, (int)i, t)) mask |= 1u << k;
+        if (!px_type_visible(a[0], a[1])) mask |= 64u; /* older editors use just the low parameter bits */
         ed_b(a[0]); ed_b(a[1]); ed_str(px_type_name(a[0], a[1]), 31); ed_b((uint32_t)np); ed_b(mask);
         for (k = 0; k < (uint32_t)np; k++) ed_str(px_param_name(a[0], a[1], (int)k), 15);
         break;
@@ -276,6 +277,16 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         ir_changed(a[0]);                              /* a sound playing that slot reloads it */
         ed_b(a[0]); ed_b((uint32_t)rc);
         break;
+#ifdef ED_AUDIO_STATS
+    case ED_STATS: {
+        uint32_t stats[7];
+        ed_audio_stats(stats);
+        for (i = 0; i < 7u; i++)
+            for (k = 0; k < 5u; k++)
+                ed_b(stats[i] >> (7u * k));
+        break;
+    }
+#endif
 #ifdef ED_DIAG_LINES
     case ED_DIAG: {                                    /* read only: nothing here changes the pedal */
         static char l[ED_DIAG_LEN];

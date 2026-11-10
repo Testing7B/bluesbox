@@ -393,7 +393,19 @@ static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output 
     px_usb_mix(d, n);
 #endif
 }
+#ifdef PX_BLUES_V47
+static volatile uint32_t a_irq_peak, a_irq_late;
+void fm1_alnk0_irq(void)
+{
+    uint32_t start = fm1_ticks();
+    iis_irq_handler(0);
+    uint32_t elapsed = fm1_ticks() - start;
+    if (elapsed > a_irq_peak) a_irq_peak = elapsed;
+    if (elapsed >= A_BUDGET && !a_hold) a_irq_late++;
+}
+#else
 void fm1_alnk0_irq(void) { iis_irq_handler(0); }
+#endif
 extern void isr_alnk0(void);
 
 /* ===================== UI -> engine: same structure (px_preset_t), plain copy ===================== */

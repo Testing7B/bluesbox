@@ -63,6 +63,38 @@ export function ufwEntries(logical) {
   return out;
 }
 
+// The logical UFW image for a locally assembled, two-entry update.
+export function updateImage(flash, loader) {
+  const entries = [[0, "flash.bin", flash], [100, "ota.bin", loader]];
+  const loaderOffset = (0x400 + flash.length + 0xff) & ~0xff;
+  const image = new Uint8Array(loaderOffset + loader.length).fill(0xff);
+  const header = new Uint8Array(0x40);
+  const h = new DataView(header.buffer);
+  h.setUint32(4, image.length, true);
+  h.setUint16(8, entries.length, true);
+  h.setUint16(10, 4, true);
+  h.setUint16(12, 0x200, true);
+  header.set(new TextEncoder().encode("AC791N"), 16);
+  for (const [i, [type, name, data]] of entries.entries()) {
+    const offset = i === 0 ? 0x400 : loaderOffset;
+    const entry = new Uint8Array(0x50);
+    const e = new DataView(entry.buffer);
+    e.setUint16(0, type, true);
+    e.setUint16(2, i, true);
+    e.setUint16(4, crc16(data), true);
+    e.setUint32(8, offset, true);
+    e.setUint32(12, data.length, true);
+    e.setUint32(16, (data.length + 31) & ~31, true);
+    entry.set(new TextEncoder().encode(name), 0x40);
+    image.set(enc(entry), 0x40 + i * 0x50);
+    image.set(data, offset);
+  }
+  h.setUint16(2, crc16(image.subarray(0x40, 0x40 + entries.length * 0x50)), true);
+  h.setUint16(0, crc16(header.subarray(2)), true);
+  image.set(enc(header));
+  return image;
+}
+
 // The official packages known to this page (M-VAVE / Donner downloads). The SHA-256 pins every byte; the file name
 // proves nothing.
 export const OFFICIAL = [

@@ -42,6 +42,18 @@
 #define LDR_IR_HI 0xFC000u                      /* user data as well */
 #define LDR_NSEC ((LDR_APP_HI - LDR_APP_LO) >> 12)
 #define LDR_FL_MAX 0x100000u                    /* flash.bin: at most the 1 MiB part */
+#ifdef LDR_BLACKBOX_V21
+/* The browser builds this image from verified, user-supplied vendor files.
+ * Leave the flash head, gap between the app and bank, and settings after the bank alone. */
+#define V21_APP_HI  0x9F000u
+#define V21_BANK_LO 0xBF000u
+#define V21_BANK_HI 0xFCCCAu
+#define V21_NSEC    ((V21_BANK_HI - V21_BANK_LO + 0xFFFu) >> 12)
+#define V21_APP_CRC 0xB0CDu
+#define V21_BANK_CRC 0xD673u
+#else
+#define V21_NSEC 0u
+#endif
 
 static int ldr_fread(uint32_t off, void *p, uint32_t n);
 static int ldr_erase(uint32_t off);
@@ -95,14 +107,27 @@ static int ldr_chip_key(uint32_t *key)
 
 /* 2b. flash.bin [0, fl_size) from the host, before any erase: its CRC16 must be the UFW entry's (want); sc gets
  * the CRC16 of each app sector as it came in */
-static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t *sc, uint8_t *b)
+static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t *sc, uint8_t *b, uint32_t stock)
 {
     uint32_t i, n, crc = 0;
+#ifdef LDR_BLACKBOX_V21
+    uint32_t app_crc = 0, bank_crc = 0;
+#else
+    (void)stock;
+#endif
     for (i = 0; i < fl_size; i += n) {
         n = fl_size - i > 512u ? 512u : fl_size - i;
         if (ota_read(fl_off + i, b, n))
             return -7;
         crc = ota_crc16(b, n, crc);
+#ifdef LDR_BLACKBOX_V21
+        if (stock && i < V21_APP_HI) app_crc = ota_crc16(b, n, app_crc);
+        if (stock && i >= V21_BANK_LO) {
+            uint32_t k = LDR_NSEC + ((i - V21_BANK_LO) >> 12);
+            sc[k] = (uint16_t)ota_crc16(b, n, (i & 0xFFFu) ? sc[k] : 0u);
+            bank_crc = ota_crc16(b, n, bank_crc);
+        }
+#endif
         if (!((i + n) & 0xFFFu))
             ldr_progress(i + n, fl_size + (LDR_APP_HI - LDR_APP_LO));
         if (i >= LDR_APP_LO && i < LDR_APP_HI) {     /* (512-byte reads from 0: never across a sector) */
@@ -110,20 +135,62 @@ static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t 
             sc[k] = (uint16_t)ota_crc16(b, n, (i & 0xFFFu) ? sc[k] : 0u);
         }
     }
+#ifdef LDR_BLACKBOX_V21
+    if (stock && (app_crc != V21_APP_CRC || bank_crc != V21_BANK_CRC))
+        return -14;
+#endif
     return crc == want ? 0 : -12;
+}
+
+static int ldr_write_span(uint32_t fl_off, uint32_t lo, uint32_t hi, const uint16_t *sc,
+                          uint8_t *sec, uint8_t *cur, uint32_t fl_size, uint32_t *done)
+{
+    for (uint32_t s = lo; s < hi; s += 0x1000u) {
+        uint32_t length = hi - s < 0x1000u ? hi - s : 0x1000u;
+        uint32_t again, k;
+        for (again = 0; again < 3u; again++) {
+            for (k = 0; k < length; k += 512u) {
+                uint32_t n = length - k < 512u ? length - k : 512u;
+                if (ota_read(fl_off + s + k, sec + k, n))
+                    return -7;
+            }
+            if (ota_crc16(sec, length, 0) == sc[(s - lo) >> 12])
+                break;
+        }
+        if (again == 3u) return -13;
+        if (ldr_fread(s, cur, 0x1000u)) return -8;
+        for (k = length; k < 0x1000u; k++) sec[k] = cur[k];
+        if (!ota_memeq(sec, cur, 0x1000u)) {
+            uint32_t tries;
+            for (tries = 0; tries < 2u; tries++) {
+                if (ldr_erase(s)) return -9;
+                for (k = 0; k < 0x1000u; k += 256u)
+                    if (ldr_prog(s + k, sec + k, 256)) return -10;
+                if (ldr_fread(s, cur, 0x1000u)) return -8;
+                if (ota_memeq(sec, cur, 0x1000u)) break;
+            }
+            if (tries == 2u) return -11;
+        }
+        *done += 0x1000u;
+        ldr_progress(fl_size + *done, fl_size + (LDR_APP_HI - LDR_APP_LO));
+    }
+    return 0;
 }
 
 static int ldr_session(void)
 {
     static uint8_t hdr[0x400], sec[0x1000], cur[0x1000];
-    static uint16_t sc[LDR_NSEC];
-    uint32_t i, k, fl_off, fl_size, ota_off, ota_len, key, s, want = ~0u, done = 0;   /* (no CRC16: no flash.bin entry) */
+    static uint16_t sc[LDR_NSEC + V21_NSEC];
+    uint32_t i, fl_off, fl_size, ota_off, ota_len, key, s, want = ~0u, done = 0, stock = 0;   /* (no CRC16: no flash.bin entry) */
     int rc;
     /* 1. UFW header + entry list (ota.c; it leaves the entries decoded in hdr) */
     if ((rc = ota_ufw(hdr, &fl_off, &fl_size, &ota_off, &ota_len)) != 0)
         return rc;
     if (!fl_off || fl_size < LDR_APP_HI || fl_size > LDR_FL_MAX)
         return -3;
+#ifdef LDR_BLACKBOX_V21
+    stock = fl_size == V21_BANK_HI;
+#endif
     for (i = 0; i < ota_rd16(hdr + 8); i++)
         if (ota_rd16(hdr + 0x40 + i * 0x50u) == 0)
             want = ota_rd16(hdr + 0x40 + i * 0x50u + 4u);   /* flash.bin's data CRC16 */
@@ -136,46 +203,29 @@ static int ldr_session(void)
     if (ota_crc16(sec + 2, 30, 0) != ota_rd16(sec))
         return -6;                                       /* package for another chip key */
     /* 2b. the whole package first: nothing is erased for a damaged one */
-    if ((rc = ldr_check(fl_off, fl_size, want, sc, sec)) != 0)
+    if ((rc = ldr_check(fl_off, fl_size, want, sc, sec, stock)) != 0)
         return rc;
-    /* 3. app area, sector by sector */
-    for (s = LDR_APP_LO; s < LDR_APP_HI; s += 0x1000u) {
-        uint32_t again;
-        for (again = 0;; again++) {                      /* as checked in 2b, else read it again */
-            for (k = 0; k < 0x1000u; k += 512u)
-                if (ota_read(fl_off + s + k, sec + k, 512))
-                    return -7;
-            if (ota_crc16(sec, 0x1000u, 0) == sc[(s - LDR_APP_LO) >> 12])
-                break;
-            if (again == 2u)
-                return -13;
-        }
-        if (ldr_fread(s, cur, 0x1000u))
-            return -8;
-        if (!ota_memeq(sec, cur, 0x1000u)) {
-            uint32_t tries;
-            for (tries = 0; tries < 2u; tries++) {
-                if (ldr_erase(s))
-                    return -9;
-                for (k = 0; k < 0x1000u; k += 256u)
-                    if (ldr_prog(s + k, sec + k, 256))
-                        return -10;
-                if (ldr_fread(s, cur, 0x1000u))
-                    return -8;
-                if (ota_memeq(sec, cur, 0x1000u))
-                    break;
-            }
-            if (tries == 2u)
-                return -11;                              /* verify failed twice */
-        }
-        done += 0x1000u;
-        ldr_progress(fl_size + done, fl_size + (LDR_APP_HI - LDR_APP_LO));
-    }
+#ifdef LDR_BLACKBOX_V21
+    if (stock) {
+        /* Keep the staged loader and its record available until the verified app is in place.
+         * Then replace the five sectors where the staging area overlaps the factory bank. */
+        if ((rc = ldr_write_span(fl_off, V21_BANK_LO, OTA_AREA, sc + LDR_NSEC, sec, cur, fl_size, &done)) ||
+            (rc = ldr_write_span(fl_off, OTA_AREA + OTA_AREA_LEN, V21_BANK_HI,
+                sc + LDR_NSEC + ((OTA_AREA + OTA_AREA_LEN - V21_BANK_LO) >> 12), sec, cur, fl_size, &done)) ||
+            (rc = ldr_write_span(fl_off, LDR_APP_LO, V21_APP_HI, sc, sec, cur, fl_size, &done)) ||
+            (rc = ldr_write_span(fl_off, OTA_AREA, OTA_AREA + OTA_AREA_LEN,
+                sc + LDR_NSEC + ((OTA_AREA - V21_BANK_LO) >> 12), sec, cur, fl_size, &done)))
+            return rc;
+    } else
+#endif
+    if ((rc = ldr_write_span(fl_off, LDR_APP_LO, LDR_APP_HI, sc, sec, cur, fl_size, &done)) != 0)
+        return rc;
     /* 4. finish: the host confirms, the record goes, the SPL boots the app */
     for (i = 0; i < 4u; i++)
         if (!ota_read(0xF0000000u, sec, 8))
             break;
     ldr_record_clear();
+    if (stock) return 0;  /* the factory bank has already replaced the staging record */
     for (s = LDR_REC_HI; s > LDR_REC_LO; s -= 0x1000u) {   /* flash records: 4K boundary - 256 */
         uint8_t r[80];
         if (s - 0x1000u >= LDR_DATA_LO && s - 0x1000u < LDR_DATA_HI)

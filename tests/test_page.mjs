@@ -86,7 +86,7 @@ await page.screenshot({ path: join(OUT, "page_1_start.png"), fullPage: true });
 await page.click("#connect");
 await page.waitForSelector("#devinfo:not([hidden])", { timeout: 15000 });
 const fw = await page.textContent("#d-fw");
-ok(/OpenPocket v23/.test(fw), `detected: ${fw}`);
+ok(/BluesBox v23/.test(fw), `detected: ${fw}`);
 ok(await page.isEnabled("#install"), "Install enabled");
 await page.locator("summary").filter({ hasText: "Install a local build" }).click();
 const fixtures = join(FIX, "firmware");
@@ -116,7 +116,7 @@ await page.waitForFunction(() => /PocketX_924/.test(document.getElementById("msg
 const msg = await page.textContent("#msg");
 ok(/PocketX_924/.test(msg), `result: ${msg}`);
 await page.waitForTimeout(1500);
-ok(/OpenPocket v24/.test(await page.textContent("#d-fw")), "the page now sees OpenPocket v24");
+ok(/BluesBox v24/.test(await page.textContent("#d-fw")), "the page now sees OpenPocket v24");
 await page.screenshot({ path: join(OUT, "page_3_done.png"), fullPage: true });
 ok(simLog.some((l) => /step2 rc=0/.test(l)), "the simulated pedal wrote the new app");
 

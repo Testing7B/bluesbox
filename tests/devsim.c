@@ -161,6 +161,24 @@ static const char *flash_app_id(void)
     return "NO-APP";
 }
 
+#ifdef LDR_BLACKBOX_V21
+static void v21_sim_sound_read(void)
+{
+    uint8_t body[520];
+    uint32_t address = ota_rd32(ota_dec + 7), n = ota_rd16(ota_dec + 11), offset;
+    if (ota_dec[6] == 5 && address >= 0x70000000u) {
+        offset = address - 0x70000000u;
+        if (!FL_IN(offset, n, 0, 0x3c000u)) return;
+    } else if (ota_dec[6] == 4 && FL_IN(address, n, 0, 7360u)) {
+        offset = 0x3c000u + address;
+    } else return;
+    if (n > 512u) return;
+    memcpy(body, ota_dec + 6, 8);
+    memcpy(body + 8, nor + V21_BANK_LO + offset, n);
+    ota_send_msg(0x23, body, n + 8u);
+}
+#endif
+
 int main(int argc, char **argv)
 {
     const char *stock = 0, *dump = 0;
@@ -180,7 +198,13 @@ int main(int argc, char **argv)
     while (!closed) {
         poll_in(20);
         if (uboot_req) { printf("#log uboot\n#port none\n"); fflush(stdout); uboot_req = 0; }
+#ifdef LDR_BLACKBOX_V21
+        uint32_t decoded = ota_service();
+        if (decoded == 15u && ota_dec[2] == 0x23 && !strcmp(cur_id, "BlackBox_021"))
+            v21_sim_sound_read();
+#else
         ota_service();
+#endif
         if (!upgrade_req || mode == 2) { upgrade_req = 0; continue; }
         upgrade_req = 0;
         if (mode == 0) {
@@ -209,8 +233,17 @@ int main(int argc, char **argv)
             int rc = ldr_session();
             printf("#log step2 rc=%d bad=%u records_cleared=%u\n", rc, bad_writes, record_cleared);
             if (rc == 0) {
-                memset(nor + 0xE0000, 0xFF, 0x5000);    /* (the new app's ota_boot_cleanup) */
                 mode = 0;
+#ifdef LDR_BLACKBOX_V21
+                if (ota_crc16(nor, V21_APP_HI, 0) == V21_APP_CRC &&
+                    ota_crc16(nor + V21_BANK_LO, V21_BANK_HI - V21_BANK_LO, 0) == V21_BANK_CRC) {
+                    cur_id = "BlackBox_021";
+                    printf("#port Blackbox\n#log app %s\n", cur_id);
+                    fflush(stdout);
+                    continue;
+                }
+#endif
+                memset(nor + 0xE0000, 0xFF, 0x5000);    /* (the new app's ota_boot_cleanup) */
                 cur_id = flash_app_id();
                 printf("#port OpenPocket\n#log app %s\n", cur_id);
             }

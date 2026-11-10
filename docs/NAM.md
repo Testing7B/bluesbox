@@ -55,7 +55,7 @@ Or press **Browse TONE3000** in the same panel: TONE3000's own tone browser open
 A2 captures only), and the chosen tone comes back with its creator and its A2 models; **Load** puts one into the
 user slot chosen beside it. This uses TONE3000's public API ([tone3000.com/api](https://www.tone3000.com/api)), its
 "Select" flow: OAuth 2.0 with PKCE. The sign-in comes back through `docs/t3k.html` and the token lives in the page
-while it is open. To enable browsing on the fork, register `https://testing7b.github.io/openpocket/t3k.html` in your
+while it is open. To enable browsing on the fork, register `https://testing7b.github.io/bluesbox/t3k.html` in your
 TONE3000 settings, add the publishable key as the GitHub Actions variable `TONE3000_CLIENT_ID`, and redeploy Pages.
 For a local build, set the publishable key in `docs/t3k-config.js` and register the local callback URL. The editor
 can load downloaded A2 `.nam` files without this setup.

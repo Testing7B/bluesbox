@@ -33,6 +33,8 @@ int fit_run(const float *v, int nst, int hard, int gain_knob, const float *in, f
     px_preset_factory(&p, 0);
     for (k = 0; k < PX_NBLK; k++) p.on[k] = 0;
     p.on[PX_B_AMP] = 1;
+    p.type[PX_B_AMP] = PX_AMP_TWIN;  /* select the circuit model, even if the factory preset uses NAM */
+    p.p[PX_B_GATE][PX_PATCH_LEVEL] = 50;
     for (k = 0; k < PX_NPAR; k++) p.p[PX_B_AMP][k] = 50;
     p.p[PX_B_AMP][0] = (uint8_t)gain_knob;
     px_engine_init(&e, 44100.0f);
@@ -108,6 +110,7 @@ int fit_run_cab(const float *v, int type, float *out, int n)
     px_preset_factory(&p, 0);
     for (k = 0; k < PX_NBLK; k++) p.on[k] = 0;
     p.on[PX_B_CAB] = 1;
+    p.p[PX_B_GATE][PX_PATCH_LEVEL] = 50;
     p.type[PX_B_CAB] = (uint8_t)type;
     for (k = 0; k < PX_NPAR; k++) p.p[PX_B_CAB][k] = 50;
     px_engine_init(&e, 44100.0f);

@@ -32,6 +32,9 @@ static int st_saved(uint32_t k);
 static void save_draw(void);
 static void midi_draw(void);
 static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
+#ifdef PX_BLUES_V47
+static uint8_t ui_usb_play;
+#endif
 #define UI_PAGE (ui_mode == M_BLOCK || ui_mode == M_EDIT)   /* the block page has the focus */
 
 #define C_OFF  0x2124                  /* a block switched off */
@@ -157,6 +160,15 @@ static void ui_status(const char *s, int red)
 static void draw_hint(int force)
 {
     int h = (int)ui_mode;
+#ifdef PX_BLUES_V47
+    if (h == M_CHAIN) {
+        int key = ui_usb_play ? 100 : M_CHAIN;
+        if (force || uc.hint != key)
+            ft_box(0, F_Y + 3u, 240, ui_usb_play ? "USB PLAY" : "", &FT_SM, GRN, UI_PANEL, 1);
+        uc.hint = key;
+        return;
+    }
+#endif
     if (!force && uc.hint == h) return;
     const char *t = h == M_MOVE ? "KNOB: MOVE    PUSH: DROP"
                   : h == M_EDIT ? "KNOB: VALUE   PUSH: OK"
@@ -189,7 +201,7 @@ static void draw_play_top(int force)
         char nm[12];
         const char *cn = px_type_name(PX_B_CAB, ct);
         if (cm >= 0) { px_ir_name(cm, nm); cn = nm; }
-        ft_box(94, P_NUM_Y + 29u, 88, co ? cn : "NO CAB", &FT_SM, UI_DIM, UI_BG, 0);
+        ft_box(94, P_NUM_Y + 29u, 88, co ? cn : "NO CAB", &FT_SM, co ? BLK_COL[PX_B_CAB] : UI_DIM, UI_BG, 0);
         uc.cab_t = ct; uc.cab_on = co; uc.cab_m = cm;
     }
     int d = ui_dirty();                                /* EDITED: the sound differs from its saved slot */
@@ -387,7 +399,12 @@ static void ui_knob(int dd, int fast)
     } else if (ui_mode == M_EDIT) {
         if (ui_item == 1u) {
             int nt = px_ntypes((int)ui_blk);
-            px_preset_select_type(&PRESET, (int)ui_blk, (PRESET.type[ui_blk] + nt + dd) % nt);
+            int type = PRESET.type[ui_blk];
+            int dir = dd < 0 ? -1 : 1;
+            for (; dd; dd -= dir) {
+                do { type = (type + nt + dir) % nt; } while (!px_type_visible((int)ui_blk, type));
+            }
+            px_preset_select_type(&PRESET, (int)ui_blk, type);
         } else if (ui_item >= 2u) {
             int k = (int)ui_item - 2, v = PRESET.p[ui_blk][k] + dd * (fast ? 5 : 1);
             if (v < 0) v = 0;

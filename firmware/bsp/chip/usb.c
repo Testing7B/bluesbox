@@ -202,7 +202,11 @@ static struct {
 #define UO_N 2048u               /* frames; a power of two */
 #define UO_MAXF 49u              /* frames in the largest packet the host may send (44.1: 44 or 45) */
 #define UO_MAXP (UO_MAXF * 4u)
-#define UO_TGT (2u * HALF_FRAMES)   /* the fill a render aims to start at: ~11.6 ms with 256-frame halves */
+#ifndef FELUCCA_UAC_OUT_PRIME
+#define FELUCCA_UAC_OUT_PRIME (2u * HALF_FRAMES)
+#endif
+#define UO_TGT FELUCCA_UAC_OUT_PRIME
+_Static_assert(UO_TGT + HALF_FRAMES + UO_MAXF < UO_N, "playback ring has spare packet capacity");
 /* The producer writes each sample before publishing it, so this ring needs no startup clear. */
 #ifdef FELUCCA_UAC_OUT_POOL
 static uint32_t uo_ring[UO_N] __attribute__((section(".pool.usb_out")));
@@ -213,10 +217,13 @@ static volatile uint32_t uo_w, uo_r;
 static uint32_t ep4rx[UO_MAXF + 1u] __attribute__((aligned(4)));
 static struct {
     volatile uint8_t alt;        /* the output's streaming interface: 1 = the host plays */
-    uint8_t go;                  /* primed: uac_play reads the ring */
+    volatile uint8_t go;         /* primed: uac_play reads the ring */
     uint32_t pos;                /* the read position's fraction, Q16 */
     float err;                   /* the fill's distance from UO_TGT, smoothed (frames) */
-    uint32_t pkts, frames, underruns, overruns, starts;
+    volatile uint32_t pkts, frames, underruns, overruns, starts;
+#ifdef PX_BLUES_V47
+    volatile uint32_t mix_clips;
+#endif
 } uo;
 #endif
 
@@ -660,6 +667,8 @@ static void uo_ep4_reset(void)                          /* EP4 OUT: isochronous,
 }
 static void uo_stream(uint32_t alt)                     /* SET_INTERFACE, configuration, bus reset */
 {
+    uo.alt = 0;                 /* audio IRQ can preempt USB while resetting the ring */
+    RING_PUBLISH();
     uo.go = 0;
     uo_r = uo_w;
     RING_PUBLISH();
@@ -1548,13 +1557,30 @@ static void uo_service(void)                            /* an EP4 OUT packet int
     sie_wr(S_RXCSR2, csr >> 8);
 }
 
+#ifdef PX_BLUES_V47
+static inline int32_t uo_mix_sample(int32_t guitar, int32_t a, int32_t b, uint32_t frac, uint32_t gain)
+{
+    /* Q15 interpolation keeps even a full-scale PCM transition within int32_t. */
+    int32_t pcm24 = a * 256 + (((b - a) * (int32_t)frac) >> 7);
+    int32_t sum = guitar + (((pcm24 >> 4) * (int32_t)gain) >> 8);
+    if (sum > 8388607 || sum < -8388608) {
+        uo.mix_clips++;
+        return sum > 8388607 ? 8388607 : -8388608;
+    }
+    return sum;
+}
+#endif
+
 /* audio ISR, after the render: the computer's audio added to the block (24-bit, as the I2S takes it), at gain
  * gain_q12 (4096 = as sent), resampled from the ring: the read rate is 44.1 / 44.1176 kHz and steered by how far
  * the fill at a render's start is from UO_TGT (a frame's error: 1/32768 faster or slower) */
 static __attribute__((noinline)) void uac_play(int32_t *out, uint32_t n, uint32_t gain_q12)
 {
     uint32_t r = uo_r, fill = uo_w - r, i, pos = uo.pos, step;
-    float g = (float)gain_q12 * (1.0f / 16.0f), adj;            /* 16-bit to 24-bit (x 256), x gain / 4096 */
+    float adj;
+#ifndef PX_BLUES_V47
+    const float g = (float)gain_q12 * (1.0f / 16.0f);
+#endif            /* 16-bit to 24-bit (x 256), x gain / 4096 */
     if (!uo.alt || !usb.config) {
         uo.go = 0;
         return;
@@ -1582,11 +1608,17 @@ static __attribute__((noinline)) void uac_play(int32_t *out, uint32_t n, uint32_
     RING_PUBLISH();
     for (i = 0; i < n; i++) {
         uint32_t k = pos >> 16, a = uo_ring[(r + k) & (UO_N - 1u)], b = uo_ring[(r + k + 1u) & (UO_N - 1u)];
+#ifdef PX_BLUES_V47
+        uint32_t frac = (pos & 0xFFFFu) >> 1;
+        out[2u * i] = uo_mix_sample(out[2u * i], (int16_t)a, (int16_t)b, frac, gain_q12);
+        out[2u * i + 1u] = uo_mix_sample(out[2u * i + 1u], (int16_t)(a >> 16), (int16_t)(b >> 16), frac, gain_q12);
+#else
         float fr = (float)(pos & 0xFFFFu) * (1.0f / 65536.0f);
         float l = (float)(int16_t)a + ((float)(int16_t)b - (float)(int16_t)a) * fr;
         float rr = (float)(int16_t)(a >> 16) + ((float)(int16_t)(b >> 16) - (float)(int16_t)(a >> 16)) * fr;
         out[2u * i] += (int32_t)(l * g);
         out[2u * i + 1u] += (int32_t)(rr * g);
+#endif
         pos += step;
     }
     RING_PUBLISH();

@@ -5,21 +5,41 @@ enum { BL_OFF = 255, BL_TS808 = PX_DRV_V33, BL_BREAKER = PX_DRV_V33 + 9,
        BL_FACE = PX_DRV_V33 + 16, BL_OCTAFUZZ = PX_DRV_V33 + 19 };
 
 typedef struct {
-    uint8_t model, cab, bass, mid, treble, body, bright, mic;
+    uint8_t model, cab, bass, mid, treble, body, bright, mic, type;
 } blues_amp;
 
-enum { BL_BLACKFACE, BL_FULL, BL_HEADROOM, BL_DRY, BL_TWO_ROCK };
+enum { BL_BLACKFACE, BL_FULL, BL_HEADROOM, BL_DRY, BL_TWO_ROCK, BL_SUPER_CLEAN, BL_BASSMAN, BL_TWIN_EDGE };
 
 static const blues_amp BLUES_AMPS[] = {
-    /* model       cabinet        bass mid treble   body bright mic */
-    { M_TWIN,       PX_CAB_112JN,    47, 49, 53,     51, 48, 44 },
-    { M_SUPER59,    PX_CAB_112CREAM,  47, 53, 52,     52, 49, 49 },
-    { M_SHIRLCL,    PX_CAB_212BLUE,   48, 53, 49,     50, 46, 43 },
-    { M_TWIN,       PX_CAB_112JN,    41, 60, 60,     42, 57, 59 },
+    /* Legacy references preserve their original model IDs. */
+#ifdef PX_BLUES_FITTED
+    [BL_BLACKFACE] = {0, PX_CAB_JBL,     47, 49, 53, 50, 50, 50, PX_AMP_TWIN_A2},
+    [BL_FULL]      = {0, PX_CAB_CTS,     47, 53, 52, 50, 50, 50, PX_AMP_SUPER_EDGE},
+    [BL_HEADROOM]  = {0, PX_CAB_P12Q,    48, 53, 49, 50, 50, 50, PX_AMP_DELUXE},
+    [BL_DRY]       = {0, PX_CAB_JBL,     41, 60, 60, 50, 50, 50, PX_AMP_TWIN_A2},
+    [BL_TWO_ROCK]  = {0, PX_CAB_JBL,     48, 53, 49, 50, 50, 50, PX_AMP_TS1},
+    [BL_SUPER_CLEAN] = {0, PX_CAB_CTS,   50, 50, 50, 50, 50, 50, PX_AMP_SUPER_CLEAN},
+    [BL_BASSMAN]   = {0, PX_CAB_BASSMAN, 50, 50, 50, 50, 50, 50, PX_AMP_BASSMAN},
+    [BL_TWIN_EDGE] = {0, PX_CAB_JBL,     50, 50, 50, 50, 50, 50, PX_AMP_TWIN_EDGE},
+#else
+    [BL_BLACKFACE] = {M_TWIN,    PX_CAB_112JN,    47, 49, 53, 51, 48, 44},
+    [BL_FULL]      = {M_SUPER59, PX_CAB_112CREAM, 47, 53, 52, 52, 49, 49},
+    [BL_HEADROOM]  = {M_SHIRLCL, PX_CAB_212BLUE,  48, 53, 49, 50, 46, 43},
+    [BL_DRY]       = {M_TWIN,    PX_CAB_112JN,    41, 60, 60, 42, 57, 59},
+    [BL_SUPER_CLEAN] = {M_TWIN,  PX_CAB_112JN,    50, 50, 50, 50, 50, 50},
+    [BL_BASSMAN]   = {M_SUPER59, PX_CAB_112CREAM, 50, 50, 50, 50, 50, 50},
+    [BL_TWIN_EDGE] = {M_TWIN,    PX_CAB_112JN,    50, 50, 50, 50, 50, 50},
 #ifdef PX_BLUES_V45
-    { PX_NAM_N,     PX_CAB_212BLUE,   48, 53, 49,     50, 46, 43 },
+    [BL_TWO_ROCK]  = {PX_NAM_N, PX_CAB_212BLUE,   48, 53, 49, 50, 46, 43, PX_AMP_TS1},
+#endif
 #endif
 };
+
+#ifdef PX_BLUES_V47
+#define BL_NEW(new_voice, old_voice) (new_voice)
+#else
+#define BL_NEW(new_voice, old_voice) (old_voice)
+#endif
 
 typedef struct {
     uint8_t type, a, b, c, d, e;
@@ -73,11 +93,11 @@ static const blues_preset BLUES_PRESETS[] = {
     { "PRIDE & JOY", BL_FULL,      53, 45, BL_MOD_NONE, BL_DLY_NONE, BL_SPRING,     BL_DRIVE(PX_DRV_TS9, 25, 47, 53), BL_NONE },
     { "TEXAS FLOOD", BL_FULL,      58, 45, BL_MOD_NONE, BL_DLY_NONE, BL_SPRING,     BL_DRIVE(PX_DRV_BLUES_808, 39, 46, 55), BL_OPTO(PX_CMP_OPTO_T4, 22, 29, 47) },
     { "COLD SHOT",   BL_BLACKFACE, 53, 54, BL_ROT_SLOW, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_TS9, 18, 46, 56), BL_NONE },
-    { "RIVIERA",     BL_HEADROOM,  43, 60, BL_MOD_NONE, BL_TAPE,     BL_HALL,       BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 16, 28, 38) },
+    { "RIVIERA",     BL_NEW(BL_SUPER_CLEAN, BL_HEADROOM),  43, 60, BL_MOD_NONE, BL_TAPE,     BL_HALL,       BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 16, 28, 38) },
     { "TIN PAN ALY", BL_BLACKFACE, 45, 52, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_NONE, BL_NONE },
-    { "RUDE MOOD",   BL_FULL,      55, 42, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_TS9, 21, 54, 55), BL_NONE },
+    { "RUDE MOOD",   BL_NEW(BL_BASSMAN, BL_FULL),      55, 42, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_TS9, 21, 54, 55), BL_NONE },
     { "LOVE STRUCK", BL_FULL,      56, 44, BL_MOD_NONE, BL_SLAP,     BL_SPRING,     BL_DRIVE(BL_TS808, 28, 53, 56), BL_NONE },
-    { "SCUTTLE",     BL_FULL,      63, 32, BL_MOD_NONE, BL_DLY_NONE, BL_SPRING,     BL_DRIVE(PX_DRV_TS9, 31, 58, 57), BL_NONE },
+    { "SCUTTLE",     BL_NEW(BL_BASSMAN, BL_FULL),      63, 32, BL_MOD_NONE, BL_DLY_NONE, BL_SPRING,     BL_DRIVE(PX_DRV_TS9, 31, 58, 57), BL_NONE },
     { "STANG SWANG", BL_HEADROOM,  42, 58, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 13, 28, 34) },
     { "LITTLE WING", BL_BLACKFACE, 48, 53, BL_MOD_NONE, BL_TAPE,     BL_PLATE,      BL_NONE, BL_NONE },
     { "VOODOO CHL",  BL_FULL,      58, 47, BL_VIBE,     BL_DLY_NONE, BL_ROOM,       BL_DRIVE(BL_FACE, 29, 47, 47), BL_NONE },
@@ -97,7 +117,7 @@ static const blues_preset BLUES_PRESETS[] = {
     { "GRAVITY",     BL_HEADROOM,  44, 51, BL_TREM,     BL_DLY_NONE, BL_SPRING,     BL_NONE, BL_OPTO(PX_CMP_OPTO_T4, 14, 28, 35) },
     { "SLOW DANCE",  BL_HEADROOM,  49, 58, BL_MOD_NONE, BL_BBD,      BL_PLATE,      BL_DRIVE(BL_BREAKER, 25, 47, 51), BL_NONE },
 #endif
-    { "VULTURES",    BL_HEADROOM,  56, 51, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_KLON, 21, 51, 50), BL_NONE },
+    { "VULTURES",    BL_NEW(BL_TWIN_EDGE, BL_HEADROOM),  56, 51, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(PX_DRV_KLON, 21, 51, 50), BL_NONE },
     { "NO DOCTOR",   BL_FULL,      58, 36, BL_MOD_NONE, BL_DLY_NONE, BL_ROOM,       BL_DRIVE(BL_BREAKER, 31, 54, 52), BL_NONE },
     { "DONT TRUST",  BL_BLACKFACE, 46, 56, BL_ROT_SLOW, BL_BBD,      BL_PLATE,      BL_NONE, BL_NONE },
     { "BELIEF",      BL_HEADROOM,  53, 53, BL_MOD_NONE, BL_TAPE,     BL_PLATE,      BL_DRIVE(PX_DRV_KLON, 25, 53, 52), BL_NONE },
@@ -163,11 +183,9 @@ static void blues_apply_preset(px_preset_t *p, const blues_preset *preset)
     memcpy(p->order, order, sizeof order);
     blk(p, PX_B_GATE, 1, 0, 13, 53, preset->level, 0, 0);
     blues_apply_block(p, PX_B_DRIVE, &preset->drive);
-#ifdef PX_BLUES_V45
-    if (preset->voice == BL_TWO_ROCK)
-        blk(p, PX_B_AMP, 1, PX_AMP_TS1, preset->gain, amp->bass, amp->mid, amp->treble, 0);
+    if (amp->type)
+        blk(p, PX_B_AMP, 1, amp->type, preset->gain, amp->bass, amp->mid, amp->treble, amp->type == PX_AMP_NAM + 1 ? 0 : 50);
     else
-#endif
         NAM(amp->model, preset->gain, amp->bass, amp->mid, amp->treble);
     blk(p, PX_B_CAB, 1, amp->cab, amp->body, amp->bright, amp->mic, 0, 0);
     blues_apply_block(p, PX_B_COMP, &preset->comp);
@@ -183,6 +201,16 @@ static int blues_preset_factory(px_preset_t *p, int *idx)
         blues_apply_preset(p, &BLUES_PRESETS[*idx]);
         return 1;
     }
+
+#ifdef PX_BLUES_V47
+    if (*idx >= NPRESETS - 5) {
+        static const char *const names[] = {"USER1", "USER2", "USER3", "USER4", "USER5"};
+        blues_preset preset = {"", BL_BLACKFACE, 50, 50, BL_MOD_NONE, BL_DLY_NONE, BL_REV_NONE, BL_NONE, BL_NONE};
+        blues_apply_preset(p, &preset);
+        setname(p, names[*idx - (NPRESETS - 5)]);
+        return 1;
+    }
+#endif
 
     int slot = *idx - BLUES_COUNT;
     if (slot < BLUES_V40_COUNT) {

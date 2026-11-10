@@ -41,7 +41,7 @@ CHAN="${OP_CHANNEL:-}"
 : > "$O/channel.h"
 if [ -n "$CHAN" ]; then
   case "$CHAN" in *[!a-z0-9-]*|"") echo "ERROR: OP_CHANNEL must be lowercase letters, digits and -"; exit 1;; esac
-  DEFAULTVER=40; case "$CHAN" in blues-v45) DEFAULTVER=45;; blues-v46) DEFAULTVER=46;; esac
+  DEFAULTVER=40; case "$CHAN" in blues-v45) DEFAULTVER=45;; blues-v46) DEFAULTVER=46;; blues-v47|blues-v47-public) DEFAULTVER=47;; esac
   TESTVER="${OP_TEST_VERSION:-$DEFAULTVER}"
   printf '#define OP_VERSION_NUM "%s"\n#define OP_TAG " %s"\n' "$TESTVER" "$(echo "$CHAN" | tr a-z- A-Z' ')" > "$O/channel.h"
   APP="$HERE/openpocket-$CHAN.bin"; PKG="$HERE/../docs/firmware/$CHAN"
@@ -56,12 +56,20 @@ case "$CHAN" in
   blues-lab-4x) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_NAM_DRIVE_OS=4";;
   blues-v45) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V45 -DPX_NAM_DRIVE_OS=4";;
   blues-v46) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V45 -DPX_BLUES_V46 -DPX_NAM_DRIVE_OS=4";;
+  blues-v47) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V45 -DPX_BLUES_V46 -DPX_BLUES_V47 -DPX_BLUES_FITTED -DPX_NAM_DRIVE_OS=4";;
+  blues-v47-public) DSPDEF="$DSPDEF -DPX_BLUES_LAB -DPX_BLUES_V46 -DPX_BLUES_V47 -DPX_NAM_DRIVE_OS=4";;
 esac
 INC="-I$HERE/inc -I$HERE/../engine"
-if [ "$CHAN" = blues-v45 ] || [ "$CHAN" = blues-v46 ]; then
+case "$CHAN" in blues-v45|blues-v46|blues-v47)
   PRIVATE="$HERE/../build/blues/v45-private"
   [ -s "$PRIVATE/px_blues_ts1_private.h" ] || { echo "Missing private Two-Rock TS-1 weights"; exit 1; }
   INC="$INC -I$PRIVATE"
+  ;;
+esac
+if [ "$CHAN" = blues-v47 ]; then
+  FITTED="$HERE/../build/blues/v47-fit"
+  [ -s "$FITTED/px_blues_fitted.h" ] || { echo "Missing local A2/IR fits"; exit 1; }
+  INC="$INC -I$FITTED"
 fi
 $CC $FP -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function $DSPDEF $BLEDEF -DOP_GUARD_STACK=$GUARD_STACK $INC \
     -I"$BSP/chip" -I"$BSP/boards/fm1" -include "$O/channel.h" -c "$HERE/openpocket.c" -o "$O/openpocket.o"
@@ -121,9 +129,11 @@ PY
 
 # ---- update loader (loader/, felucca-bsp's, Pocket X layout) -> build/loader/ota.bin ----
 L="$O/loader"; mkdir -p "$L"
+LOADERDEF=""
+case "$CHAN" in blues-v47|blues-v47-public) LOADERDEF="-DLDR_BLACKBOX_V21";; esac
 $CC -c "$HERE/../loader/crt0_ldr.S" -o "$L/crt0_ldr.o"
 $CC -Os -ffunction-sections -fno-builtin -Wall -Wno-unused-function -I"$HERE/inc" -I"$BSP/chip" -I"$BSP/boards/fm1" \
-    -c "$HERE/../loader/loader.c" -o "$L/loader.o"
+    $LOADERDEF -c "$HERE/../loader/loader.c" -o "$L/loader.o"
 "$TC/pi32v2/bin/ld" --gc-sections -e _start -T "$HERE/../loader/loader.ld" "$L/crt0_ldr.o" "$L/loader.o" -o "$L/loader.elf"
 "$TC/common/bin/objcopy" -O binary -j .text "$L/loader.elf" "$L/loader.bin"
 # the loader rewrites the flash: nothing of it may live in XIP (0x02xxxxxx)

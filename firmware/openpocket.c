@@ -314,6 +314,11 @@ static void fm1_fault(const fm1_crash_t *c)
 #ifndef OP_GUARD_STACK      /* hardware stack-limit guard (fm1_guard.h). build.sh turns it off for the Bluetooth test image, */
 #define OP_GUARD_STACK 1    /* whose task stacks (ble_os.c) lie outside [_ustack_lo, _sstack_top]; app.ld checks this at link time */
 #endif
+#ifdef PX_BLUES_V47
+#define OP_BRAND "BLUESBOX"
+#else
+#define OP_BRAND "OPENPOCKET"
+#endif
 #define OP_VERSION "v" OP_VERSION_NUM OP_TAG   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
@@ -561,6 +566,19 @@ static void ir_changed(uint32_t s)   /* v38: a user IR was written or erased: th
 #define ED_DIAG_LEN 224u
 static void ed_diag_line(uint32_t i, char *out);
 #endif
+#ifdef PX_BLUES_V47
+static void ed_audio_stats(uint32_t stats[7])
+{
+    stats[0] = a_blocks;
+    stats[1] = a_irq_late;
+    stats[2] = a_irq_peak * 100u / A_BUDGET;
+    stats[3] = uo.pkts;
+    stats[4] = uo.underruns;
+    stats[5] = uo.overruns;
+    stats[6] = uo.mix_clips;
+}
+#define ED_AUDIO_STATS 1
+#endif
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #include "px_midi_io.h"     /* musical MIDI over USB (docs/MIDI.md) */
 #endif
@@ -626,7 +644,7 @@ static void app_main(void)
     lcd_init();
     /* boot screen with the version: shows which image is running */
     lcd_rect(0,0,240,240,UI_BG);
-    ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
+    ft_box(0, 98, 240, OP_BRAND, &FT_MD, UI_ACC, UI_BG, 1);
 #if OP_BLE_TEST
     ft_box(0, 126, 240, OP_VERSION " BLE TEST", &FT_SM, UI_DIM, UI_BG, 1);
 #else
@@ -683,7 +701,7 @@ static void app_main(void)
             ft_box(0, 212, 240, "SAFE MODE: DSP OFF THIS BOOT", &FT_SM, UI_DIM, UI_BG, 1);
             for (int i = 0; i < 120; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }   /* 12 s */
             lcd_rect(0, 0, 240, 240, UI_BG);
-            ft_box(0, 98, 240, "OPENPOCKET", &FT_MD, UI_ACC, UI_BG, 1);
+            ft_box(0, 98, 240, OP_BRAND, &FT_MD, UI_ACC, UI_BG, 1);
             ft_box(0, 126, 240, OP_VERSION " SAFE MODE", &FT_SM, UI_DIM, UI_BG, 1);
         }
 #if OP_BLE_TEST
@@ -742,6 +760,9 @@ static void app_main(void)
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         px_midi_service();               /* USB-MIDI: Program / Control Change in, the pedal's own changes out */
         audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
+#ifdef PX_BLUES_V47
+        ui_usb_play = uo.alt && uo.go;
+#endif
         lights_update(&PRESET, ui_mode == M_TUNER, now);   /* the button lights follow the blocks */
         if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "2C" (NAM pipelined), "C0" or BYP */
             static uint32_t t_cpu;
