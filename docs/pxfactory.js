@@ -5,7 +5,8 @@ import { sha256hex } from "./pxpkg.js";
 
 export const BLACKBOX_V21 = "BlackBox_021";
 const AMP_CAB_SHA = "7e77ce724e53b8880415b5f3c40e60b5760a49ea110012931beeab6b93e7ec0d";
-const PRESET_SHA = "a76c5a3b710b38ee0d3859977987ebb29d50dee3e10527ef73c09accc9194467";
+// The vendor file has a ten-byte trailer. MIDI returns only the 80 preset records.
+const PRESET_SHA = "506e835c3315971a3914661cbbffa144a5221dedc06cea2562f35711d5d47444";
 const checksum = (bytes) => ~bytes.reduce((sum, b) => sum + b, 0) & 0xff;
 
 async function read(link, object, address, length) {
@@ -49,7 +50,7 @@ export async function verifyFactorySounds(updater, onProgress = () => {}) {
   if (!dev) throw new Error("Connect a BlackBox running official V21");
   try {
     const models = await readBank(dev.link, 5, 0x70000000, 0x3C000, 512, (p) => onProgress(p * 0.95));
-    const presets = await readBank(dev.link, 4, 0, 7370, 92, (p) => onProgress(0.95 + p * 0.05));
+    const presets = await readBank(dev.link, 4, 0, 7360, 92, (p) => onProgress(0.95 + p * 0.05));
     if (await sha256hex(models) !== AMP_CAB_SHA || await sha256hex(presets) !== PRESET_SHA)
       throw new Error("The sound bank differs from the vendor’s AM4 factory bank");
     onProgress(1);
