@@ -1,0 +1,62 @@
+name: Fork installer and editor
+on:
+  workflow_dispatch:
+    inputs:
+      drive_lab:
+        description: Build the experimental drive-lab firmware
+        type: boolean
+        default: false
+      publish:
+        description: Publish the installer and editor on GitHub Pages (main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the pinned JieLi toolchain
+        run: sh firmware/setup.sh
+      - name: Build the V40 release channel
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/openpocket-v40" de713b4da082c8afdb34bd25c55d66cfd6a95a8c
+          (cd "$RUNNER_TEMP/openpocket-v40" && NATIVE=1 node tools/op.mjs package)
+          cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/*.fwsc docs/firmware/
+          cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/manifest.json docs/firmware/
+      - name: Build the drive-lab channel
+        if: inputs.drive_lab
+        run: OP_CHANNEL=drive-lab OP_TEST_VERSION=41 NATIVE=1 node tools/op.mjs build
+      - name: Upload the drive-lab package and symbols
+        if: inputs.drive_lab
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-lab
+          path: |
+            docs/firmware/drive-lab/
+            firmware/openpocket-drive-lab.bin
+            firmware/build/symbols.txt
+          if-no-files-found: error
+      - uses: actions/upload-pages-artifact@v4
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        with:
+          path: docs
+
+  deploy:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
