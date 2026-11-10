@@ -20,6 +20,12 @@ in `docs/NAM.md`) played with DI guitar from [Alec-Wright/Automated-GuitarAmpMod
 (GPL v3). The NAM A2 architecture is from Neural Amp Modeler (Steven Atkinson, MIT); `engine/px_nam.c`,
 `tools/nam_a2.py` and `tools/train_a2.py` are written for OpenPocket from the published architecture.
 
+Contributors: **Vince Speelman ([VinSpee](https://github.com/VinSpee))**: the simulator's WebAssembly engine and its sound, the
+command-line flasher, MIDI, the Bluetooth test image (the radio's fix, a connectable BLE-MIDI peripheral, the Chocolate
+Plus test, `op.mjs log`), and v41's two-core NAM work (the network split by layers, the `rdm` / `post4` / `post5` routines, 24 KB of RAM
+freed, the faster preset switches with LOADING, PING's DSP health and `tools/dsp.mjs`, the pedal screen's quick wins;
+pull request #22).
+
 Sound models: the names refer to the gear that inspired each voicing (circuit analyses published by ElectroSmash,
 Electric Druid, R.G. Keen / GEOFEX, Rob Robinette, Duncan's Tone Stack Calculator; speaker data sheets; manufacturers'
 manuals). All trademarks belong to their owners; OpenPocket is not affiliated with Donner, M-VAVE or any gear maker.
