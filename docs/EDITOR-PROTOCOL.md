@@ -123,3 +123,22 @@ Each preset written by OpenPocket v36 carries `"v": 36` (v35: `35`). Older prese
 its delay TIME is moved to v35's scale (the same delay time; REVERSE excepted); amp / drive / cab types from before
 v34 (`"RECTIFIED"`...) become the nearest current type. Each change of the delay or the types is listed in the import
 notes.
+
+## BluesBox V48 extension
+
+Protocol 4 keeps the 110-byte preset layout. The retired instrument row's type
+at zero-based packet offset 37 carries tag 0x76 when the preset has assignments.
+At offsets 93–96, two MIDI-safe bytes encode each group mask (low 7 bits, then
+high 4 bits), A before B. Each bit identifies one active block. Older packets
+without the tag carry no assignments. New editors include the masks as block
+labels when exporting JSON.
+
+SET with what = 3 assigns the requested block to no group (value 0), group A
+(1) or group B (2). The assignment changes the current preset. Use the regular
+save command to write it to the slot.
+
+Command 28 reports seven counters in V47 and eleven in V48. Each value
+occupies five low-to-high 7-bit bytes. The order is guitar blocks, audio IRQ
+deadline misses, peak IRQ percent, USB packets, USB underruns, USB overruns,
+USB mix clips, DSP deadline misses, wet-lane cuts, ADC clip blocks and
+guitar soft-knee blocks. Values other than peak IRQ are cumulative counters.

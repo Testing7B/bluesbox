@@ -1,5 +1,7 @@
 # Blues Lab presets
 
+For the current bank and controls, see the [BluesBox V48 Preset Guide](BluesBox-V48-Preset-Guide.pdf). The original V43 recipes below document the earlier comparison bank.
+
 The experimental build starts with 40 blues presets and keeps the 52-slot preset format. Slots 41–43 carry three V40 references. Slots 44–52 are comparisons. Existing saved presets take precedence over factory defaults. On a device with saved sounds, export them first and use the editor’s **Factory** button for the slots you want to audition.
 
 The 40 song presets share this order when the effects are enabled.
@@ -106,3 +108,24 @@ In the private V45 and V46 builds, P21 Gravity uses **TWO-ROCK TS1** with **OPTO
 ## V47 factory variations
 
 The local V47 build uses the fitted **Twin Clean / JBL 2×12**, **Super Clean or Super Edge / CTS 4×10**, **Deluxe Edge / Jensen P12Q**, and **Blonde Bass / Jensen 2×12** voices. Factory P21 and P22 keep **Two-Rock TS1**, paired with the JBL cab. P23 Vultures uses **Twin Edge**. Slots 48–52 start as **USER1–USER5**, with a clean amp and cab ready to edit. The public V47 build uses the available public voices. Both builds keep the 52-slot layout and honour saved presets.
+
+
+## V48 factory variations
+
+The 40 artist slots keep their song references. The local fitted voices
+received targeted presence and cabinet adjustments. P25 uses a
+touch-sensitive band-pass effect to approximate the recorded
+AdrenaLinn sound. P41–P43 preserve the V40 rigs with new output trims.
+P44–P47 hold the opto and drive comparisons. P48–P52 start as USER1–USER5.
+All 52 factory output trims were measured on riff, lead, chords, and
+arpeggio DI, with two additional comparison clips. Each build uses its
+own trims to match its amp and cab models.
+
+- The SRV presets use the Fender side of the Vibroverb/Dumble blend as
+  their tonal reference. [Richard Mullen on the Texas Flood sessions](https://www.mixonline.com/recording/classic-tracks/classic-track-stevie-ray-vaughan-pride-and-joy-367582)
+- The local Two-Rock TS1 covers one component of Mayer's multi-amp live sound.
+  The filter in P25 approximates the opening touch-sensitive part.
+  [Chad Franscoviak on Mayer's rig](https://www.mixonline.com/live-sound/tour-profile-john-mayer-367966), [Roger Linn's AdrenaLinn II guide](https://www.rogerlinndesign.com/support/support-adrenalinn-2-faqs)
+- The Albert King presets use a bright, direct Fender-based approximation.
+  King's own account describes Acoustic and Roland stage amps.
+  [Albert King interview](https://alanpaul.substack.com/p/an-interview-with-albert-king)

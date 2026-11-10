@@ -194,11 +194,67 @@ static void blues_apply_preset(px_preset_t *p, const blues_preset *preset)
     blues_apply_block(p, PX_B_REVERB, &BLUES_REVERB[preset->reverb]);
 }
 
+#ifdef PX_BLUES_V48
+/* Patch level at 0.3 dB per step, measured on six DI performances.
+ * The public and fitted voices have different gain and crest factors. */
+static const uint8_t BLUES_V48_LEVEL[] = {
+#ifdef PX_BLUES_FITTED
+     32,  63,  71,  75,  42,  32,  44,  84,  40,  41,
+     32,  67,  59,  57,  60, 100,  70,  74,  80,  57,
+     52,  82,  97,  82,  25,  59,  73,  75,  24,  78,
+     26,  31,  19,  31,  32,  27,  31,  28,  32,  19,
+     45,  71,  94,  63,  56,  78,  78,  32,  32,  32,
+     32,  32,
+#else
+     47,  66,  65,  79,  59,  43,  66,  79,  56,  45,
+     44,  72,  66,  65,  59, 100,  67,  75,  72,  60,
+     37,  85,  98,  78,  31,  73,  83,  85,  33,  80,
+     38,  39,  25,  36,  44,  29,  41,  34,  38,  22,
+     36,  59,  82,  60,  55,  83,  83,  43,  43,  43,
+     43,  43,
+#endif
+};
+_Static_assert(sizeof BLUES_V48_LEVEL == NPRESETS, "level for every factory slot");
+#ifdef PX_BLUES_FITTED
+/* Trim the fitted head/cab combination on the presets where the fit
+ * obscures pick attack. Keep the individual amp/cab models as fitted. */
+static void blues_presence(px_preset_t *p, unsigned voice)
+{
+    static const uint8_t correction[][3] = {
+        [BL_FULL] = {34, 93, 69},
+        [BL_HEADROOM] = {36, 91, 70},
+        [BL_SUPER_CLEAN] = {37, 95, 70},
+        [BL_BASSMAN] = {43, 76, 63},
+        [BL_TWIN_EDGE] = {37, 90, 70},
+    };
+    if (voice >= sizeof correction / sizeof correction[0] || !correction[voice][0]) return;
+    const uint8_t *q = correction[voice];
+    p->p[PX_B_CAB][1] = 73;
+    p->p[PX_B_CAB][2] = 74;
+    blk(p, PX_B_EQ, 1, PX_EQ_PARAM, q[0], 74, q[1], 5, q[2]);
+    for (int i = 10; i > 5; i--) p->order[i] = p->order[i - 1];
+    p->order[5] = PX_B_EQ;
+}
+#endif
+#endif
+
 /* Return 1 when this slot is a Lab preset. The three V40 slots use the unchanged factory switch. */
 static int blues_preset_factory(px_preset_t *p, int *idx)
 {
     if (*idx < BLUES_COUNT) {
         blues_apply_preset(p, &BLUES_PRESETS[*idx]);
+#ifdef PX_BLUES_V48
+#ifdef PX_BLUES_FITTED
+        blues_presence(p, BLUES_PRESETS[*idx].voice);
+#endif
+        /* Touch-sensitive approximation of the record's envelope filter. */
+        if (*idx == 24) {
+            p->on[PX_B_MOD] = 0;
+            blk(p, PX_B_SFX, 1, PX_SFX_AUTOWAH, 53, 50, 34, 0, 0);
+            for (int i = 9; i > 1; i--) p->order[i] = p->order[i - 1];
+            p->order[1] = PX_B_SFX;
+        }
+#endif
         return 1;
     }
 

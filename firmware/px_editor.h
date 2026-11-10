@@ -19,7 +19,11 @@
 #define ED_H0 0x7Du
 #define ED_H1 0x4Fu
 #define ED_H2 0x50u
+#ifdef PX_BLUES_V48
+#define ED_PROTO 4u
+#else
 #define ED_PROTO 3u                             /* 3: v38, cabinet IRs (IR_LIST .. IR_ERASE); 2: v37, NAM models */
+#endif
 #define ED_NAME_MAX 13u
 #define ED_P_SIZE 110u
 typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
@@ -157,6 +161,14 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
             px_preset_select_type(&PRESET, (int)b, (int)(v < nt ? v : nt - 1u));
             v = PRESET.type[b];
             ed_ui_fix();
+#ifdef PX_BLUES_V48
+        } else if (a[1] == 3u) {
+            if (v > 2u) return;
+            unsigned bit = 1u << b;
+            unsigned left = px_stomp_mask(&PRESET, 0) & ~bit;
+            unsigned right = px_stomp_mask(&PRESET, 1) & ~bit;
+            px_stomp_set(&PRESET, left | (v == 1u ? bit : 0), right | (v == 2u ? bit : 0));
+#endif
         } else return;
         ed_b(b); ed_b(a[1]); ed_b(a[2]); ed_b(v);
         break;
@@ -283,9 +295,9 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         break;
 #ifdef ED_AUDIO_STATS
     case ED_STATS: {
-        uint32_t stats[7];
+        uint32_t stats[ED_STATS_COUNT];
         ed_audio_stats(stats);
-        for (i = 0; i < 7u; i++)
+        for (i = 0; i < ED_STATS_COUNT; i++)
             for (k = 0; k < 5u; k++)
                 ed_b(stats[i] >> (7u * k));
         break;

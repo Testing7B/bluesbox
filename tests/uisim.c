@@ -42,6 +42,13 @@ static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s
 static int midi_saved;
 static void midi_persist(void) { midi_saved++; }
 #include "ui_text.h"
+#ifdef PX_BLUES_V48
+#include "../firmware/px_settings.h"
+static volatile uint8_t tn_active, tn_ready;
+static volatile uint32_t tn_w;
+static unsigned settings_saved;
+static void settings_persist(void) { settings_saved++; }
+#endif
 #include "ui.h"
 
 static void shot(const char *dir, const char *name)
@@ -110,5 +117,26 @@ int main(int argc, char **argv)
     mid_cfg.chan = 16; midi_open(); midi_knob(1); midi_draw(); shot(d, "midi_channel_wraps_to_omni");
     if (mid_cfg.chan != 0) { printf("midi: channel 16 + 1 must wrap to omni\n"); return 1; }
     midi_knob(-1); if (mid_cfg.chan != 16) { printf("midi: omni - 1 must wrap to 16\n"); return 1; }
+#ifdef PX_BLUES_V48
+    midi_close();
+    ui_blk = PRESET.order[PX_NBLK - 1];
+    ui_knob(1, 0); ui_render(); shot(d, "v48_preset_focus");
+    if (!ui_preset_focus) return 1;
+    browse_open(); browse_knob(1, 0); browse_draw(); shot(d, "v48_preset_preview");
+    uint32_t orig = cur_preset;
+    if (cur_preset == browse_slot) return 1;
+    ui_leave_menu();
+    if (cur_preset != orig || ui_preset_focus) return 1;
+    browse_open(); browse_knob(1, 0); PRESET.on[PX_B_AMP] ^= 1u;
+    browse_push();
+    if (!browse_confirm || cur_preset != orig) return 1;
+    browse_push();
+    if (cur_preset != (orig + 1) % (uint32_t)px_preset_count() || ui_mode != M_CHAIN) return 1;
+    settings_open(); settings_draw(); shot(d, "v48_settings");
+    settings_push(); settings_knob(1); settings_push();
+    set_row = SET_A; settings_push(); settings_draw(); shot(d, "v48_stomp_assignment");
+    settings_push(); settings_home(); settings_home();
+    if (settings_saved != 1 || !px_stomp_mask(&PRESET, 0) || cfg_read(cfg_audio, CFG_INPUT) != 5) return 1;
+#endif
     return 0;
 }

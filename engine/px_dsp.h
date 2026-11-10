@@ -107,6 +107,13 @@ typedef struct {
     uint8_t order[PX_PRESET_ROWS];        /* processing (and display) order: active block indices, then the reserved row */
 } px_preset_t;
 
+#ifdef PX_BLUES_V48
+/* MIDI-safe metadata in the retired instrument row. */
+#define PX_STOMP_TAG 0x76u
+unsigned px_stomp_mask(const px_preset_t *p, unsigned group);
+void px_stomp_set(px_preset_t *p, unsigned a, unsigned b);
+void px_stomp_toggle(px_preset_t *p, unsigned group);
+#endif
 void px_order_default(uint8_t *order);
 void px_preset_normalize(px_preset_t *preset);
 int  px_order_valid(const uint8_t *order);   /* 1 = a permutation of 0..PX_NBLK-1 */

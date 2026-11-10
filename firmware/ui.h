@@ -23,7 +23,7 @@
  */
 #pragma once
 
-enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE, M_MOVE, M_MIDI };
+enum { M_CHAIN, M_BLOCK, M_EDIT, M_TUNER, M_SAVE, M_MOVE, M_MIDI, M_BROWSE, M_SETTINGS };
 static uint32_t st_gen;                 /* bumped on each save: the "EDITED" reference reloads */
 static void st_get(uint32_t k, px_preset_t *p);
 static int st_save(uint32_t k, const px_preset_t *p);
@@ -31,6 +31,12 @@ static int st_reset(uint32_t k);
 static int st_saved(uint32_t k);
 static void save_draw(void);
 static void midi_draw(void);
+#ifdef PX_BLUES_V48
+static void browse_draw(void), settings_draw(void);
+static uint8_t ui_preset_focus;
+static uint32_t browse_slot;
+static int browse_confirm;
+#endif
 static uint32_t ui_mode = M_CHAIN, ui_blk = PX_B_AMP, ui_item = 0;
 #ifdef PX_BLUES_V47
 static uint8_t ui_usb_play;
@@ -148,7 +154,7 @@ static void draw_status(int force)
 /* the DSP load, from the main loop: "C1 42%" (2nd core), "C0", "BYP" (red) */
 static void ui_status(const char *s, int red)
 {
-    if (ui_mode == M_TUNER || ui_mode == M_SAVE || ui_mode == M_MIDI) return;
+    if (ui_mode == M_TUNER || ui_mode == M_SAVE || ui_mode == M_MIDI || ui_mode == M_BROWSE || ui_mode == M_SETTINGS) return;
     int same = uc.status_red == red;
     for (int i = 0; i < 12; i++) { if (uc.status[i] != s[i]) same = 0; if (!s[i]) break; }
     if (same && !uc.full) return;
@@ -160,7 +166,20 @@ static void ui_status(const char *s, int red)
 static void draw_hint(int force)
 {
     int h = (int)ui_mode;
-#ifdef PX_BLUES_V47
+#ifdef PX_BLUES_V48
+    if (h == M_CHAIN) {
+        int dirty = ui_dirty(), stomp = cfg_read(cfg_audio, CFG_STOMP);
+        int key = 100 + ui_usb_play + 2 * dirty + 4 * stomp + 8 * ui_preset_focus;
+        if (force || uc.hint != key) {
+            const char *hint = ui_preset_focus ? "PUSH: PRESETS" : stomp ? (ui_usb_play ? "STOMP A/B   USB" : "STOMP A/B") : ui_usb_play ? "USB PLAY" : "";
+            ft_box(0, F_Y + 3u, 174, hint, &FT_SM, ui_preset_focus ? UI_ACC : GRN, UI_PANEL, 1);
+            ft_box(174, F_Y + 3u, 62, dirty ? "EDITED" : "", &FT_SM, UI_ACC, UI_PANEL, 2);
+            lcd_rect(236, F_Y + 3u, 4, 15, UI_PANEL);
+        }
+        uc.hint = key;
+        return;
+    }
+#elif defined(PX_BLUES_V47)
     if (h == M_CHAIN) {
         int key = ui_usb_play ? 100 : M_CHAIN;
         if (force || uc.hint != key)
@@ -181,11 +200,17 @@ static void draw_hint(int force)
 /* ===================================================== PLAY ======== */
 static void draw_play_top(int force)
 {
-    if (force || uc.preset != cur_preset) {
+    uint32_t number_key = cur_preset;
+    uint16_t number_bg = UI_BG;
+#ifdef PX_BLUES_V48
+    number_key += ui_preset_focus ? 64u : 0u;
+    if (ui_preset_focus) number_bg = C_CARD;
+#endif
+    if (force || uc.preset != number_key) {
         char b[4]; uint32_t n = cur_preset + 1u;
         b[0] = (char)('0' + n / 10u); b[1] = (char)('0' + n % 10u); b[2] = 0;
-        ft_box(6, P_NUM_Y, 84, b, &FT_XL, UI_ACC, UI_BG, 0);
-        uc.preset = cur_preset;
+        ft_box(6, P_NUM_Y, 84, b, &FT_XL, UI_ACC, number_bg, 0);
+        uc.preset = number_key;
     }
     int at = PRESET.type[PX_B_AMP], ct = PRESET.type[PX_B_CAB], ao = PRESET.on[PX_B_AMP], co = PRESET.on[PX_B_CAB];
     int am = at == PX_AMP_NAM ? px_nam_model(PRESET.p[PX_B_AMP][0]) : -1;   /* v37: a NAM amp shows its model */
@@ -201,11 +226,17 @@ static void draw_play_top(int force)
         char nm[12];
         const char *cn = px_type_name(PX_B_CAB, ct);
         if (cm >= 0) { px_ir_name(cm, nm); cn = nm; }
+#ifdef PX_BLUES_V48
+        ft_box(94, P_NUM_Y + 27u, 142, co ? cn : "NO CAB", &FT_MD, co ? BLK_COL[PX_B_CAB] : UI_DIM, UI_BG, 0);
+#else
         ft_box(94, P_NUM_Y + 29u, 88, co ? cn : "NO CAB", &FT_SM, co ? BLK_COL[PX_B_CAB] : UI_DIM, UI_BG, 0);
+#endif
         uc.cab_t = ct; uc.cab_on = co; uc.cab_m = cm;
     }
+#ifndef PX_BLUES_V48
     int d = ui_dirty();                                /* EDITED: the sound differs from its saved slot */
     if (force || d != uc.dirty) { ft_box(182, P_NUM_Y + 29u, 54, d ? "EDITED" : "", &FT_SM, UI_ACC, UI_BG, 2); uc.dirty = d; }
+#endif
     int nchg = force;
     for (int i = 0; i < 14; i++) if (uc.name[i] != PRESET.name[i]) nchg = 1;
     if (nchg) {
@@ -220,7 +251,11 @@ static void draw_tile(int i)
 {
     int b = PRESET.order[i];
     uint32_t x = tile_x(i), y = tile_y(i);
-    int on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
+    int on = PRESET.on[b] != 0, sel = (b == (int)ui_blk);
+#ifdef PX_BLUES_V48
+    sel = sel && !ui_preset_focus;
+#endif
+    int mv = sel && ui_mode == M_MOVE;
     uint16_t bg = mv ? UI_ACC : (on ? BLK_COL[b] : C_OFF), fg = (on || mv) ? BLK : (uint16_t)((BLK_COL[b] >> 1) & 0x7BEF);
     ui_rbox(x - 2u, y - 2u, T_W + 4u, T_H + 4u, 5, sel ? WHT : UI_BG, UI_BG);   /* selection ring (or nothing) */
     ui_rbox(x, y, T_W, T_H, 4, bg, sel ? WHT : UI_BG);
@@ -234,13 +269,27 @@ static void draw_tiles(int force)
         for (int i = PX_NBLK; i < 2 * T_COLS; i++)
             lcd_rect(tile_x(i) - 2u, tile_y(i) - 2u, T_W + 4u, T_H + 4u, UI_BG);
     for (int i = 0; i < PX_NBLK; i++) {
-        int b = PRESET.order[i], on = PRESET.on[b] != 0, sel = (b == (int)ui_blk), mv = sel && ui_mode == M_MOVE;
+        int b = PRESET.order[i], on = PRESET.on[b] != 0, sel = (b == (int)ui_blk);
+#ifdef PX_BLUES_V48
+        sel = sel && !ui_preset_focus;
+#endif
+        int mv = sel && ui_mode == M_MOVE;
         if (force || uc.tile_blk[i] != b || uc.tile_on[i] != on || uc.tile_sel[i] != sel || uc.tile_mv[i] != mv) draw_tile(i);
     }
 }
 static void draw_info(int force)       /* the selected block: label, model, on/off */
 {
     int b = (int)ui_blk, t = PRESET.type[b], on = PRESET.on[b] != 0;
+#ifdef PX_BLUES_V48
+    if (ui_preset_focus) {
+        if (force || uc.info_b != -1) {
+            lcd_rect(0, P_INFO_Y, 240, 23, UI_BG);
+            ft_box(8, P_INFO_Y, 224, "PRESET SELECT", &FT_MD, UI_ACC, UI_BG, 0);
+            uc.info_b = -1;
+        }
+        return;
+    }
+#endif
     if (!force && uc.info_b == b && uc.info_t == t && uc.info_on == on) return;
     ft_box(0, P_INFO_Y, 8, "", &FT_MD, UI_TXT, UI_BG, 0);
     ft_box(8, P_INFO_Y, 54, px_block_label(b), &FT_MD, BLK_COL[b], UI_BG, 0);
@@ -335,6 +384,10 @@ static void ui_render(void)
     if (ui_mode == M_TUNER) return;
     if (ui_mode == M_SAVE) { save_draw(); return; }
     if (ui_mode == M_MIDI) { midi_draw(); return; }
+#ifdef PX_BLUES_V48
+    if (ui_mode == M_BROWSE) { browse_draw(); return; }
+    if (ui_mode == M_SETTINGS) { settings_draw(); return; }
+#endif
     int scr = UI_PAGE ? 1 : 0;
     if (scr != uc.screen) { uc.screen = scr; uc.full = 1; }
     int f = uc.full;
@@ -343,9 +396,17 @@ static void ui_render(void)
             lcd_rect(0, 0, 240, S_H, UI_PANEL);
             lcd_rect(0, S_H, 240, P_NUM_Y - S_H, UI_BG);
             lcd_rect(0, P_NUM_Y, 6, 45, UI_BG); lcd_rect(90, P_NUM_Y, 4, 45, UI_BG);
-            lcd_rect(94, P_NUM_Y, 142, 4, UI_BG); lcd_rect(94, P_NUM_Y + 27u, 142, 2, UI_BG); lcd_rect(94, P_NUM_Y + 44u, 142, 1, UI_BG);
+            lcd_rect(94, P_NUM_Y, 142, 4, UI_BG);
+#ifndef PX_BLUES_V48
+            lcd_rect(94, P_NUM_Y + 27u, 142, 2, UI_BG); lcd_rect(94, P_NUM_Y + 44u, 142, 1, UI_BG);
+#endif
             lcd_rect(236, P_NUM_Y, 4, 45, UI_BG);
+#ifdef PX_BLUES_V48
+            lcd_rect(0, P_NUM_Y + 45u, 94, P_NAME_Y - P_NUM_Y - 45u, UI_BG);
+            lcd_rect(236, P_NUM_Y + 45u, 4, P_NAME_Y - P_NUM_Y - 45u, UI_BG);
+#else
             lcd_rect(0, P_NUM_Y + 45u, 240, P_NAME_Y - P_NUM_Y - 45u, UI_BG);
+#endif
             lcd_rect(0, P_NAME_Y + 32u, 240, T_Y0 - 2u - P_NAME_Y - 32u, UI_BG);
             lcd_rect(16, P_NAME_Y + 36u, 208, 1, C_LINE);
             lcd_rect(0, T_Y0 - 2u, 2, 2u * T_DY + 2u, UI_BG); lcd_rect(236, T_Y0 - 2u, 4, 2u * T_DY + 2u, UI_BG);
@@ -375,6 +436,9 @@ static void ui_enter_block(uint32_t b)
 {
     if (ui_blk == b && ui_mode != M_CHAIN) PRESET.on[b] ^= 1u;   /* 2nd press on the same button: on/off */
     ui_blk = b; ui_mode = M_BLOCK; ui_item = 0;
+#ifdef PX_BLUES_V48
+    ui_preset_focus = 0;
+#endif
 }
 static uint8_t mv_orig[PX_NBLK];            /* the order before the move (HOME puts it back) */
 static void ui_move_start(void)
@@ -389,7 +453,14 @@ static void ui_knob(int dd, int fast)
 {
     if (ui_mode == M_CHAIN) {                          /* along the chain, in the preset's order */
         ui_order_fix();
+#ifdef PX_BLUES_V48
+        int pos = ui_preset_focus ? PX_NBLK : ui_pos_of(ui_blk);
+        pos = (pos + PX_NBLK + 1 + dd) % (PX_NBLK + 1);
+        ui_preset_focus = pos == PX_NBLK;
+        if (!ui_preset_focus) ui_blk = PRESET.order[pos];
+#else
         ui_blk = PRESET.order[(ui_pos_of(ui_blk) + PX_NBLK + dd) % PX_NBLK];
+#endif
     } else if (ui_mode == M_MOVE) {                    /* the grabbed block swaps with its neighbour */
         int i = ui_pos_of(ui_blk), j = i + (dd > 0 ? 1 : -1);
         if (j >= 0 && j < PX_NBLK) { uint8_t t = PRESET.order[i]; PRESET.order[i] = PRESET.order[j]; PRESET.order[j] = t; }
@@ -428,7 +499,15 @@ static void ui_push(void)
         else ui_mode = M_EDIT;
     } else ui_mode = M_BLOCK;
 }
-static void ui_home(void) { if (ui_mode == M_MOVE) ui_move_cancel(); ui_mode = M_CHAIN; ui_item = 0; }
+static void ui_home(void)
+{
+    if (ui_mode == M_MOVE) ui_move_cancel();
+    ui_mode = M_CHAIN;
+    ui_item = 0;
+#ifdef PX_BLUES_V48
+    ui_preset_focus = 0;
+#endif
+}
 
 /* ===================================================== save page ======== */
 /* hold PUSH: SAVE. KNOB picks the slot (01..52, then "FACTORY": this slot back to its factory preset), PUSH saves,
@@ -568,6 +647,9 @@ static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> PIT -> CMP -> GT -> 
     for (unsigned i = 0; i < sizeof UI_FXB; i++)
         if (UI_FXB[i] == ui_blk) nx = UI_FXB[(i + 1) % sizeof UI_FXB];
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
+#ifdef PX_BLUES_V48
+    ui_preset_focus = 0;
+#endif
 }
 
 /* ===================================================== tuner ======== */
@@ -655,7 +737,14 @@ static void tuner_prof(void)
 static void tuner_open(void)
 {
     ui_mode = M_TUNER;
-    a_tmute = 1;                                              /* v36: silent while tuning */
+#ifdef PX_BLUES_V48
+    ui_preset_focus = 0;
+    tn_w = 0; tn_ready = 0; tn_active = 1;
+    unsigned mute = cfg_read(cfg_audio, CFG_MUTE);
+    a_tmute = mute == MUTE_OFF ? 0 : mute == MUTE_ALL ? 2 : 1;
+#else
+    a_tmute = 1;
+#endif
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, GRN); lcd_rect(0, 27, 240, 3, GRN); lcd_rect(0, 4, 8, 23, GRN);
     ft_box(8, 4, 232, "TUNER", &FT_MD, BLK, GRN, 0);
@@ -671,7 +760,17 @@ static void tuner_open(void)
     tn_last_pf = ~0u;
     tn_last_note = -2; tn_last_x = -1; tn_last_c = 1000; tn_last_lv = 0x7FFF;
 }
-static void tuner_close(void) { a_tmute = 0; ui_mode = M_CHAIN; lcd_rect(0, 0, 240, 240, UI_BG); uc.screen = -1; ui_invalidate(); }
+static void tuner_close(void)
+{
+#ifdef PX_BLUES_V48
+    tn_active = 0;
+#endif
+    a_tmute = 0;
+    ui_mode = M_CHAIN;
+    lcd_rect(0, 0, 240, 240, UI_BG);
+    uc.screen = -1;
+    ui_invalidate();
+}
 static void tuner_draw(float hz)       /* hz <= 0: no note */
 {
     int note = -1, c = 0; float cents = 0.0f;
@@ -711,3 +810,173 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
         tn_last_x = x;
     }
 }
+
+#ifdef PX_BLUES_V48
+static void settings_persist(void);
+enum { SET_A = CFG_COUNT, SET_B, SET_MIDI, SET_COUNT };
+static uint8_t set_row, set_edit, set_block;
+static uint16_t set_orig;
+
+static void ui_menu(const char *title, const char *hint)
+{
+    lcd_rect(0, 0, 240, 240, UI_BG);
+    ft_box(0, 4, 240, title, &FT_MD, BLK, UI_ACC, 1);
+    ft_box(0, F_Y + 3u, 240, hint, &FT_SM, UI_DIM, UI_PANEL, 1);
+    ui_invalidate();
+}
+
+static void ui_leave_menu(void)
+{
+    ui_home();
+    uc.screen = -1;
+    ui_invalidate();
+}
+
+static void browse_open(void)
+{
+    ui_mode = M_BROWSE;
+    browse_slot = cur_preset;
+    browse_confirm = 0;
+    ui_menu("SELECT PRESET", "TURN   PUSH: LOAD   HOME: BACK");
+}
+
+static void browse_draw(void)
+{
+    if (!uc.full) return;
+    uc.full = 0;
+    px_preset_t next;
+    st_get(browse_slot, &next);
+    char number[4];
+    num3(number, browse_slot + 1u);
+    ft_box(0, 63, 240, number, &FT_XL, UI_ACC, UI_BG, 1);
+    ft_box(0, 117, 240, next.name, &FT_NM, UI_TXT, UI_BG, 1);
+    ft_box(0, 169, 240, browse_confirm ? "PUSH TO DISCARD EDITS" : "", &FT_SM, UI_ACC, UI_BG, 1);
+}
+
+static void browse_knob(int dd, int fast)
+{
+    int count = px_preset_count();
+    browse_slot = (uint32_t)(((int)browse_slot + count + dd * (fast ? 5 : 1)) % count);
+    browse_confirm = 0;
+    ui_invalidate();
+}
+
+static void browse_push(void)
+{
+    if (browse_slot != cur_preset) {
+        if (!browse_confirm && ui_dirty()) {
+            browse_confirm = 1;
+            ui_invalidate();
+            return;
+        }
+        cur_preset = browse_slot;
+        load_preset(cur_preset);
+    }
+    ui_leave_menu();
+}
+
+static void settings_open(void)
+{
+    ui_mode = M_SETTINGS;
+    set_row = set_edit = set_block = 0;
+    set_orig = cfg_audio;
+    ui_menu("SETTINGS", "TURN   PUSH: EDIT   HOME: DONE");
+}
+
+static void settings_value(unsigned row, char *out)
+{
+    unsigned v = cfg_read(cfg_audio, row);
+    if (row == CFG_STOMP) { b_str(out, v ? "STOMP" : "PRESET"); return; }
+    if (row == CFG_MUTE) {
+        static const char *const mute[] = {"GUITAR", "OFF", "ALL"};
+        b_str(out, mute[v]); return;
+    }
+    if (row == CFG_HPF) {
+        if (!v) b_str(out, "OFF");
+        else { num3(out, 20u + 20u * v); b_str(out, " HZ"); }
+        return;
+    }
+    unsigned db = row == CFG_INPUT && v > 4u ? (v - 4u) * 3u : v * 3u;
+    if (db) *out++ = row == CFG_INPUT && v > 4u ? '+' : '-';
+    num3(out, db);
+    b_str(out, " DB");
+}
+
+static void settings_draw(void)
+{
+    if (!uc.full) return;
+    uc.full = 0;
+    static const char *const labels[] = {"INPUT GAIN", "INPUT HPF", "GUITAR LEVEL", "USB LEVEL",
+        "FOOTSWITCHES", "TUNER MUTE", "ASSIGN GROUP A", "ASSIGN GROUP B", "MIDI"};
+    const int groups = set_edit && (set_row == SET_A || set_row == SET_B);
+    unsigned row = groups ? set_block : set_row;
+    unsigned count = groups ? PX_NBLK : SET_COUNT;
+    unsigned first = row < 4u ? 0u : row - 4u;
+    if (groups) {
+        unsigned group = set_row - SET_A;
+        ft_box(0, 4, 240, labels[set_row], &FT_MD, BLK, UI_ACC, 1);
+        ft_box(0, F_Y + 3u, 240, "TURN   PUSH: ASSIGN   HOME: BACK", &FT_SM, UI_DIM, UI_PANEL, 1);
+        for (unsigned i = first; i < count && i < first + 5u; i++) {
+            uint32_t y = 40u + (i - first) * 35u;
+            uint16_t bg = i == row ? C_CARD : UI_BG;
+            const char *v = (px_stomp_mask(&PRESET, group) >> i) & 1u ? "ON" : "OFF";
+            ft_box(0, y, 136, px_block_name((int)i), &FT_SM, UI_TXT, bg, 0);
+            ft_box(136, y, 104, v, &FT_SM, UI_ACC, bg, 2);
+        }
+    } else {
+        ft_box(0, 4, 240, "SETTINGS", &FT_MD, BLK, UI_ACC, 1);
+        ft_box(0, F_Y + 3u, 240, set_edit ? "TURN   PUSH: OK   HOME: BACK" : "TURN   PUSH: EDIT   HOME: DONE",
+               &FT_SM, UI_DIM, UI_PANEL, 1);
+        for (unsigned i = first; i < first + 5u; i++) {
+            char v[12] = "";
+            uint32_t y = 40u + (i - first) * 35u;
+            uint16_t bg = i == row ? C_CARD : UI_BG;
+            if (i < CFG_COUNT) settings_value(i, v);
+            else b_str(v, ">");
+            ft_box(0, y, 136, labels[i], &FT_SM, UI_TXT, bg, 0);
+            ft_box(136, y, 104, v, &FT_SM, i == row && set_edit ? UI_ACC : UI_TXT, bg, 2);
+        }
+    }
+}
+
+static void settings_knob(int dd)
+{
+    if (set_edit && (set_row == SET_A || set_row == SET_B))
+        set_block = (uint8_t)((set_block + PX_NBLK + dd) % PX_NBLK);
+    else if (set_edit) {
+        int value = (int)cfg_read(cfg_audio, set_row), max = CFG_MAX[set_row];
+        if (set_row == CFG_INPUT) {
+            int db = value > 4 ? value - 4 : -value;
+            db += dd;
+            if (db >= -4 && db <= 4) cfg_set(set_row, db > 0 ? (unsigned)(db + 4) : (unsigned)-db);
+        } else if (value + dd >= 0 && value + dd <= max) cfg_set(set_row, (unsigned)(value + dd));
+    } else set_row = (uint8_t)((set_row + SET_COUNT + dd) % SET_COUNT);
+    ui_invalidate();
+}
+
+static void settings_push(void)
+{
+    if (set_edit && (set_row == SET_A || set_row == SET_B)) {
+        unsigned a = px_stomp_mask(&PRESET, 0), b = px_stomp_mask(&PRESET, 1);
+        unsigned bit = 1u << set_block;
+        if (set_row == SET_A) { a ^= bit; b &= ~bit; }
+        else { b ^= bit; a &= ~bit; }
+        px_stomp_set(&PRESET, a, b);
+    } else if (set_row == SET_MIDI) {
+        if (cfg_audio != set_orig) settings_persist();
+        midi_open();
+        return;
+    } else {
+        set_edit ^= 1u;
+        set_block = 0;
+    }
+    ui_invalidate();
+}
+
+static void settings_home(void)
+{
+    if (set_edit) { set_edit = 0; ui_invalidate(); return; }
+    if (cfg_audio != set_orig) settings_persist();
+    ui_leave_menu();
+}
+#endif

@@ -325,6 +325,35 @@ int px_order_valid(const uint8_t *o)
     for (int i = 0; i < PX_NBLK; i++) { if (o[i] >= PX_NBLK || (seen >> o[i]) & 1u) return 0; seen |= 1u << o[i]; }
     return 1;
 }
+#ifdef PX_BLUES_V48
+unsigned px_stomp_mask(const px_preset_t *p, unsigned group)
+{
+    const uint8_t *bytes = &p->p[PX_NBLK][2u * group];
+    return p->type[PX_NBLK] == PX_STOMP_TAG
+        ? (bytes[0] | ((unsigned)bytes[1] << 7)) & ((1u << PX_NBLK) - 1u) : 0u;
+}
+
+void px_stomp_set(px_preset_t *p, unsigned a, unsigned b)
+{
+    const unsigned mask = (1u << PX_NBLK) - 1u;
+    a &= mask;
+    b &= mask & ~a;
+    p->on[PX_NBLK] = 0;
+    p->type[PX_NBLK] = (a | b) ? PX_STOMP_TAG : 0;
+    uint8_t *bytes = p->p[PX_NBLK];
+    bytes[0] = a & 127u; bytes[1] = a >> 7;
+    bytes[2] = b & 127u; bytes[3] = b >> 7; bytes[4] = 0;
+}
+
+void px_stomp_toggle(px_preset_t *p, unsigned group)
+{
+    unsigned mask = px_stomp_mask(p, group), enabled = 0;
+    for (unsigned i = 0; i < PX_NBLK; i++) if (p->on[i]) enabled |= 1u << i;
+    unsigned turn_on = (enabled & mask) != mask;
+    for (unsigned i = 0; i < PX_NBLK; i++) if (mask & (1u << i)) p->on[i] = turn_on;
+}
+#endif
+
 void px_preset_normalize(px_preset_t *p)
 {
     /* Compact a V40 order around its former instrument block. */
@@ -335,8 +364,12 @@ void px_preset_normalize(px_preset_t *p)
     if (n == PX_NBLK && px_order_valid(order)) memcpy(p->order, order, PX_NBLK);
     else px_order_default(p->order);
     p->order[PX_NBLK] = PX_NBLK;
+#ifdef PX_BLUES_V48
+    px_stomp_set(p, px_stomp_mask(p, 0), px_stomp_mask(p, 1));
+#else
     p->on[PX_NBLK] = p->type[PX_NBLK] = 0;
     memset(p->p[PX_NBLK], 0, PX_NPAR);
+#endif
     if (p->type[PX_B_SFX] == PX_SFX_COUNT) {
         p->on[PX_B_SFX] = 0;
         p->type[PX_B_SFX] = PX_SFX_AUTOWAH;
@@ -836,7 +869,13 @@ void px_preset_factory(px_preset_t *p, int idx)
     if (idx < 0 || idx >= NPRESETS) idx = 0;
     p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
 #ifdef PX_BLUES_LAB
+#ifdef PX_BLUES_V48
+    const int factory_slot = idx;
+#endif
     if (blues_preset_factory(p, &idx)) {
+#ifdef PX_BLUES_V48
+        LVL(BLUES_V48_LEVEL[factory_slot]);
+#endif
         model_defaults(p, PX_B_DRIVE);
         model_defaults(p, PX_B_COMP);
         return;
@@ -941,6 +980,9 @@ void px_preset_factory(px_preset_t *p, int idx)
     }
     model_defaults(p, PX_B_DRIVE);
     model_defaults(p, PX_B_COMP);
+#ifdef PX_BLUES_V48
+    LVL(BLUES_V48_LEVEL[factory_slot]);
+#endif
 }
 #undef NAM
 #undef LVL

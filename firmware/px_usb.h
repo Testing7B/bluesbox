@@ -2,7 +2,7 @@
  * OpenPocket — USB-MIDI + the M-UPGRADE update entry, so the web installer can update the pedal over USB.
  *
  * The USB device and the update protocol are felucca-bsp's (chip/usb.c, chip/ota.c, MPL-2.0, same chip as the FM-1):
- *   - usb_poll() runs from the TIMER5 interrupt at 2 kHz (10 kHz tick, every 5th), as in felucca-bsp's hwtest;
+ *   - usb_poll() runs from the TIMER5 interrupt at 2 kHz; older builds use every fifth 10 kHz tick;
  *   - the main loop answers the handshake (ota_service) and, on the host's "upgrade" command, runs ota_session():
  *     it reads the package's update loader from the host, stages it at 0xE0000 (5 x 4 KiB) and resets into it;
  *     the loader (loader/) then writes the new app area. Nothing is committed before the host says "success".
@@ -53,7 +53,15 @@ static __attribute__((noinline)) void px_usb_mix(int32_t *out, uint32_t frames)
 {
     if (!uo.alt || a_mute) return;
     const uint32_t vol = master_vol;
-    uac_play(out, frames, vol * vol * 4096u / 10000u);
+    uint32_t scale = vol * vol * 4096u / 10000u;
+#ifdef PX_BLUES_V48
+    static uint32_t mute_gain = 4096u;
+    uint32_t target = a_tmute == 2u ? 0u : 4096u;
+    mute_gain = (mute_gain + target) / 2u;
+    scale = (uint32_t)((float)scale * CFG_DB[cfg_read(cfg_audio, CFG_USB)]);
+    scale = scale * mute_gain >> 12;
+#endif
+    uac_play(out, frames, scale);
 #ifndef PX_BLUES_V47
     for (uint32_t i = 0; i < 2u * frames; i++) {
         if (out[i] > 8388607) out[i] = 8388607;
@@ -64,19 +72,34 @@ static __attribute__((noinline)) void px_usb_mix(int32_t *out, uint32_t frames)
 #endif
 
 static uint8_t px_flash_ok;                     /* the flash is a 1 MiB SPI NOR: the update entry may stage */
+#ifndef PX_BLUES_V47
 static volatile uint32_t px_t5_sub;
+#endif
 
-void fm1_timer5_irq(void)                       /* 10 kHz; USB at 2 kHz */
+void fm1_timer5_irq(void)
 {
     fm1_timer5_ack();
 #if OP_BLE_TEST                                 /* a ble_poll that does not return: the crash screen says where (ble_status.h) */
     if (ble_stall_tick())
         FM1_VEC[FM1_IRQ_TIMER5] = (uint32_t)(uintptr_t)(fm1_fatal_stubs + 6u * FM1_IRQ_TIMER5);
 #endif
+#ifdef PX_BLUES_V47
+    usb_poll();
+#ifdef PX_BLUES_V48
+    /* Bulk/control traffic can wait through an audio block. Only the
+     * isochronous stream needs to preempt the guitar IRQ. */
+    const uint32_t shift = (FM1_IRQ_TIMER5 & 7u) * 4u;
+    const uint32_t priority = (uo.alt && !usb.suspended ? 4u : 2u) << (shift + 1u);
+    const uint32_t current = FM1_ICFG(FM1_IRQ_TIMER5);
+    const uint32_t next = (current & ~(7u << (shift + 1u))) | priority;
+    if (next != current) FM1_ICFG(FM1_IRQ_TIMER5) = next;
+#endif
+#else
     if (++px_t5_sub >= 5u) {
         px_t5_sub = 0;
         usb_poll();
     }
+#endif
 }
 extern void isr_timer5(void);
 
@@ -158,9 +181,15 @@ static void px_usb_start(void)                  /* interrupts still off (before 
         ota_boot_cleanup();                     /* a staging area left by an update: the SPL must not re-enter it */
     usb_start();
 #ifdef PX_BLUES_V47
-    fm1_timer5_start(isr_timer5, 2);            /* the guitar interrupt (3) takes precedence */
+    /* RX FIFO must be drained within each 1 ms USB frame, even during a long guitar render.
+     * Poll directly at 2 kHz instead of entering a high-priority ISR 10,000 times a second. */
+#ifdef PX_BLUES_V48
+    fm1_timer5_start(isr_timer5, 2, 3000u);
 #else
-    fm1_timer5_start(isr_timer5, 4);            /* above ALNK0 (3), as felucca-bsp */
+    fm1_timer5_start(isr_timer5, 4, 3000u);
+#endif
+#else
+    fm1_timer5_start(isr_timer5, 4, 600u);            /* above ALNK0 (3), as felucca-bsp */
 #endif
 }
 static void px_audio_halt(void)                 /* before any flash write: nothing may run from XIP but us */

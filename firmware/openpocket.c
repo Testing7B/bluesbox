@@ -535,6 +535,9 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #include "audio_probe.h"
 #else
 #include "px_cacheram.h"     /* v37: data-cache ways as RAM (melodee's routine): the NAM network's vector-unit buffers */
+#ifdef PX_BLUES_V48
+#include "px_settings.h"
+#endif
 #include "px_audio.h"
 #endif
 
@@ -544,6 +547,9 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 #define PX_LIGHTS_OFF() lights_off()
 #include "px_usb.h"         /* USB-MIDI + update entry (web installer) */
 #include "px_store.h"       /* the user's presets in flash */
+#ifdef PX_BLUES_V48
+static void settings_persist(void) { st_commit(); }
+#endif
 #include "px_models.h"      /* v37: the NAM user models in flash */
 #include "px_irs.h"         /* v38: the user cabinet IRs in flash */
 #if !AUDIO_PROBE
@@ -567,7 +573,12 @@ static void ir_changed(uint32_t s)   /* v38: a user IR was written or erased: th
 static void ed_diag_line(uint32_t i, char *out);
 #endif
 #ifdef PX_BLUES_V47
-static void ed_audio_stats(uint32_t stats[7])
+#ifdef PX_BLUES_V48
+#define ED_STATS_COUNT 11u
+#else
+#define ED_STATS_COUNT 7u
+#endif
+static void ed_audio_stats(uint32_t stats[ED_STATS_COUNT])
 {
     stats[0] = a_blocks;
     stats[1] = a_irq_late;
@@ -576,6 +587,12 @@ static void ed_audio_stats(uint32_t stats[7])
     stats[4] = uo.underruns;
     stats[5] = uo.overruns;
     stats[6] = uo.mix_clips;
+#ifdef PX_BLUES_V48
+    stats[7] = a_xrun;
+    stats[8] = a_wcut;
+    stats[9] = a_input_clips;
+    stats[10] = a_clip;
+#endif
 }
 #define ED_AUDIO_STATS 1
 #endif
@@ -629,6 +646,9 @@ static void app_main(void)
     uint32_t adc_tick = 0, home_t = 0, t_knob = 0, t_tuner = 0;
     int home_down = 0, home_long = 0, push_down = 0, push_long = 0, fx_down = 0, fx_long = 0;
     uint32_t push_t = 0, clk_t = 0, fx_t = 0;
+#ifdef PX_BLUES_V48
+    foot_gesture_t feet = {0};
+#endif
     int clk_pend = 0;                    /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
     int32_t master_raw = -100;
 #if !AUDIO_PROBE
@@ -831,6 +851,12 @@ static void app_main(void)
             if (accum >= 4) { accum -= 4; dd = 1; } else if (accum <= -4) { accum += 4; dd = -1; }
             if (dd) {
                 int fast = (now - t_knob) < 45u; t_knob = now;
+#ifdef PX_BLUES_V48
+                if (ui_mode == M_CHAIN && clk_pend) { clk_pend = 0; ui_push(); }
+                if (ui_mode == M_BROWSE) browse_knob(dd, fast);
+                else if (ui_mode == M_SETTINGS) settings_knob(dd);
+                else
+#endif
                 if (ui_mode == M_SAVE) save_knob(dd); else if (ui_mode == M_MIDI) midi_knob(dd); else if (ui_mode != M_TUNER) ui_knob(dd, fast);
                 any = 1;
             }
@@ -845,6 +871,11 @@ static void app_main(void)
         if (!push_now && push_down) { push_down = 0; if (!push_long) p_push = 1; }
         int p_up = dbn_press(&btn[B_FSUP], (pa & PA_FS_UP) != 0);
         int p_dn = dbn_press(&btn[B_FSDN], (pa & PA_FS_DN) != 0);
+#ifdef PX_BLUES_V48
+        unsigned foot = foot_gesture(&feet, btn[B_FSDN].stab | (btn[B_FSUP].stab << 1), now);
+        p_dn = foot == FOOT_LEFT;
+        p_up = foot == FOOT_RIGHT;
+#endif
         /* FX: a short press (on release) cycles the effects, a long one (0.8 s) opens the MIDI settings */
         dbn_press(&btn[B_FX], (pa & PA_FX) != 0);
         int fx_now = btn[B_FX].stab != 0, p_fx = 0, p_midi = 0;
@@ -875,6 +906,16 @@ static void app_main(void)
             mv = adc_read2(ADC_CH_MASTER);
         }
 #if !AUDIO_PROBE
+#ifdef PX_BLUES_V48
+        if (ui_mode == M_SETTINGS) {
+            if (p_push) settings_push();
+            else if (p_home) settings_home();
+        } else if (ui_mode == M_BROWSE) {
+            if (p_push) browse_push();
+            else if (p_home) ui_leave_menu();
+            else if (foot == FOOT_TUNER || p_tuner) { ui_preset_focus = 0; tuner_open(); }
+        } else
+#endif
         if (ui_mode == M_SAVE) {
             if (p_push) save_confirm();
             else if (p_home) save_close();
@@ -882,9 +923,18 @@ static void app_main(void)
             if (p_push) midi_push();
             else if (p_home) midi_close();
         } else if (p_midi && ui_mode != M_TUNER && ui_mode != M_MOVE) {
+#ifdef PX_BLUES_V48
+            clk_pend = 0;
+            settings_open();
+#else
             midi_open();
+#endif
         } else if (ui_mode == M_TUNER) {
-            if (p_push || p_save || p_up || p_dn || p_fx || p_mod || p_amp || p_cab || p_dly || p_rev || p_home) tuner_close();
+            if (p_push || p_save || p_up || p_dn || p_fx || p_mod || p_amp || p_cab || p_dly || p_rev || p_home
+#ifdef PX_BLUES_V48
+                || foot == FOOT_TUNER
+#endif
+                ) tuner_close();
         } else if (p_save) {
             save_open();
         } else if (ui_mode == M_MOVE) {  /* moving a block: PUSH drops it, HOME puts it back */
@@ -892,6 +942,13 @@ static void app_main(void)
             if (p_push) ui_move_drop();
             else if (p_home) ui_move_cancel();
         } else {
+#ifdef PX_BLUES_V48
+            if (p_push && ui_mode == M_CHAIN && ui_preset_focus) {
+                clk_pend = 0; p_push = 0;
+                browse_open();
+            }
+            if (foot == FOOT_TUNER) p_tuner = 1;
+#endif
             /* chain page: double-click PUSH = move the selected block; a single click opens it (after 350 ms) */
             if (p_push && ui_mode == M_CHAIN) {
                 if (clk_pend && now - clk_t < 350u) { clk_pend = 0; ui_move_start(); }
@@ -902,12 +959,20 @@ static void app_main(void)
                 clk_pend = 0;
                 if (ui_mode == M_CHAIN) ui_push();
             }
-            if (ui_mode == M_MOVE) { }
+            if (ui_mode == M_MOVE || ui_mode == M_BROWSE) { }
             else if (p_tuner) tuner_open();
             else {
                 if (p_push) ui_push();
-                if (p_up) ui_preset_step(+1);
-                if (p_dn) ui_preset_step(-1);
+#ifdef PX_BLUES_V48
+                if (cfg_read(cfg_audio, CFG_STOMP)) {
+                    if (p_dn) px_stomp_toggle(&PRESET, 0);
+                    if (p_up) px_stomp_toggle(&PRESET, 1);
+                } else
+#endif
+                {
+                    if (p_up) ui_preset_step(+1);
+                    if (p_dn) ui_preset_step(-1);
+                }
                 if (p_home) ui_home();
                 if (p_fx) ui_fx_cycle();
                 if (p_mod) ui_enter_block(PX_B_MOD);

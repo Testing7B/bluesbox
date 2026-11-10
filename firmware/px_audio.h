@@ -293,6 +293,10 @@ static void a_collect(void)                            /* collects the block in 
 #define TN_N 1024u
 static float tn_buf[TN_N];
 static volatile uint32_t tn_w;
+#ifdef PX_BLUES_V48
+static volatile uint8_t tn_active, tn_ready;
+static volatile uint32_t a_input_clips;
+#endif
 static void tn_capture(const float *x, uint32_t n)
 {
     uint32_t w = tn_w;
@@ -300,12 +304,18 @@ static void tn_capture(const float *x, uint32_t n)
         tn_buf[w] = (x[i] + x[i + 1u] + x[i + 2u] + x[i + 3u]) * 0.25f;
         w = (w + 1u) & (TN_N - 1u);
     }
+#ifdef PX_BLUES_V48
+    if (w < tn_w) tn_ready = 1;
+#endif
     tn_w = w;
 }
 static float tn_lin[TN_N];
 static float tn_d[200];
 static float tuner_estimate(void)      /* frequency in Hz, or 0 (silence / unclear). YIN algorithm. */
 {
+#ifdef PX_BLUES_V48
+    if (!tn_ready) return 0.0f;
+#endif
     const uint32_t W = 600u, TMIN = 10u, TMAX = 180u;  /* 61 Hz .. 1100 Hz at 11025 Hz */
     uint32_t w = tn_w;
     float e = 0.0f;
@@ -348,9 +358,15 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
     uint32_t n = (uint32_t)len / 8u;                   /* 2 32-bit words per frame */
     if (n > A_FR) n = A_FR;
     float sl = 0.0f, sr = 0.0f;
+#ifdef PX_BLUES_V48
+    unsigned input_clip = 0;
+#endif
     for (uint32_t i = 0; i < n; i++) {
         float l = (float)((int32_t)(s[2u * i] << 8) >> 8), r = (float)((int32_t)(s[2u * i + 1u] << 8) >> 8);
         sl += l * l; sr += r * r;
+#ifdef PX_BLUES_V48
+        input_clip |= l >= 8388000.0f || l <= -8388000.0f;
+#endif
         a_in[i] = l * (0.5f / 8388608.0f);             /* guitar = L channel only (like the official fw); R carries
                                                           only noise (~ -77 dBFS, measured v26). x0.5: same level
                                                           as the old (L + R) / 2, settings are unchanged */
@@ -360,7 +376,35 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
         a_lvl[0] += (sl / (float)n - a_lvl[0]) * 0.0625f;
         a_lvl[1] += (sr / (float)n - a_lvl[1]) * 0.0625f;
     }
+#ifdef PX_BLUES_V48
+    a_input_clips += input_clip;
+    if (tn_active) tn_capture(a_in, A_FR);
+#else
     tn_capture(a_in, A_FR);
+#endif
+#ifdef PX_BLUES_V48
+    {
+        const uint16_t cfg = cfg_audio;
+        unsigned gain = cfg_read(cfg, CFG_INPUT), hpf = cfg_read(cfg, CFG_HPF);
+        /* 0 is unity; 1..4 attenuate, 5..8 boost by 3..12 dB. */
+        float target = gain <= 4u ? CFG_DB[gain] : 1.0f / CFG_DB[gain - 4u];
+        static float applied = 1.0f, coef, low;
+        const float next = CFG_HP_COEF[hpf];
+        if (hpf || coef > 0.00001f || gain || applied < 0.99999f || applied > 1.00001f) {
+            for (uint32_t i = 0; i < n; i++) {
+                float sample = a_in[i];
+                applied += (target - applied) * 0.008f;
+                coef += (next - coef) * 0.008f;
+                if (coef > 0.00001f) {
+                    low += (sample - low) * coef;
+                    float blend = coef * (1.0f / 0.005683f);
+                    sample -= low * (blend < 1.0f ? blend : 1.0f);
+                } else low = 0.0f;
+                a_in[i] = sample * applied;
+            }
+        }
+    }
+#endif
 #if DSP_CPU1
     /* a NAM amp on two cores (px_nam_dual): pipelined here (dsp_pipe), CPU1 its helper */
     if (a_c1 && !px_nam_dual(&g_eng)) {
@@ -473,6 +517,9 @@ static void audio_volume(uint32_t vol)                 /* 0..100 -> gain (quadra
 {
     float v = (float)vol * 0.01f;
     a_gain = v * v;
+#ifdef PX_BLUES_V48
+    a_gain *= CFG_DB[cfg_read(cfg_audio, CFG_GUITAR)];
+#endif
 }
 
 

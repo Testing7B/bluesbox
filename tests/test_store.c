@@ -52,9 +52,16 @@ static px_preset_t PRESET;
 static void st_get(uint32_t k, px_preset_t *p);
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
 #define ST_IRQ_OFF() ((void)0)
+#ifdef PX_BLUES_V48
+#include "../firmware/px_settings.h"
+#endif
 #include "../firmware/px_store.h"
 
-static void reboot(void) { memset(st_slot, 0, sizeof st_slot); st_cur = st_seq = 0; st_last = 0; st_midi = 0x55; mid_cfg.chan = 9; px_store_boot(); }
+static void reboot(void) {
+#ifdef PX_BLUES_V48
+    cfg_audio = 0;
+#endif
+    memset(st_slot, 0, sizeof st_slot); st_cur = st_seq = 0; st_last = 0; st_midi = 0x55; mid_cfg.chan = 9; px_store_boot(); }
 static void loader_bytes_clear(void)
 {
     for (uint32_t s = 0xF0000u; s < 0xF4000u; s += 0x1000u)
@@ -281,6 +288,34 @@ int main(void)
           f.type[PX_B_DRIVE] == q.type[PX_B_DRIVE] && !memcmp(f.p[PX_B_DRIVE], q.p[PX_B_DRIVE], PX_NPAR),
           "V40 preset: remove the instrument and Square Synth, keep custom order and drive");
     loader_bytes_clear();
+#ifdef PX_BLUES_V48
+    px_preset_factory(&p, 2);
+    px_stomp_set(&p, (1u << PX_B_DRIVE) | (1u << PX_B_COMP), 1u << PX_B_DELAY);
+    cfg_set(CFG_STOMP, 1);
+    cfg_set(CFG_MUTE, MUTE_ALL);
+    CHECK(st_save(2, &p) == 0, "save global settings and per-preset assignments");
+    reboot();
+    CHECK(cfg_read(cfg_audio, CFG_STOMP) == 1 && cfg_read(cfg_audio, CFG_MUTE) == MUTE_ALL, "audio settings survive reboot");
+    st_get(2, &q);
+    CHECK(px_stomp_mask(&q, 0) == ((1u << PX_B_DRIVE) | (1u << PX_B_COMP)) &&
+          px_stomp_mask(&q, 1) == (1u << PX_B_DELAY), "group assignments survive reboot");
+    q.on[PX_B_DRIVE] = 1; q.on[PX_B_COMP] = 0;
+    px_stomp_toggle(&q, 0);
+    CHECK(q.on[PX_B_DRIVE] && q.on[PX_B_COMP], "mixed group turns both blocks on");
+    px_stomp_toggle(&q, 0);
+    CHECK(!q.on[PX_B_DRIVE] && !q.on[PX_B_COMP], "enabled group turns both blocks off");
+    memset(q.p[PX_NBLK], 99, PX_NPAR); q.type[PX_NBLK] = 3;
+    px_preset_normalize(&q);
+    CHECK(!px_stomp_mask(&q, 0) && !px_stomp_mask(&q, 1), "legacy synth data cannot become group assignments");
+    foot_gesture_t feet = {0};
+    CHECK(!foot_gesture(&feet, 1, 100) && foot_gesture(&feet, 0, 200) == FOOT_LEFT, "left tap");
+    CHECK(!foot_gesture(&feet, 2, 300) && !foot_gesture(&feet, 3, 350) &&
+          !foot_gesture(&feet, 3, 1049) && foot_gesture(&feet, 3, 1050) == FOOT_TUNER &&
+          !foot_gesture(&feet, 2, 1100) && !foot_gesture(&feet, 0, 1200), "tuner hold consumes both releases");
+    CHECK(!foot_gesture(&feet, 3, 1250) && !foot_gesture(&feet, 1, 1300) &&
+          !foot_gesture(&feet, 0, 1350), "short chord cancels both taps");
+    CHECK(!foot_gesture(&feet, 2, 1500) && foot_gesture(&feet, 0, 1600) == FOOT_RIGHT, "right tap resumes");
+#endif
     printf(fails ? "%d FAILED\n" : "store tests passed\n", fails);
     return fails != 0;
 }

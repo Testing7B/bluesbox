@@ -6,7 +6,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>BluesBox Editor</title>
+<title>BluesBox V48 Editor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap">
 <style>
@@ -235,10 +235,22 @@ input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--ac
               <span class="mv"><button class="btn small" id="mvl" title="Move this block earlier in the chain">◀</button><button class="btn small" id="mvr" title="Move this block later in the chain">▶</button></span></div>
             <div class="type"><button id="tprev" aria-label="Previous type">&lt;</button><select id="type" aria-label="Type"></select><button id="tnext" aria-label="Next type">&gt;</button></div>
             <div class="params" id="params"></div>
+            <div class="actions" id="stomp" hidden>
+              <label for="stomp-group">Footswitch group for this block</label>
+              <select id="stomp-group"><option value="0">None</option><option value="1">A · Left</option><option value="2">B · Right</option></select>
+              <small>Use Stomp mode on the pedal. Save to keep the assignment with this preset.</small>
+            </div>
           </div>
           <div class="ftr"><span id="hint">DRAG A TILE: MOVE THE BLOCK · ⏻ ON A TILE: ON/OFF</span><span class="load" id="load">C1 —%</span></div>
         </div>
       </div>
+      <details id="audio-diagnostics" hidden>
+        <summary>Audio diagnostics</summary>
+        <p>Start, play until you hear a click, then read the counters for that playing interval.</p>
+        <button class="btn" id="stats-start">Start</button>
+        <button class="btn" id="stats-read" disabled>Read counters</button>
+        <pre id="stats-text" aria-live="polite"></pre>
+      </details>
       <div class="actions" id="actions" hidden>
         <button class="btn go" id="save">Save</button>
         <button class="btn" id="revert">Revert</button>
@@ -268,6 +280,26 @@ const pad2 = (n) => String(n).padStart(2, "0");
 
 function say(t, kind = "") { const m = $("msg"); m.textContent = t; m.className = "msg" + (kind ? " " + kind : ""); }
 function progress(f) { $("prog").hidden = f === null; $("progi").style.width = `${Math.round((f || 0) * 100)}%`; }
+let statsStart = null;
+$("stats-start").onclick = () => act(async () => {
+  statsStart = await ed.audioStats();
+  $("stats-text").textContent = "Recording interval started. Play, then read the counters.";
+  $("stats-read").disabled = false;
+});
+$("stats-read").onclick = () => act(async () => {
+  const end = await ed.audioStats();
+  const labels = {
+    blocks: "Guitar blocks", late: "Audio IRQ deadline misses", dspLate: "DSP deadline misses",
+    wetCuts: "Wet effect cuts", inputClips: "ADC clip blocks", guitarKnee: "Guitar soft-knee blocks",
+    usbPackets: "USB packets", usbUnderruns: "USB underruns", usbOverruns: "USB overruns",
+    mixClips: "Mix clips"
+  };
+  const state = await ed.state();
+  const header = `P${pad2(state.slot + 1)} ${state.preset.name}`;
+  if (!statsStart || end.blocks < statsStart.blocks) throw new Error("measurement reset; press Start again");
+  $("stats-text").textContent = [header, ...Object.entries(labels).map(([key,label]) =>
+    `${label}: ${(end[key] - statsStart[key]) >>> 0}`)].join("\n");
+});
 let askFn = null;
 function ask(text, yes = "OK") {
   return new Promise((res) => {
@@ -295,7 +327,12 @@ async function connect() {
     }
     ed = e;
     ed.onLost = lost;
-    $("status").textContent = `${info.identity.replace("_9", " · BluesBox v").replace(/v(\d+)$/, "v$1")}`;
+    $("status").textContent = info.identity.replace("_9", " · BluesBox v");
+    $("stomp").hidden = !ed.hasStomp;
+    $("audio-diagnostics").hidden = !ed.hasStomp;
+    statsStart = null;
+    $("stats-read").disabled = true;
+    $("stats-text").textContent = "";
     $("dot").classList.add("on");
     say("Reading the pedal's catalogue…"); progress(0);
     cat = await ed.catalog(progress);
@@ -324,6 +361,7 @@ function lost() {
   clearInterval(pingTimer);
   if (ed) ed.close();
   ed = null;
+  $("audio-diagnostics").hidden = true;
   $("dot").classList.remove("on");
   $("status").textContent = "disconnected";
   say("The pedal is not answering any more. Plug it back in and press Connect.", "err");
@@ -604,6 +642,8 @@ function renderTiles() {
 }
 function renderPage(fromPush) {
   const b = focus, B = blk(b), T = typ(b);
+  const masks = st.preset.stomp || [0, 0];
+  $("stomp-group").value = masks[0] & (1 << b) ? 1 : masks[1] & (1 << b) ? 2 : 0;
   document.documentElement.style.setProperty("--blk", B.color);
   $("bname").textContent = B.name;
   const on = st.preset.on[b];
@@ -724,6 +764,14 @@ function toggle(b) {
   act(async () => { st.preset.on[b] = await ed.setOn(b, !st.preset.on[b]); await syncState(); renderTiles(); renderPage(); });
 }
 $("onoff").onclick = () => toggle(focus);
+$("stomp-group").onchange = () => {
+  const b = focus, group = Number($("stomp-group").value);
+  act(async () => {
+    await ed.setStomp(b, group);
+    await syncState();
+    renderPage();
+  });
+};
 function setType(t) {
   if (blk(focus).types[t]?.hidden) return;
   act(async () => { st.preset.type[focus] = await ed.setType(focus, t); await syncState(); renderPage(); });

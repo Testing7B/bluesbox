@@ -39,6 +39,12 @@ static uint8_t st_slot[ST_NSLOT][ST_SLOT] __attribute__((aligned(4)));
 static uint32_t st_seq, st_cur;                 /* sequence of the copy in use, its base (0: none yet) */
 static uint8_t st_ok;                           /* the store can be written (the flash is the expected part) */
 static uint8_t st_last;                         /* the slot to start on (the last one saved) */
+#ifdef PX_BLUES_V48
+/* Four bytes at 0xEF0, after the last slot and before the loader record.
+ * Their own CRC keeps the V40/V47 slot CRC and flash layout readable. */
+#define ST_CFG_OFF (16u + ST_S0N * ST_SLOT)
+typedef struct { uint16_t value, crc; } st_cfg_t;
+#endif
 static uint8_t st_midi;                         /* the MIDI settings byte (header pad[0]) */
 
 static uint32_t st_slot_off(uint32_t base, uint32_t k)
@@ -139,6 +145,12 @@ static void st_load(void)
     (void)k;
     if (best) {                                   /* read the winner again (the loop left the other in st_slot) */
         st_read_copy(best, &bh);
+#ifdef PX_BLUES_V48
+        st_cfg_t c;
+        if (!ota_fread(best + ST_CFG_OFF, &c, sizeof c) &&
+            c.crc == (uint16_t)(ota_crc16((const uint8_t *)&c.value, sizeof c.value, 0) ^ 0x4258u))
+            cfg_audio = c.value;
+#endif
         st_cur = best;
         st_seq = bseq;
     } else {
@@ -192,11 +204,21 @@ static int st_commit(void)
         else if (fl_write(st_slot_off(base, k), st_slot[k], ST_SLOT)) rc = -3;
     }
     if (!rc && fl_write(base + 16u, buf + 16u, ST_S0N * ST_SLOT)) rc = -3;
+#ifdef PX_BLUES_V48
+    st_cfg_t c;
+    c.value = cfg_audio;
+    c.crc = (uint16_t)(ota_crc16((const uint8_t *)&c.value, sizeof c.value, 0) ^ 0x4258u);
+    if (!rc && fl_write(base + ST_CFG_OFF, (const uint8_t *)&c, sizeof c)) rc = -3;
+#endif
     if (!rc) { memcpy(buf, &h, sizeof h); if (fl_write(base, buf, sizeof h)) rc = -4; }   /* header last */
     if (!rc) {                                    /* read back */
         st_hdr_t r;
         static uint8_t chk[ST_SLOT];
         if (ota_fread(base, &r, sizeof r) || memcmp(&r, &h, sizeof h)) rc = -5;
+#ifdef PX_BLUES_V48
+        st_cfg_t readback;
+        if (ota_fread(base + ST_CFG_OFF, &readback, sizeof readback) || memcmp(&readback, &c, sizeof c)) rc = -5;
+#endif
         for (k = 0; !rc && k < ST_NSLOT; k++)
             if (ota_fread(st_slot_off(base, k), chk, ST_SLOT) || memcmp(chk, st_slot[k], ST_SLOT)) rc = -5;
     }

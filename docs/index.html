@@ -83,7 +83,7 @@ footer a,.note a{color:inherit}
   <section class="card" id="installCard">
     <h2><b>2</b><span data-t="s2"></span></h2>
     <p class="note"><span data-t="s2note"></span> <strong id="pkgver">…</strong></p>
-    <p class="note"><a href="?channel=blues-v47-public">Latest hosted BluesBox firmware · V47</a>.
+    <p class="note"><a href="?channel=blues-v48-public">Latest hosted BluesBox firmware · V48</a> · <a href="BluesBox-V48-Preset-Guide.pdf">Preset guide (PDF)</a> · <a href="?channel=v40">V40 legacy installer</a>.
       For the build with the local A2 amp and cab fits, use <strong>Install a local build</strong>.</p>
     <p class="note warnbox" data-t="s2warn"></p>
     <p class="note warnbox" id="bbwarn" hidden data-t="bbwarn"></p>
@@ -181,9 +181,9 @@ const T = {
     foot1: "BluesBox builds on OpenPocket by isod89 and contributors. Independent of Donner and M-VAVE. Source code: GPL-3.0.",
     foot2: "Update protocol and loader from Felucca and felucca-bsp (Hügelton Instruments, GPL-3.0 / MPL-2.0). JieLi AC79 SDK files: Apache-2.0. Inter typeface: SIL OFL 1.1.",
     e_notfound: "Pedal not found. Check the cable (data), close other MIDI apps, then try again.",
-    testchan: "TEST CHANNEL: this installs a test build, not the release. It is for people who agreed to try it, and it is not the version the normal installer page offers. To go back, open this page without ?channel=… and press Install.",
-    drivelab: "DRIVE LAB: BlackBox test build based on V40, with 31 drives and no synth block. Open the installer without ?channel=drive-lab to install V40.",
-    bbwarn: "M-VAVE BlackBox: v31 is the fix for issue #1 (OpenPocket restarted every 4 s after the pedal was switched off and on), still being tested on the BlackBox. Please report how it goes on GitHub. If your BlackBox restarts in a loop, use the rescue mode below.",
+    testchan: "TEST CHANNEL: this installs a test build, not the release. It is for people who agreed to try it, and it is not the version the normal installer page offers. Use the V40 legacy installer for V40.",
+    drivelab: "DRIVE LAB: BlackBox test build based on V40, with 31 drives and no synth block. Choose the V40 legacy installer to return to V40.",
+    bbwarn: "If your BlackBox restarts in a loop, use the rescue option below.",
 toeditor: "Preset editor →",
         rescueon: "Rescue mode, for a pedal that restarts in a loop: tick this, press Connect, then plug the pedal in (or let it restart). The install starts by itself as soon as the pedal answers; it stops the pedal's sound processing at once, so the restarts stop. It installs the official file chosen in step 3 if there is one for this pedal, otherwise the selected hosted firmware.",
     e_model: "This package is not for this pedal: ", e_lost: "The pedal was disconnected. Plug it back in and press Resume.",
@@ -213,13 +213,13 @@ function setState(text, cls = "") { const p = $("state"); p.textContent = text; 
 function setMsg(el, text, cls = "") { el.textContent = text; el.className = "msg " + cls; }
 const errText = (e) => (e && e.code && T.en["e_" + e.code] ? t("e_" + e.code) + (e.detail || "") : (e && e.message) || String(e));
 
-/* a test channel (?channel=midi-test): packages from firmware/<channel>/, never offered without the link */
-const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").replace(/[^a-z0-9-]/g, "");
-const FW = "firmware/" + (CHANNEL ? CHANNEL + "/" : "");
+/* Default to BluesBox for BlackBox. The V40 legacy channel also supports Pocket X. */
+const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").replace(/[^a-z0-9-]/g, "") || "blues-v48-public";
+const FW = "firmware/" + (CHANNEL === "v40" ? "" : CHANNEL + "/");
 let access = null, up = null, manifest = null, lastDev = null, busy = false, official = null;
 let sawV21 = false;
 let bank = null, bankRevision = 0;
-const recoveryChannel = "firmware/blues-v47-public/";
+const recoveryChannel = "firmware/blues-v48-public/";
 const recoveryPending = () => stored("bluesbox-v21-recovery", "") === "pending";
 const recoveryReady = () => official?.product === BLACKBOX_V21 && official.known &&
   bank && $("factory-confirm").checked;
@@ -230,10 +230,10 @@ const canInstall = (model) => localSelected()
   : manifest?.packages.some((pkg) => pkg.model === model);
 
 if (!navigator.requestMIDIAccess) { $("nomidi").hidden = false; $("connect").disabled = true; }
-$("testchan").hidden = !CHANNEL;
+$("testchan").hidden = CHANNEL === "v40";
 if (CHANNEL === "drive-lab") $("testchan").textContent = t("drivelab");
-if (CHANNEL === "blues-v47-public")
-  $("testchan").textContent = "BluesBox V47 for BlackBox. This hosted build uses the public amp and cab models.";
+if (CHANNEL === "blues-v48-public")
+  $("testchan").textContent = "BluesBox V48 for BlackBox. This hosted build uses the public amp and cab models.";
 
 async function loadManifest() {
   try {
@@ -270,7 +270,7 @@ function showDev(d) {
   $("d-fw").textContent = ota ? `${t("loader")} (${id.text})` : IS_OPENPOCKET(id) ? `${t("opfw")} v${id.version - 900} (${id.text})` : `${t("official")} ${String(id.version).padStart(3, "0")} (${id.text})`;
   $("d-port").textContent = d.name;
   const bb = id.model === "BlackBox";               /* not supported yet: boot loop (issue #1) */
-  $("bbwarn").hidden = !bb;
+  $("bbwarn").hidden = !bb || CHANNEL !== "v40";
 }
 
 async function connect() {
@@ -464,7 +464,7 @@ async function restoreFactory(resume) {
   if (!recoveryReady()) throw new Error("Choose V21 and both verified AM4 files, then confirm the backup.");
   const response = await fetch(recoveryChannel + "manifest.json", { cache: "no-store" });
   if (!response.ok) throw new Error("The BluesBox recovery loader is unavailable.");
-  const entry = (await response.json()).packages.find(p => p.product === "BlackBox_947");
+  const entry = (await response.json()).packages.find(p => p.product === "BlackBox_948");
   if (!entry) throw new Error("The BlackBox recovery loader is missing from the manifest.");
   const binary = await fetch(recoveryChannel + entry.file);
   if (!binary.ok) throw new Error("Could not load the BluesBox recovery package.");
