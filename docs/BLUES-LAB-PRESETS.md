@@ -97,4 +97,6 @@ King recalled using Acoustic amps onstage and later switching to a Roland 120. E
 | 51 | AB CLEAN BST | Circuit-inspired clean boost experiment |
 | 52 | AB NO DRIVE | Same drive comparison rig with drive bypassed |
 
-Use slots 2, 21, and 31 for the first artist listening pass. Slots 46–52 share the same amp/cab rig with the time effects bypassed. Slots 44–45 share identical compressor control settings, which may yield different gain reduction because their control laws differ. Use a repeatable DI performance and level-match the resulting audio when comparing feel and tone.
+Use slots 2, 21, and 31 for the first artist listening pass. Slots 46–52 share the same amp/cab rig with the time effects bypassed. Slots 44–45 share identical compressor control settings. Their control laws can yield different gain reduction. The comparison presets use separate preset level trims to bring the average loudness close together. Use a repeatable DI performance to compare feel and tone.
+
+Both builds use the same preset data. The 4× build increases drive oversampling before a NAM amp while the NAM capture still runs at its native rate. The 40 song presets averaged about −23 LUFS across the bundled riff, lead, chord, and arpeggio DI loops at the engine’s nominal test input gain. Their highest measured sample peak was −3.1 dBFS before master volume. The three V40 references keep their original levels. TS BLUES was the hottest and reached +0.9 dBFS in that raw host render.

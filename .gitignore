@@ -4,6 +4,8 @@ firmware/openpocket.bin
 firmware/openpocket-*.bin
 docs/firmware/midi-test/
 docs/firmware/drive-lab/
+docs/firmware/blues-lab/
+docs/firmware/blues-lab-4x/
 firmware/build-ble/
 firmware/openpocket-ble.bin
 docs/firmware/*.fwsc
