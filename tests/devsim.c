@@ -164,7 +164,7 @@ static const char *flash_app_id(void)
 #ifdef LDR_BLACKBOX_V21
 static void v21_sim_sound_read(void)
 {
-    uint8_t body[520];
+    uint8_t reply[527], wire[OTA_FRAME_MAX];
     uint32_t address = ota_rd32(ota_dec + 7), n = ota_rd16(ota_dec + 11), offset;
     if (ota_dec[6] == 5 && address >= 0x70000000u) {
         offset = address - 0x70000000u;
@@ -173,9 +173,17 @@ static void v21_sim_sound_read(void)
         offset = 0x3c000u + address;
     } else return;
     if (n > 512u) return;
-    memcpy(body, ota_dec + 6, 8);
-    memcpy(body + 8, nor + V21_BANK_LO + offset, n);
-    ota_send_msg(0x23, body, n + 8u);
+    reply[0] = 0; reply[1] = 0x59; reply[2] = 0x23;
+    ota_wr16(reply + 3, n + 8u); reply[5] = 0;
+    memcpy(reply + 6, ota_dec + 6, 8);
+    memcpy(reply + 14, nor + V21_BANK_LO + offset, n);
+    uint32_t sum = 0;
+    for (uint32_t i = 6; i < n + 14u; i++) sum += reply[i];
+    reply[n + 14u] = (uint8_t)~sum;
+    wire[0] = 0xF0;
+    uint32_t size = 1u + ota_pack7(reply, n + 15u, wire + 1);
+    wire[size++] = 0xF7;
+    ota_wire_send(wire, size);
 }
 #endif
 

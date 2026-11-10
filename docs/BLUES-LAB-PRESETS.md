@@ -102,3 +102,7 @@ Use slots 2, 21, and 31 for the first artist listening pass. Slots 46–52 share
 Both builds use the same preset data. The 4× build increases drive oversampling before a NAM amp while the NAM capture still runs at its native rate. The 40 song presets averaged about −23 LUFS across the bundled riff, lead, chord, and arpeggio DI loops at the engine’s nominal test input gain. Their highest measured sample peak was −3.1 dBFS before master volume. The three V40 references keep their original levels. TS BLUES was the hottest and reached +0.9 dBFS in that raw host render.
 
 In the private V45 and V46 builds, P21 Gravity uses **TWO-ROCK TS1** with **OPTO T4**, and P22 Slow Dance uses those with **TS808 JAPAN** in the drive slot. The Two-Rock is an AMP type alongside NAM.
+
+## V47 factory variations
+
+The local V47 build uses the fitted **Twin Clean / JBL 2×12**, **Super Clean or Super Edge / CTS 4×10**, **Deluxe Edge / Jensen P12Q**, and **Blonde Bass / Jensen 2×12** voices. Factory P21 and P22 keep **Two-Rock TS1**, paired with the JBL cab. P23 Vultures uses **Twin Edge**. Slots 48–52 start as **USER1–USER5**, with a clean amp and cab ready to edit. The public V47 build uses the available public voices. Both builds keep the 52-slot layout and honour saved presets.

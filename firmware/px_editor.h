@@ -242,7 +242,11 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
     case ED_NAM_LIST: {                                /* v37: every model, factory first, then the user slots */
         char nm[12];
         ed_b(PX_NAM_NFACT); ed_b(PX_NAM_NUSER);
-        for (k = 0; k < PX_NAM_N; k++) { rc = px_nam_name((int)k, nm); ed_b(rc ? 1u : 0u); ed_str(nm, 11); }
+        for (k = 0; k < PX_NAM_N; k++) {
+            rc = px_nam_name((int)k, nm);
+            ed_b((rc ? 1u : 0u) | (px_nam_visible((int)k) ? 0u : 2u));
+            ed_str(nm, 11);
+        }
         break;
     }
     case ED_NAM_WRITE:                                 /* piece (2 bytes, 7 bits each), then 128 packed bytes */

@@ -409,6 +409,12 @@ static void ui_knob(int dd, int fast)
             int k = (int)ui_item - 2, v = PRESET.p[ui_blk][k] + dd * (fast ? 5 : 1);
             if (v < 0) v = 0;
             if (v > 100) v = 100;
+#ifdef PX_BLUES_V47
+            if (dd && ui_blk == PX_B_AMP && PRESET.type[ui_blk] == PX_AMP_NAM && k == 0) {
+                int dir = dd < 0 ? -1 : 1;
+                while (!px_nam_visible(px_nam_model(v))) v += dir;
+            }
+#endif
             PRESET.p[ui_blk][k] = (uint8_t)v;
         }
     }

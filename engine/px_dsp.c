@@ -591,7 +591,7 @@ static const tdef *tdef_of(int b, int t)
 }
 int px_type_visible(int b, int t)
 {
-#ifdef PX_BLUES_FITTED
+#ifdef PX_BLUES_V47
     if (b == PX_B_AMP)
         return t != PX_AMP_5150 && t != PX_AMP_PROMOD && t != PX_AMP_MARK4 &&
                t != PX_AMP_JCM2000 && t != PX_AMP_JCM900 && t != PX_AMP_SHIRLEY;
@@ -1261,6 +1261,15 @@ int px_nam_model(int v)
     if (v < 0) v = 0;
     if (v > 100) v = 100;
     return v * PX_NAM_N / 101;
+}
+int px_nam_visible(int m)
+{
+#ifdef PX_BLUES_V47
+    return m <= M_SHIRLCL || m >= PX_NAM_NFACT;
+#else
+    (void)m;
+    return 1;
+#endif
 }
 int px_nam_knob(int m)
 {

@@ -241,8 +241,8 @@ export class Editor {
     const r = new Reader(await this.request(C.NAM_LIST));
     const nfact = r.b(), nuser = r.b(), models = [];
     for (let i = 0; i < nfact + nuser; i++) {
-      const used = !!r.b(), name = r.s();
-      models.push({ index: i, user: i >= nfact, slot: i - nfact, used, name });
+      const flags = r.b(), name = r.s();
+      models.push({ index: i, user: i >= nfact, slot: i - nfact, used: !!(flags & 1), hidden: !!(flags & 2), name });
     }
     return { nfact, nuser, models };
   }

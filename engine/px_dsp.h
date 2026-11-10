@@ -129,6 +129,7 @@ int         px_preset_count(void);
 /* NAM models: the MODEL knob (0..100) <-> model 0..PX_NAM_N-1 (factory first, then the user slots) */
 void        px_preset_select_type(px_preset_t *p, int block, int type);
 int         px_nam_model(int v);
+int         px_nam_visible(int model);
 int         px_nam_knob(int model);
 int32_t    *px_nam_scratch(void);                    /* bench: the NAM ring memory as scratch (PXN_TEST_WORDS+) */
 int         px_nam_check(uint32_t (*ticks)(void));    /* start-up: NAM routines checked, then (ticks given) its
