@@ -264,6 +264,21 @@ int main(void)
             CHECK(bad == 0 && olds > 0 && news > 0, "settings: a power cut during a settings save leaves the old or the new, never a broken store");
         }
     }
+    /* V40 format 5: the instrument can be anywhere in a saved custom chain. */
+    px_preset_factory(&q, 6);
+    const uint8_t v40_order[PX_PRESET_ROWS] = {1, 0, 11, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const uint8_t lab_order[PX_PRESET_ROWS] = {1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    memcpy(q.order, v40_order, sizeof q.order);
+    q.on[PX_NBLK] = 1;
+    q.p[PX_NBLK][0] = 80;
+    q.on[PX_B_SFX] = 1;
+    q.type[PX_B_SFX] = PX_SFX_COUNT;  /* V40 Square Synth */
+    CHECK(st_save(6, &q) == 0, "V40 preset with both removed effects saved as a fixture");
+    reboot();
+    st_get(6, &f);
+    CHECK(!memcmp(f.order, lab_order, sizeof f.order) && !f.on[PX_NBLK] && !f.on[PX_B_SFX] &&
+          f.type[PX_B_DRIVE] == q.type[PX_B_DRIVE] && !memcmp(f.p[PX_B_DRIVE], q.p[PX_B_DRIVE], PX_NPAR),
+          "V40 preset: remove the instrument and Square Synth, keep custom order and drive");
     loader_bytes_clear();
     printf(fails ? "%d FAILED\n" : "store tests passed\n", fails);
     return fails != 0;
