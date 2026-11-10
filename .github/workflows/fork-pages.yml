@@ -31,7 +31,7 @@ jobs:
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/manifest.json docs/firmware/
       - name: Build the public BluesBox V47 channel
         run: |
-          git worktree add --detach "$RUNNER_TEMP/bluesbox-v47" 9eef967e9f63fa3c5904527c53cc460a70ef466e
+          git worktree add --detach "$RUNNER_TEMP/bluesbox-v47" 77b0c4f046667ff53404758127a581298ed9713b
           (cd "$RUNNER_TEMP/bluesbox-v47" && OP_CHANNEL=blues-v47-public NATIVE=1 node tools/op.mjs build)
           dir=docs/firmware/blues-v47-public
           mkdir -p "$dir"

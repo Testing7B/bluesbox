@@ -353,6 +353,7 @@ function renderNam() {
   const box = $("namlist");
   box.textContent = "";
   for (const m of nam.models) {
+    if (m.hidden) continue;
     const row = document.createElement("div");
     row.className = "row" + (m.user && !m.used ? " empty" : "");
     row.innerHTML = `<span class="n">${m.user ? "U" + pad2(m.slot + 1) : "F" + pad2(m.index + 1)}</span><span class="nm"></span>` +
@@ -630,7 +631,16 @@ function renderPage(fromPush) {
       row.innerHTML = `<label for="${id}"></label><input type="range" id="${id}" min="0" max="100" step="1"><span class="val"></span>`;
       row.querySelector("label").textContent = p.name;
       const r = row.querySelector("input");
-      r.oninput = () => { showVal(k); sendParam(b, k, +r.value); };
+      r.oninput = () => {
+        if (B.label === "AMP" && T.name === "NAM" && k === 0 && nam) {
+          const dir = +r.value < st.preset.p[b][k] ? -1 : 1;
+          let value = +r.value;
+          while (nam.models[Math.floor(value * nam.models.length / 101)].hidden) value += dir;
+          r.value = value;
+        }
+        showVal(k);
+        sendParam(b, k, +r.value);
+      };
       r.onpointerdown = () => { r.dataset.held = "1"; };
       r.onpointerup = r.onpointercancel = () => { delete r.dataset.held; };
       box.appendChild(row);
