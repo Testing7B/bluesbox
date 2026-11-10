@@ -5,7 +5,7 @@ on:
       drive_lab:
         description: Build the experimental drive-lab firmware
         type: boolean
-        default: false
+        default: true
       publish:
         description: Publish the installer and editor on GitHub Pages (main only)
         type: boolean
@@ -31,7 +31,17 @@ jobs:
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/manifest.json docs/firmware/
       - name: Build the drive-lab channel
         if: inputs.drive_lab
-        run: OP_CHANNEL=drive-lab OP_TEST_VERSION=41 NATIVE=1 node tools/op.mjs build
+        run: |
+          OP_CHANNEL=drive-lab OP_TEST_VERSION=41 NATIVE=1 node tools/op.mjs build
+          node --input-type=module - <<'JS'
+          import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+          const dir = 'docs/firmware/drive-lab/';
+          const manifest = JSON.parse(readFileSync(dir + 'manifest.json'));
+          for (const pkg of manifest.packages)
+            if (pkg.model !== 'BlackBox') unlinkSync(dir + pkg.file);
+          manifest.packages = manifest.packages.filter(pkg => pkg.model === 'BlackBox');
+          writeFileSync(dir + 'manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          JS
       - name: Build the simulator engine
         if: inputs.drive_lab
         run: |

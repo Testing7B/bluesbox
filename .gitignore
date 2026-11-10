@@ -3,6 +3,7 @@ firmware/build/
 firmware/openpocket.bin
 firmware/openpocket-*.bin
 docs/firmware/midi-test/
+docs/firmware/drive-lab/
 firmware/build-ble/
 firmware/openpocket-ble.bin
 docs/firmware/*.fwsc

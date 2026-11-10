@@ -2,15 +2,19 @@
 
 !!! THIS PROJECT IS A PROOF OF CONCEPT, DONT EXPECT FULL FUNCTION AND SOUND QUALITY !!!
 
-Install here: https://testing7b.github.io/openpocket/ (Donner Pocket X; M-VAVE BlackBox: v31 has the fix for issue #1, being tested)
-NEW WEB EDITOR: https://testing7b.github.io/openpocket/editor.html · **v40: the effects run the stock firmware's way (from RAM, delays at half rate)**: [docs/WHATS-NEW-v40.md](docs/WHATS-NEW-v40.md) · v39: the delay and the reverb off the critical path: [docs/WHATS-NEW-v39.md](docs/WHATS-NEW-v39.md) · v38: changes without clicks, your own cabinet IRs: [docs/WHATS-NEW-v38.md](docs/WHATS-NEW-v38.md) · v37: neural amp models (NAM A2), load your own from TONE3000: [docs/WHATS-NEW-v37.md](docs/WHATS-NEW-v37.md) · since v33: [docs/WHATS-NEW-v34-v36.md](docs/WHATS-NEW-v34-v36.md)
+**[V40 installer](https://testing7b.github.io/openpocket/)** for Pocket X and BlackBox · **[Web editor](https://testing7b.github.io/openpocket/editor.html)** · **[Drive Lab v41 installer](https://testing7b.github.io/openpocket/?channel=drive-lab)** for BlackBox.
+
+Drive Lab is this fork's experiment based on V40. It has 11 blocks and 31 drives: the four fitted V40 models and 27 earlier
+drive recipes, including RAT, DS-1, Muff and Fuzz Face. The instrument block and Square Synth are removed. V40 factory
+presets keep their slots. The two sounds that used the instrument block become **Rotary Clean** and **Studio DI**. The
+editor reads the block and drive catalog from the connected firmware, so the same page works with both channels.
 
 **Open-source guitar multi-effects firmware for the Donner Pocket X and the M-VAVE BlackBox.**
 Written from scratch for the pedal's own chip (JieLi AC791N, two cores), installable from the browser.
 
 ![OpenPocket screens](docs/ui-v36.png)
 
-## What it does
+## What the V40 release does
 
 - **12-block chain, 78 models**, in any order you like (double-click PUSH to move a block; the order is saved with
   the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB

@@ -18,8 +18,10 @@ one incoming frame at a time). While the editor watches (`WATCH`), the pedal als
 | color | an RGB565 color in 3 bytes: bits 0-6, 7-13, 14-15 |
 | preset `P` | 110 bytes, the firmware's `px_preset_t` as is (every byte is below 128): `name` 14 (ASCII, 0-padded, at most 13 characters), `on` 12 (0/1), `type` 12, `p` 12 x 5 (0..100), `order` 12 (a permutation of 0..11) |
 
-The 12 blocks, by index: 0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 7 EQ, 8 MOD, 9 DELAY, 10 REVERB,
+The V40 blocks, by index: 0 GATE, 1 COMP, 2 PITCH, 3 SFX, 4 DRIVE, 5 AMP, 6 CAB, 7 EQ, 8 MOD, 9 DELAY, 10 REVERB,
 11 SYN (`CAT_BLOCK` gives their labels and names). `order` is the processing and display order.
+Drive Lab reports 11 active blocks in `INFO`. Preset packets still have 110 bytes and 12 rows. The last row is reserved
+and has zero on/type/parameter bytes, with 11 at the end of the order array. `ORDER` takes only the 11 active indices.
 
 ## Commands
 
