@@ -787,6 +787,9 @@ static void app_main(void)
      * the DSP off anyway): a hand routine that faults in its check then costs one boot, not every one, and the pedal
      * comes up with USB-MIDI for the installer's rescue (it ran C until the next boot) */
     if (!safe) px_nam_check(b_ticks);
+    /* v40.5: from here (after the start-up check), CPU0's waits for CPU1 inside the network end as fm1_cpu1_wait's
+     * do (px_audio.h dsp_lp_run: retired, LATE) */
+    px_nam_lp_clock(b_ticks, FM1_CPU1_TIMEOUT_US * FM1_TICKS_PER_US);
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
     leds_init();                         /* the button lights: all off loaded, then on (PC7 low), as stock */
     op_stage(ST_UI, "SCREEN...");

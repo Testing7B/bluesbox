@@ -351,7 +351,13 @@ static uint32_t a_lp_post(void)                        /* returns the ticks it w
 {
     if (!a_lpw) return 0u;
     const uint32_t t = fm1_ticks();
-    while (a_lpdone != a_lpreq && fm1_cpu1_busy()) fm1_cpu1_sync();
+    while (a_lpdone != a_lpreq && fm1_cpu1_busy()) {
+        fm1_cpu1_sync();
+        /* v40.5: not for ever. The worker is one job for as long as the split runs, so fm1_cpu1_busy stays 1 and
+         * fm1_cpu1_wait's limit never applies here: a CPU1 that stopped without a fault would hold the interrupt until
+         * the watchdog. As fm1_cpu1_wait: past FM1_CPU1_TIMEOUT_US it is retired (LATE), a_collect then goes to one core */
+        if (fm1_ticks() - t >= FM1_CPU1_TIMEOUT_US * FM1_TICKS_PER_US) { fm1_cpu1_retire(FM1_CPU1_LATE); break; }
+    }
     if (a_lpdone != a_lpreq) a_collect();              /* (its worker ended without it: dropped) */
     return fm1_ticks() - t;
 }
@@ -425,6 +431,9 @@ static void dsp_lp_run(int run, uint32_t t_irq)
         }
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
             px_engine_part(&g_eng, a_nb[a_nbi] + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_NAM);
+        /* v40.5: a wait for CPU1 in the network gave up (px_nam.c pxn_lp_late): CPU1 stopped without a fault. Retired
+         * (LATE): a_dec's a_lp_post then finds it gone and a_collect goes to one core, the engine reset (a_c1_off) */
+        if (px_nam_lp_gave_up()) fm1_cpu1_retire(FM1_CPU1_LATE);
         ta = fm1_ticks() - ta;
         if (!a_lpw) while (px_nam_lp_b(&g_eng)) { }
     }

@@ -125,6 +125,13 @@ trained at 44.1 kHz and are not affected.
   as fit in 80 % of its block. CPU1 takes layers over at once; CPU0 takes more only as CPU1 has finished them for the
   blocks before (`pxn_lp_a`), or waits for it once when told to (`pxn_lp_force`: a rise of two layers or more). The
   output does not depend on any of it (`tests/engine/lp_test.c`).
+- v40.5: CPU0's waits for CPU1 end after a limit. CPU1's worker is one job for as long as the split runs, so the
+  limit of `fm1_cpu1_wait` (8 ms, then CPU1 is retired as LATE and CPU0 goes on alone) did not apply to the interrupt's
+  waits for it: in `a_lp_post` (its output), in `pxn_lp_a` (the queue full) and in a forced rise (`pxn_lp_wait`). A CPU1
+  that stopped without a fault would have held the audio interrupt until the watchdog reset the pedal. These waits now
+  end after the same 8 ms (`pxn_lp_clock`, set after the start-up check; none on the PC): `pxn_lp_a` returns without
+  handing the block over, CPU1 is retired (LATE), and the next collect goes to one core with the engine reset, as for a
+  CPU1 that faults. `tests/engine/lp_stuck.c` checks the network's side with a second core that never moves.
 - v40.5: `post5` (`tools/gen_rdq.py --post5`) does `post4`'s work two frames a turn for every layer with an output: the
   residual's 9 weights are read once for the two frames, and every load and store is written with an instruction that
   computes (free with a multiply or multiply-add; with a 1-cycle instruction it costs only its own time), each value

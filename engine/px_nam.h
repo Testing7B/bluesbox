@@ -129,6 +129,8 @@ void pxn_lp_force(void);                 /* the next block takes the s asked, wa
 uint32_t pxn_lp_handed(void);            /* v40.4: blocks handed over so far */
 int pxn_lp_before(uint32_t upto);        /* 1 = a block handed over before that count is not finished */
 uint32_t pxn_lp_share(int s);            /* the network's work in layers 0..s, in 1/1024 of the whole */
+void pxn_lp_clock(uint32_t (*ticks)(void), uint32_t limit);   /* v40.5: CPU0's waits for the other core end after limit */
+int pxn_lp_gave_up(void);                /* v40.5: 1 = one did (the other core is stuck): the caller retires it, resets */
 void pxn_lp_a(pxn_model *m, const float *in, float *out);
 int pxn_lp_b(pxn_model *m);
 int pxn_lp_equiv(pxn_model *m);          /* against one core, the other core serving: blocks that differ */

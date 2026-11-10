@@ -118,6 +118,8 @@ int         px_nam_lp_before(uint32_t upto);          /* count is not finished; 
 uint32_t    px_nam_lp_share(int s);                   /* 1/1024 of the whole */
 void        px_nam_lp_split(int s);
 int         px_nam_lp_split_now(void);
+void        px_nam_lp_clock(uint32_t (*ticks)(void), uint32_t limit);   /* v40.5: CPU0's waits for the other core end */
+int         px_nam_lp_gave_up(void);                  /* after limit ticks; 1 = one did (retire that core, reset) */
 int         px_nam_name(int model, char *buf12);         /* 1 = the model exists ("U5 EMPTY" otherwise) */
 /* the user slots, provided by the firmware (flash; px_dsp.c has a weak, empty stand-in):
  * 1 = slot holds a model; its name (11 chars max), its level trim (dB); w (1871 floats) only if w != 0 */

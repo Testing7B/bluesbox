@@ -35,6 +35,8 @@ $CC -O2 -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o b
 $CC -O2 -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c -lm -o build/pipe_test && build/pipe_test | tail -1
 # v40.2: the network split between the cores by layers, against one core and through the pipeline
 $CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DPXN_EMUVEC -Iengine tests/engine/lp_test.c firmware/px_math.c -lm -o build/lp_test && build/lp_test | tail -1
+# v40.5: CPU0's waits for a second core that never moves end after the limit (a stuck CPU1: LATE, not the watchdog)
+$CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Iengine tests/engine/lp_stuck.c firmware/px_math.c -lm -o build/lp_stuck && build/lp_stuck | tail -1
 # v40.2: the NAM hand routines' start-up check, timing and dispatch, with C stand-ins under the sanitizers (a fault there
 # would be a boot loop on the pedal)
 $CC -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DPXN_HAND=1 -Iengine tests/engine/hand_test.c firmware/px_math.c -lm -o build/hand_test && build/hand_test | tail -1

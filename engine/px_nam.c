@@ -5389,6 +5389,23 @@ static volatile uint32_t pxn_lp_in, pxn_lp_out;        /* blocks handed over, fi
 static volatile int32_t pxn_lp_s = PXN_NL / 2;
 static volatile int32_t pxn_lp_se = PXN_NL / 2;        /* v40.4: the s of the last block handed over */
 static volatile uint8_t pxn_lp_hard;                   /* its next rise may wait for the other core (pxn_lp_force) */
+/* v40.5: CPU0's waits for the other core end after a limit (pxn_lp_clock; none set: they wait as long as it takes, as on
+ * the PC). Past it the other core is taken as stuck: pxn_lp_a returns without handing the block over (its output is not
+ * written) and pxn_lp_gave_up says so until pxn_lp_reset; the caller then retires that core and resets the engine, as for
+ * a core that faults. Until v40 every wait for CPU1 ended after FM1_CPU1_TIMEOUT_US (fm1_cpu1_wait, LATE): a CPU1 that
+ * stopped without a fault cost one core, not a stuck audio interrupt and a watchdog reset. */
+static uint32_t (*pxn_lp_tk)(void);
+static uint32_t pxn_lp_lim;
+static volatile uint8_t pxn_lp_dead;
+void pxn_lp_clock(uint32_t (*ticks)(void), uint32_t limit) { pxn_lp_tk = ticks; pxn_lp_lim = limit; }
+int pxn_lp_gave_up(void) { return pxn_lp_dead; }
+static inline uint32_t pxn_lp_t0(void) { return pxn_lp_tk ? pxn_lp_tk() : 0u; }
+static inline int pxn_lp_late(uint32_t t0)               /* 1 = past the limit: the other core is stuck */
+{
+    if (!pxn_lp_tk || pxn_lp_tk() - t0 < pxn_lp_lim) return 0;
+    pxn_lp_dead = 1;
+    return 1;
+}
 void pxn_set_lp(void *base, unsigned bytes) { pxn_lp = bytes >= sizeof(pxn_lpm) ? (pxn_lpm *)base : 0; }
 /* the layer split can run: its memory, the network read straight from the rings (no X rows, which the cores would
  * share), two cores without the vector unit */
@@ -5397,6 +5414,7 @@ void pxn_lp_reset(void)                                  /* (no block in progres
 {
     pxn_lp_in = pxn_lp_out = 0;
     pxn_lp_hard = 0;
+    pxn_lp_dead = 0;
     pxn_lp_se = pxn_lp_s;
     if (pxn_lp) for (int i = 0; i < PXN_NL; i++) pxn_lp->ld[i] = 0;
     PXN_SYNC();
@@ -5432,6 +5450,16 @@ static inline void pxn_lp_wait(uint32_t b, int lo, int hi)   /* layers lo..hi of
     for (int j = lo; j <= hi; j++)
         while ((int32_t)(pxn_lp->ld[j] - b) < 0) { PXN_SYNC(); PXN_LSTEP(); }
 }
+static inline int pxn_lp_wait_a(uint32_t b, int lo, int hi)   /* CPU0's pxn_lp_wait: 1 = it gave up (pxn_lp_late) */
+{
+    const uint32_t t0 = pxn_lp_t0();
+    for (int j = lo; j <= hi; j++)
+        while ((int32_t)(pxn_lp->ld[j] - b) < 0) {
+            PXN_SYNC(); PXN_LSTEP();
+            if (pxn_lp_late(t0)) return 1;
+        }
+    return 0;
+}
 static inline void pxn_lp_next(pxn_layer *L)
 {
     L->w += PXN_N;
@@ -5444,7 +5472,14 @@ void pxn_lp_a(pxn_model *m, const float *in, float *out)
 #ifdef PXN_EMUVEC
     pxn_lp_em = m;
 #endif
-    while (b - pxn_lp_out >= PXN_LPQ) { PXN_SYNC(); PXN_LSTEP(); }   /* (the queue full: CPU1 far behind) */
+    if (pxn_lp_dead) return;                             /* (the other core gave up: nothing until pxn_lp_reset) */
+    {
+        const uint32_t t0 = pxn_lp_t0();
+        while (b - pxn_lp_out >= PXN_LPQ) {              /* (the queue full: CPU1 far behind) */
+            PXN_SYNC(); PXN_LSTEP();
+            if (pxn_lp_late(t0)) return;
+        }
+    }
     pxn_lpe *e = &pxn_lp->e[b % PXN_LPQ];
     /* v40.4: layers 0..s here: as far as asked (pxn_lp_s), and no further than the other core has finished the block
      * before's (it ran those the block before's s left it). Where s moves up, this core does not wait for it: it
@@ -5456,7 +5491,7 @@ void pxn_lp_a(pxn_model *m, const float *in, float *out)
     while (s < pxn_lp_s && (int32_t)(pxn_lp->ld[s + 1] - b) >= 0) s++;
     if (s < pxn_lp_s && pxn_lp_hard) {
         s = pxn_lp_s;
-        pxn_lp_wait(b, 0, s);
+        if (pxn_lp_wait_a(b, 0, s)) return;              /* (nothing written yet: the block is not handed over) */
     }
     pxn_lp_hard = 0;
     pxn_lp_se = s;

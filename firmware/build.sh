@@ -80,7 +80,7 @@ RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_bl
   pxn_process pxn_block pxn_direct pxn_post_part pxn_rows pxn_rows_cpu pxn_gather pxn_range_cpu pxn_dual
   px_nam_lp_b px_nam_lp_queued px_nam_lp_split px_nam_lp_split_now pxn_lp_a pxn_lp_b pxn_lp_queued pxn_lp_split
   pxn_lp_split_now pxn_frame_ticks px_nam_lp_handed px_nam_lp_before pxn_lp_handed pxn_lp_before
-  px_nam_lp_split_used px_nam_lp_force pxn_lp_split_used pxn_lp_force
+  px_nam_lp_split_used px_nam_lp_force pxn_lp_split_used pxn_lp_force px_nam_lp_gave_up pxn_lp_gave_up
   ps_voice_run syn_organ_run pitch_run cab_detail_run gate_run comp_run bq_chain"
 # v40.2: the layer split's path (pxn_lp_*, lp_job, dsp_lp_run) in RAM; out of it, to make the room: the frame split's serving
 # (now the fallback when the layer split cannot run), the vector unit's paths (never chosen: slower) and the C versions

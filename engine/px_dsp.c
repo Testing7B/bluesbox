@@ -1253,6 +1253,8 @@ int px_nam_lp_before(uint32_t upto) { return pxn_lp_before(upto); }
 uint32_t px_nam_lp_share(int s) { return pxn_lp_share(s); }
 void px_nam_lp_split(int s) { pxn_lp_split(s); }
 int px_nam_lp_split_now(void) { return pxn_lp_split_now(); }
+void px_nam_lp_clock(uint32_t (*ticks)(void), uint32_t limit) { pxn_lp_clock(ticks, limit); }
+int px_nam_lp_gave_up(void) { return pxn_lp_gave_up(); }
 void px_nam_helper(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void)) { pxn_set_helper(run, wait); }
 void px_nam_fast(void *base, unsigned bytes) { pxn_set_fast((int32_t *)base, bytes); }
 /* every model is trimmed to -20 LUFS on the DI clip (its level trim); this puts NAM + the 1x12 at GAIN noon at the fitted
