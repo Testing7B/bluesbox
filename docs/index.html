@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>OpenPocket Installer</title>
+<title>BluesBox Updater</title>
 <meta name="description" content="Install OpenPocket on a Donner Pocket X or M-VAVE BlackBox from the browser, over USB.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -56,7 +56,7 @@ footer a,.note a{color:inherit}
 <div class="wrap">
   <header>
     <div>
-      <h1>Open<span>Pocket</span></h1>
+      <h1>Blues<span>Box</span></h1>
       <p class="tag" data-t="tag"></p>
     </div>
     <a class="alt" id="toeditor" href="editor.html" data-t="toeditor" style="text-decoration:none;align-self:center;font:600 14px/1 Inter,sans-serif;padding:11px 16px;border-radius:10px;border:1px solid var(--line);color:var(--ink)"></a>
@@ -86,6 +86,16 @@ footer a,.note a{color:inherit}
     <p class="note warnbox" data-t="s2warn"></p>
     <p class="note warnbox" id="bbwarn" hidden data-t="bbwarn"></p>
     <p class="note warnbox" id="testchan" hidden data-t="testchan"></p>
+    <details>
+      <summary>Install a local build</summary>
+      <p class="note">Choose the .fwsc file and its matching manifest.json. Both files are checked in your browser and stay on your computer.</p>
+      <fieldset id="localfiles">
+        <p><label>Firmware (.fwsc) <input type="file" id="localfw" accept=".fwsc"></label></p>
+        <p><label>Manifest (.json) <input type="file" id="localmanifest" accept=".json"></label></p>
+        <button class="alt" id="localclear" type="button">Use hosted firmware</button>
+      </fieldset>
+      <p class="msg" id="localmsg" role="status"></p>
+    </details>
     <label class="chk"><input type="checkbox" id="rescueOn"><span data-t="rescueon"></span></label>
     <div class="row">
       <button class="go" id="install" disabled data-t="install"></button>
@@ -129,23 +139,24 @@ footer a,.note a{color:inherit}
   <footer>
     <span data-t="foot1"></span>
     <span data-t="foot2"></span>
+    <a href="https://github.com/Testing7B/openpocket">BluesBox source and documentation</a>
   </footer>
 </div>
 
 <script type="module">
 import { Updater, IS_OTA, IS_OPENPOCKET, OUR_LOADER, MODELS } from "./pxota.js";
-import { productOf, logicalImage, checkOfficial } from "./pxpkg.js";
+import { productOf, logicalImage, checkOfficial, verifyPackage } from "./pxpkg.js";
 import { BLACKBOX_V21, verifyFactorySounds } from "./pxfactory.js";
 
 const T = {
   en: {
-    tag: "Install OpenPocket, the open-source guitar firmware, on a Donner Pocket X or an M-VAVE BlackBox — from the browser, over the USB cable.",
+    tag: "Update an M-VAVE BlackBox or Donner Pocket X over USB. Install a hosted build or choose a local BluesBox package.",
     nomidi: "This browser has no Web MIDI. Use Chrome or Edge on a computer (Windows, macOS, Linux, ChromeOS).",
     s1: "Connect the pedal", s1note: "Turn the pedal on, plug it in over USB (a data cable) and close any other app using it. The browser asks for MIDI access: allow it.",
     connect: "Connect", idle: "waiting", searching: "searching…", found: "pedal found", none: "no pedal", busy: "working…",
     pedal: "Pedal", firmware: "Firmware", port: "MIDI port",
     official: "official", opfw: "OpenPocket", loader: "update mode (loader)",
-    s2: "Install OpenPocket", s2note: "Available version:",
+    s2: "Install firmware", s2note: "Hosted version:",
     s2warn: "During the install (about 1 to 2 minutes): do not unplug or switch the pedal off, keep this tab open. Nothing is written before the pedal has checked the package. First install over the official firmware: keep your backup (SD card / fm1buddy) at hand.",
     install: "Install", resume: "Resume the update",
     st_start: "start", st_verify: "check", st_loader: "loader", st_write: "write", st_reboot: "restart", st_done: "done",
@@ -157,7 +168,7 @@ const T = {
     rescuenote: "If the pedal stays in update mode, reconnect it: the Resume button appears. The button below puts a pedal running OpenPocket into the chip's UBOOT mode, for a recovery from the SD card (fm1buddy).",
     rescuemac: "A pedal that restarts in a loop and cannot be reached by this page can be restored from a Mac, with no extra hardware: download the official BlackBox file (M-VAVE), then run `make rescue` in the OpenPocket folder (read-only check), and `make rescue-write` to restore it. The steps are in docs/RESCUE.md; the SD-card route (fm1buddy, flash/) is the second choice.",
     uboot: "Enter UBOOT mode", logt: "Log",
-    foot1: "OpenPocket is an independent project, not affiliated with Donner or M-VAVE. Install at your own risk. Source code: GPL-3.0.",
+    foot1: "BluesBox builds on OpenPocket by isod89 and contributors. Independent of Donner and M-VAVE. Source code: GPL-3.0.",
     foot2: "Update protocol and loader from Felucca and felucca-bsp (Hügelton Instruments, GPL-3.0 / MPL-2.0). JieLi AC79 SDK files: Apache-2.0. Inter typeface: SIL OFL 1.1.",
     e_notfound: "Pedal not found. Check the cable (data), close other MIDI apps, then try again.",
     testchan: "TEST CHANNEL: this installs a test build, not the release. It is for people who agreed to try it, and it is not the version the normal installer page offers. To go back, open this page without ?channel=… and press Install.",
@@ -197,6 +208,11 @@ const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").repl
 const FW = "firmware/" + (CHANNEL ? CHANNEL + "/" : "");
 let access = null, up = null, manifest = null, lastDev = null, busy = false, official = null;
 let sawV21 = false;
+let localPackage = null, localRevision = 0;
+const localSelected = () => $("localfw").files.length > 0 || $("localmanifest").files.length > 0;
+const canInstall = (model) => localSelected()
+  ? localPackage?.model === model
+  : manifest?.packages.some((pkg) => pkg.model === model);
 
 if (!navigator.requestMIDIAccess) { $("nomidi").hidden = false; $("connect").disabled = true; }
 $("testchan").hidden = !CHANNEL;
@@ -219,7 +235,10 @@ function showDev(d) {
   $("verify-factory").disabled = busy || !onV21;
   $("factory-uboot").disabled = busy || !onV21;
   $("resume").hidden = !d || !IS_OTA(d.id);
-  $("install").disabled = busy || !d || IS_OTA(d.id) || !manifest?.packages.some((pkg) => pkg.model === d.id.model);
+  $("resume").disabled = busy || (localSelected() && d && OUR_LOADER(d.id) &&
+    localPackage?.model !== stored("op-model", ""));
+  $("install").disabled = busy || !d || IS_OTA(d.id) || !canInstall(d.id.model);
+  $("install").textContent = localPackage ? "Install " + localPackage.product : t("install");
   $("uboot").disabled = busy || !d || !IS_OPENPOCKET(d.id);
   $("backoff").disabled = busy || !d || IS_OTA(d.id) || !official || official.model !== d.id.model ||
     (!official.known && !$("offok").checked);
@@ -269,6 +288,10 @@ function progress(kind, n) {
 }
 
 async function packageFor(model) {
+  if (localSelected()) {
+    if (localPackage?.model === model) return localPackage;
+    throw Object.assign(new Error(model), { code: "model", detail: model });
+  }
   const p = manifest && manifest.packages.find((x) => x.model === model);
   if (!p) throw Object.assign(new Error(model), { code: "pkg", detail: model });
   const r = await fetch(FW + p.file, { cache: "no-store" });
@@ -282,7 +305,8 @@ async function run(job, resultMessage) {
   if (busy) return;
   busy = true; stepAt = resultMessage ? -1 : 0; drawSteps(); $("bar").style.width = "0";
   setState(t("busy"), "warn");
-  ["install", "backoff", "uboot", "connect", "verify-factory", "factory-uboot"].forEach((id) => $(id).disabled = true);
+  ["install", "resume", "backoff", "uboot", "connect", "verify-factory", "factory-uboot"].forEach((id) => $(id).disabled = true);
+  $("localfiles").disabled = true;
   setMsg($("msg"), "");
   try {
     const res = await job();
@@ -297,6 +321,7 @@ async function run(job, resultMessage) {
     log(`error ${e.code || ""}: ${e.message}`);
   } finally {
     busy = false;
+    $("localfiles").disabled = false;
     $("connect").disabled = false;
     await scan();
   }
@@ -310,9 +335,10 @@ let rescueTries = 0;                                  // a few attempts, then th
 const rescueArmed = () => $("rescueOn").checked && pre !== null && up !== null && rescueTries < 10;
 async function prefetch() {
   pre = null;
+  const revision = localRevision;
   const got = {};
   for (const m of MODELS) { try { got[m] = await packageFor(m); } catch (e) { log("rescue: " + errText(e)); } }
-  if ($("rescueOn").checked) { pre = got; log("rescue mode armed: waiting for the pedal"); setState(t("searching"), "warn"); }
+  if ($("rescueOn").checked && revision === localRevision) { pre = got; log("rescue mode armed: waiting for the pedal"); setState(t("searching"), "warn"); }
 }
 function pick(model) {
   if (official && official.model === model && (official.known || $("offok").checked)) return { image: official.image, product: official.product };
@@ -334,9 +360,43 @@ $("rescueOn").onchange = async () => {
   await prefetch();
   if (rescueArmed() && lastDev) rescueTry();
 };
+async function selectLocalPackage() {
+  const revision = ++localRevision;
+  const fw = $("localfw").files[0], mf = $("localmanifest").files[0];
+  localPackage = null;
+  pre = null;
+  $("rescueOn").checked = false;
+  $("rescueOn").disabled = localSelected();
+  showDev(lastDev);
+  if (!fw || !mf) {
+    setMsg($("localmsg"), localSelected() ? "Choose both files." : "");
+    return;
+  }
+  setMsg($("localmsg"), "Checking package…");
+  try {
+    const [raw, bytes] = await Promise.all([mf.text(), fw.arrayBuffer()]);
+    const entry = JSON.parse(raw).packages?.find((pkg) => pkg.file === fw.name);
+    if (!entry) throw new Error("The manifest has no entry for " + fw.name);
+    const verified = await verifyPackage(new Uint8Array(bytes), entry);
+    if (entry.model !== verified.model) throw new Error("Manifest model does not match the package.");
+    if (revision !== localRevision) return;
+    localPackage = verified;
+    setMsg($("localmsg"), "Verified " + verified.product + ". Connect a matching pedal to install.", "ok");
+  } catch (e) {
+    if (revision !== localRevision) return;
+    setMsg($("localmsg"), e.message, "err");
+  }
+  showDev(lastDev);
+}
+$("localfw").onchange = $("localmanifest").onchange = selectLocalPackage;
+$("localclear").onclick = () => {
+  $("localfw").value = $("localmanifest").value = "";
+  selectLocalPackage();
+};
 $("install").onclick = () => run(async () => {
   const d = lastDev;
   const { product, image } = await packageFor(d.id.model);
+  try { localStorage.setItem("op-model", d.id.model); } catch (_) {}
   log(`install ${product} over ${d.id.text}`);
   return up.install(image, product, (s, n) => { progress(s, n); if (s !== "verify" && s !== "write") log("step " + s + (n !== undefined ? " " + n : "")); });
 });
@@ -344,7 +404,7 @@ $("resume").onclick = () => run(async () => {
   const d = lastDev;
   // our loader: finish the OpenPocket package of the model picked by the official file or the last model seen
   if (OUR_LOADER(d.id)) {
-    const model = (official && official.model) || stored("op-model", "PocketX");
+    const model = localSelected() ? stored("op-model", "") : (official && official.model) || stored("op-model", "PocketX");
     const { product, image } = await packageFor(model);
     await up.resume(image, product, (s, n) => progress(s, n));
     return product;

@@ -23,7 +23,7 @@ The listening shortlist came from 316 organized local A2 files plus 41 additiona
 
 ## References and credit
 
-- [Upstream OpenPocket](https://github.com/isod89/openpocket), its [capture fitting notes](FITTED-MODELS.md), and its [NAM engine documentation](NAM.md).
+- OpenPocket by isod89 and contributors. See the [capture fitting notes](FITTED-MODELS.md) and [NAM engine documentation](NAM.md).
 - [Yeh, Abel and Smith's diode clipper analysis](https://dafx.labri.fr/main/papers/p189.pdf) informed 808 Circuit. [Yu et al.'s DAFx compressor study](https://www.dafx.de/paper-archive/2024/papers/DAFx24_paper_75.pdf) and [SignalTrain LA-2A recordings](https://zenodo.org/records/3824876) provided a desktop comparator.
 - [Tokyo Studio Capture](https://www.tone3000.com/tones/tokyo-studio-capture-teletronix-la-2a-tube-compressor-69103) made the tested LA-2A capture. Thanks to the local amp and pedal capture creators and the [Guitar-TECHS DI contributors](../assets/loops/ATTRIBUTION.md).
 - Full component origins and licence details are in [NOTICE.md](../NOTICE.md).
