@@ -143,6 +143,10 @@ PCM ring at `0x1F29EE0`, inside the cache-way range above (**likely**: the stock
 - **RAM is the scarce resource.** Count `.data + .bss + CPU1 stack (3 KB) + the SDK driver's bss` against 96 KB, and
   `.pool` against 248 KB and the RAM code against `RAMTEXT` (88 KB) since v40, on every change. We compile the objects for the target and add up the section sizes even when
   we cannot link.
+- **Reading a crash screen's `EMU`** (the core's `EMU_MSG`, bit names from the SDK's `cpu/wl82/debug.c`): bit 0 misaligned
+  access, 1 illegal instruction, 2 division by zero, 3 stack overflow (the stack guard), 8 ETM watchpoint, 16 to 20 FPU
+  (invalid, infinity, tiny, huge, inexact). `DBG` is the bus side (writes into guarded ranges, unmapped addresses, the PC
+  limit).
 - **Stack guard:** felucca's EMU stack limit faults any `sp` outside `[_ustack_lo, _sstack_top]`. Task stacks placed in
   ordinary RAM (an RTOS, the BLE controller) crash at once with the guard on (section 11).
 
@@ -190,6 +194,10 @@ window (`SFCENC_CON`, `fm1_flash.h`, `ble_vm.h`), not through `0x02xxxxxx`.
   We copied that in v30. On a Pocket X the same engine then measured **77 % instead of 61 %** CPU, with crackles
   (v32), so v33 went back to the boot loader's levels (the link was not proven). Do not change the supplies without
   measuring the DSP load before and after.
+  **The Bluetooth work (branch `ble-v41`): with the radio on, the boot loader's levels are not enough**: the second core misread its jobs and was retired
+  (`BYP` on every preset), and CPU0 read bad pointers (crashes; one a bus error at an address with bit 21 set, the
+  misread pattern). Raising VDC14 and SYSVDD alone did not stop it: the radio now starts after the stock firmware's whole
+  power setup (v30's: the levels, the DC-DC, VDDIO, `WLDO12_AUTO`), with the audio held for the switch-over.
 - **Crash and boot diagnostics that paid off:** a `.noinit` record of the last boot (stage reached, blocks of audio
   played, load, NaN count, reset source, crash PC/RETS); a boot guard (two failed starts → safe mode, then back to the
   loader); the crash screen with `VEC`, `PC`, `RETS` looked up in `symbols.txt`.
@@ -394,8 +402,9 @@ Measured on the pedal or proven on the PC against a reference. The engine is `en
   0..100). The channel (or OMNI) and the input gain (-10..+10 dB) are kept in the `GLB1` log.
 - **`wet_audio` is not pinned to a core** (JieLi pins a task only when its name starts with `#C0`/`#C1`).
 - **Preset (92 bytes):** volume 0..100, the order (a permutation of 0..5), on[6], model[6], 6 x 6 parameters.
-- **Interrupt priorities:** audio 4, radio 2, timers 1, on CPU0. The **radio sits below the audio**, so audio always
-  preempts the radio. A hardware-job completion interrupt (IRQ 62) runs on CPU1.
+- **Interrupt priorities:** audio 4, radio 2, timers 1 (7 is the highest). **Every interrupt runs on CPU0** but SOFT4:
+  `request_irq` forces all others there, whatever core is asked (`STOCK-FIRMWARE.md` 19.1). The radio sits below the
+  audio, but its interrupt masks everything while it runs, so the audio waits for it, never the other way round.
 
 ---
 
@@ -426,12 +435,27 @@ What it took to get JieLi's controller (from the SDK's `btctrler.a` / `btstack.a
   or a stray value switches on the Wi-Fi/BT coexistence arbiter (`0x14000` bit 1).
 - **The link:** link `dev_hci_set_event_mask` for real (a stand-in means the host never sees LE meta events), and set
   advertising up again after each disconnection.
-- **Interrupts:** BLE IRQ 45 and 29 at priority 2 (stock's numbers), below audio.
-- **Stack guard:** the controller's task stacks in ordinary RAM trip felucca's stack-limit guard. Build that image with
-  the guard off, or place the stacks inside the window (our linker script now refuses the bad combination).
+- **Interrupts:** BLE IRQ 45 and 29 at priority 2, below the audio interrupt (3), as the library asks and as the stock
+  firmware has them. **Never above the audio:** a v41 test build with them at 4 crashed within seconds, inside the NAM
+  network's hand-written routine in the audio interrupt (a misaligned access, `EMU` bit 0). The library's interrupt
+  handlers mask everything for their whole run (`cli` + a spin lock), as in the stock firmware.
+- **`cpu_in_irq`:** the SDK's is `icfg & 0xFF`, and the link scheduler calls `le_hw_suspend` from the interrupt, where a
+  "no" takes the task's way (it waits on the baseband's busy flag). But the build that advertised and connected on a
+  BlackBox always said no, and the first v41 builds that used `icfg & 0xFF` were never seen by a phone: OpenPocket says no
+  again until the low byte is read on the pedal outside an interrupt.
+- **Timers from the interrupt:** the link scheduler adds and removes timeouts inside the interrupt; the timer table needs
+  a lock.
+- **Stack guard:** the controller's task stacks in ordinary RAM trip felucca's stack-limit guard. The Bluetooth release (branch
+  `ble-v41`) puts them right below the main stacks and lowers the guard window's bottom to them; the test image keeps
+  them in NOINIT with the guard off (the linker script refuses any other combination).
+- **Never put the controller's data or stacks in the data cache used as RAM** (v37 did): the cache controller serves it,
+  the same one that feeds the two cores' instructions from the flash.
+- **The audio path must run from RAM when the radio runs** (v40): the radio's code is in flash and would push flash DSP
+  code out of the instruction cache both cores share. This was v37's `BYP` at 150 %.
 - **Radio calibration:** read the stock VM records raw (VM 106..108 to the radio replay, VM 187 the unit's calibration).
-- **Not verified:** sound under a link, long runs, bonding across a power cycle, flash writes during a link (the
-  library's interrupt code runs from flash).
+- **Not verified:** sound under a link (the `ble-v41` branch's release: no crackle while idle, crackles while a phone sends a stream of CC), long runs (the stock firmware re-calibrates
+  the radio when the temperature drifts; OpenPocket does not), bonding across a power cycle. Flash writes mask every
+  interrupt while the flash is busy, the radio's too, so the library's flash code is never fetched then.
 
 ---
 
