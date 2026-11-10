@@ -29,19 +29,19 @@ jobs:
           (cd "$RUNNER_TEMP/openpocket-v40" && NATIVE=1 node tools/op.mjs package)
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/*.fwsc docs/firmware/
           cp "$RUNNER_TEMP/openpocket-v40"/docs/firmware/manifest.json docs/firmware/
-      - name: Build the public BluesBox V47 channel
+      - name: Build the public BluesBox V48 channel
         run: |
-          git worktree add --detach "$RUNNER_TEMP/bluesbox-v47" 77b0c4f046667ff53404758127a581298ed9713b
-          (cd "$RUNNER_TEMP/bluesbox-v47" && OP_CHANNEL=blues-v47-public NATIVE=1 node tools/op.mjs build)
-          dir=docs/firmware/blues-v47-public
+          git worktree add --detach "$RUNNER_TEMP/bluesbox-v48" 0c2264ebbcf580928f54d306a919b16c577bfd95
+          (cd "$RUNNER_TEMP/bluesbox-v48" && OP_CHANNEL=blues-v48-public NATIVE=1 node tools/op.mjs build)
+          dir=docs/firmware/blues-v48-public
           mkdir -p "$dir"
-          cp "$RUNNER_TEMP/bluesbox-v47/$dir/BlackBox_947.fwsc" "$RUNNER_TEMP/bluesbox-v47/$dir/manifest.json" "$dir/"
+          cp "$RUNNER_TEMP/bluesbox-v48/$dir/BlackBox_948.fwsc" "$RUNNER_TEMP/bluesbox-v48/$dir/manifest.json" "$dir/"
           node --input-type=module - <<'JS'
           import { readFileSync, writeFileSync } from 'node:fs';
-          const path = 'docs/firmware/blues-v47-public/manifest.json';
+          const path = 'docs/firmware/blues-v48-public/manifest.json';
           const manifest = JSON.parse(readFileSync(path));
-          manifest.packages = manifest.packages.filter(p => p.product === 'BlackBox_947');
-          if (manifest.packages.length !== 1) throw new Error('Missing the BlackBox V47 package');
+          manifest.packages = manifest.packages.filter(p => p.product === 'BlackBox_948');
+          if (manifest.packages.length !== 1) throw new Error('Missing the BlackBox V48 package');
           writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');
           JS
       - name: Build the drive-lab channel

@@ -19,7 +19,7 @@ The V45 and V46 builds require the local Two-Rock capture header. On a machine w
 
 ## V47
 
-V47 gives guitar audio priority over USB polling, increases the USB playback buffer target to about 17 ms, and mixes stereo USB audio with fixed-point interpolation. The USB device appears as **Blackbox**. The play screen uses the cab tile's colour for the active cab name and shows **USB PLAY** when a stream is active.
+V47 polls USB directly at 2 kHz, increases the USB playback buffer target to about 17 ms, and mixes stereo USB audio with fixed-point interpolation. The USB device appears as **Blackbox**. The play screen uses the cab tile's colour for the active cab name and shows **USB PLAY** when a stream is active.
 
 The local build adds six fitted circuit amp models and four fitted cabinet responses. The A2 Full models and original IRs are reference inputs for the offline fit. Neither is needed by the pedal at runtime. Two-Rock TS1 uses the private A2 Lite capture. Slots 48–52 default to USER1–USER5. The hosted V47 build uses public voices and carries the same USB and preset editing improvements.
 
@@ -40,3 +40,25 @@ The listening shortlist came from 316 organized local A2 files plus 41 additiona
 - [Yeh, Abel and Smith's diode clipper analysis](https://dafx.labri.fr/main/papers/p189.pdf) informed 808 Circuit. [Yu et al.'s DAFx compressor study](https://www.dafx.de/paper-archive/2024/papers/DAFx24_paper_75.pdf) and [SignalTrain LA-2A recordings](https://zenodo.org/records/3824876) provided a desktop comparator.
 - [Tokyo Studio Capture](https://www.tone3000.com/tones/tokyo-studio-capture-teletronix-la-2a-tube-compressor-69103) made the tested LA-2A capture. Thanks to the local amp and pedal capture creators and the [Guitar-TECHS DI contributors](../assets/loops/ATTRIBUTION.md).
 - Full component origins and licence details are in [NOTICE.md](../NOTICE.md).
+
+## V48 controls and signal path
+
+- The cabinet label uses the same font size as the amp label. On Play, the encoder reaches the preset number at either end of the processor chain. Push to browse, turn to preview names, and push to load. HOME cancels and returns to the last processor. A second push confirms discarding edits when changing presets.
+- Hold FX to open Settings. Input gain is digital trim from −12 to +12 dB. It and the optional 40–120 Hz high-pass filter sit before the gate and drive. Guitar Level and USB Level attenuate their own paths before mixing. The physical master still controls both. The existing preset EQ can shape the guitar without changing backing-track tone.
+- In Stomp mode, left toggles group A and right toggles group B. Each processor can belong to one group. A group turns all its assigned blocks off if they were all on, or turns them all on otherwise. The assignments are saved with the preset. Hold both switches for about 0.7 seconds for the tuner. Tuner Mute offers Guitar, All or Off.
+- The guitar IRQ has priority over USB MIDI and idle USB polling. A live USB playback stream raises the priority of its 2 kHz poll so the 1 ms packets arrive in time. The firmware reports guitar deadlines, wet-lane cuts, ADC clip blocks and USB underruns to the editor protocol.
+
+
+V48's final per-preset trims were re-rendered against six DI performances
+at nominal input trim. The fitted build spans −27.5 to −25.9 LUFS and
+the public build −31.9 to −29.4 LUFS when averaging those clips per
+preset. The fitted Super, Deluxe, Bassman and Twin Edge combinations
+received presence and cab adjustments before this pass. The first 47
+slots retain their roles and slots 48–52 are editable starters. Saved
+sounds keep their own trims.
+
+For a guitar-only click, route computer sound elsewhere first. In the web
+editor, open **Audio diagnostics** and click **Start**, then play until you
+hear it and choose **Read counters**. Copy the preset number and counter
+readout so a click can be checked against DSP deadlines, clipping and USB
+activity for that interval.

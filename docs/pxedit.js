@@ -12,6 +12,7 @@ export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 
   NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
+const STOMP_TAG = 0x76;
 const PRESET_ROWS = 12;           // V40 and Drive Lab share the same preset packet layout.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fail(code, msg) { const e = new Error(msg); e.code = code; return e; }
@@ -31,27 +32,32 @@ export function decodePreset(b, nblk = 12, npar = 5) {
   i = 14;
   const on = [...b.slice(i, i + nblk)].map((x) => x ? 1 : 0); i += PRESET_ROWS;
   const type = [...b.slice(i, i + nblk)]; i += PRESET_ROWS;
+  const stomp = nblk === 11 && b[i - 1] === STOMP_TAG
+    ? [b[i + 55] | b[i + 56] << 7, b[i + 57] | b[i + 58] << 7] : undefined;
   const p = [];
   for (let k = 0; k < nblk; k++) p.push([...b.slice(i + k * npar, i + (k + 1) * npar)]);
   i += PRESET_ROWS * npar;
   const order = [...b.slice(i, i + nblk)];
-  return { name, on, type, p, order };
+  return { name, on, type, p, order, stomp };
 }
 export function encodePreset(q, nblk = 12, npar = 5) {
   const out = [];
   const nm = cleanName(q.name);
   for (let i = 0; i < 14; i++) out.push(i < nm.length ? nm.charCodeAt(i) : 0);
   for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk && q.on[k] ? 1 : 0);
-  for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk ? q.type[k] & 0x7F : 0);
+  const a = nblk === 11 ? (q.stomp?.[0] || 0) & 2047 : 0;
+  const b = nblk === 11 ? (q.stomp?.[1] || 0) & 2047 & ~a : 0;
+  const packed = [a & 127, a >> 7, b & 127, b >> 7, 0];
+  for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk ? q.type[k] & 0x7F : a || b ? STOMP_TAG : 0);
   for (let k = 0; k < PRESET_ROWS; k++) for (let j = 0; j < npar; j++)
-    out.push(k < nblk ? Math.max(0, Math.min(100, q.p[k][j] | 0)) : 0);
+    out.push(k < nblk ? Math.max(0, Math.min(100, q.p[k][j] | 0)) : packed[j] || 0);
   for (let k = 0; k < PRESET_ROWS; k++) out.push(k < nblk ? q.order[k] & 0x7F : k);
   return out;
 }
 export function cleanName(s, max = 13) {
   return String(s || "").replace(/[^\x20-\x7E]/g, "?").slice(0, max);
 }
-export const clonePreset = (q) => ({ name: q.name, on: [...q.on], type: [...q.type], p: q.p.map((r) => [...r]), order: [...q.order] });
+export const clonePreset = (q) => ({ name: q.name, on: [...q.on], type: [...q.type], p: q.p.map((r) => [...r]), order: [...q.order], stomp: q.stomp && [...q.stomp] });
 
 export class Editor {
   constructor(access, opts = {}) {
@@ -194,6 +200,8 @@ export class Editor {
   async set(block, what, k, v) { const r = await this.request(C.SET, [block, what, k, v]); return r[3]; }
   setParam(block, k, v) { return this.set(block, 0, k, v); }
   setOn(block, on) { return this.set(block, 1, 0, on ? 1 : 0); }
+  get hasStomp() { return (this.info?.proto || 0) >= 4; }
+  setStomp(block, group) { return this.set(block, 3, 0, group); }
   setType(block, t) { return this.set(block, 2, 0, t); }
   async order(order) { return (await this.request(C.ORDER, order))[0]; }
   async name(s) { return new Reader(await this.request(C.NAME, [...cleanName(s, this.info.nameMax)].map((c) => c.charCodeAt(0)).concat([0]))).s(); }
@@ -228,6 +236,7 @@ export class Editor {
   async audioStats() {
     const r = new Reader(await this.request(28));
     const keys = ["blocks", "late", "peakPct", "usbPackets", "usbUnderruns", "usbOverruns", "mixClips"];
+    if (r.a.length >= 55) keys.push("dspLate", "wetCuts", "inputClips", "guitarKnee");
     return Object.fromEntries(keys.map(key => {
       let n = 0;
       for (let i = 0; i < 5; i++) n += r.b() * 2 ** (7 * i);
@@ -302,6 +311,7 @@ export function presetToJSON(q, cat, slot) {
     slot: slot === undefined ? undefined : slot + 1,
     v: 36,                                                       // v36 (preset LEVEL); v35 scales (delay TIME up to 2 s)
     name: q.name,
+    stompGroups: q.stomp?.map(mask => cat.blocks.filter((_, i) => mask & (1 << i)).map(b => b.label)),
     blocks: cat.blocks.map((b, i) => ({ block: b.label, on: !!q.on[i], type: b.types[q.type[i]] ? b.types[q.type[i]].name : q.type[i], params: [...q.p[i]] })),
     order: q.order.map((i) => cat.blocks[i] ? cat.blocks[i].label : i),
   };
@@ -320,6 +330,15 @@ export function presetFromJSON(o, cat, base) {
   const q = clonePreset(base), warn = [];
   q.name = cleanName(o.name || q.name);
   const byLabel = new Map(cat.blocks.map((b, i) => [b.label, i]));
+  q.stomp = undefined;
+  if (cat.blocks.length === 11 && Array.isArray(o.stompGroups)) {
+    q.stomp = [0, 1].map(g => {
+      const labels = o.stompGroups[g];
+      return Array.isArray(labels) ? labels.reduce((mask, label) =>
+        byLabel.has(label) ? mask | (1 << byLabel.get(label)) : mask, 0) : 0;
+    });
+    q.stomp[1] &= ~q.stomp[0];
+  }
   for (const ob of Array.isArray(o.blocks) ? o.blocks : []) {
     const i = byLabel.get(ob.block);
     if (i === undefined) { warn.push(`unknown block ${ob.block}`); continue; }
