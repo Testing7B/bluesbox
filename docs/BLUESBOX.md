@@ -1,5 +1,11 @@
 # BluesBox development notes
 
+## V52
+
+The local audition build has 45 presets across seven blues guitarists. Each artist preset assigns Drive to A and Delay to B. The bank uses separate A2 Lite amp captures and cabinet IRs, including AC30, JTM45 and Lab Series L5 voices. LA-2A Plus adds an output-sensing sidechain and two recovery times alongside the existing opto compressors. The PLAY screen shows the guitar input peak before input gain and filtering.
+
+The [V52 preset guide](BluesBox-V52-Preset-Guide.md) covers the goals, controls, preset list and references. The [web updater](https://testing7b.github.io/bluesbox/#local-build) installs the local V52 package and its matching manifest. The hosted release is V51.
+
 ## V51
 
 Dimension presets and newly selected Dimension blocks start at mode 3, mix 25. The encoder moves directly between distinct Dimension and Rotary modes, Harmony intervals, Slicer patterns, Bit Crusher steps, Space Echo head combinations, and available NAM or IR slots. Continuous controls retain their fine adjustment.

@@ -246,10 +246,11 @@ export class Editor {
   }
   async audioStats() {
     const r = new Reader(await this.request(28));
-    if (![35, 55, 60].includes(r.a.length)) throw fail("unsupported", "Audio counters are unavailable on this firmware");
+    if (![35, 55, 60, 65].includes(r.a.length)) throw fail("unsupported", "Audio counters are unavailable on this firmware");
     const keys = ["blocks", "late", "peakPct", "usbPackets", "usbUnderruns", "usbOverruns", "mixClips"];
     if (r.a.length >= 55) keys.push("dspLate", "wetCuts", "inputClips", "guitarKnee");
     if (r.a.length >= 60) keys.push("callbackReorders");
+    if (r.a.length >= 65) keys.push("dspPeak");
     return Object.fromEntries(keys.map(key => {
       let n = 0;
       for (let i = 0; i < 5; i++) n += r.b() * 2 ** (7 * i);
