@@ -129,6 +129,12 @@ const char *px_param_name(int blk, int type, int k);
 /* text for a knob value when a bare 0..100 says little ("+5TH", "440" ms...); returns 0 = show the number */
 int         px_type_v34(int blk, int old);   /* presets saved before v34: old type -> new */
 #define PX_PATCH_LEVEL 2                /* the preset LEVEL: p[PX_B_GATE][2] ("PRESET LVL" on the GT page), 50 = 0 dB (v36) */
+#ifdef PX_BLUES_V51
+#define PX_GATE_HYST 3
+#define PX_GATE_HYST_DEFAULT 50          /* 6 dB between opening and closing */
+int px_param_step(int block, int type, int param, int value, int detents, int fast);
+void px_blues_v51_defaults(px_preset_t *p);
+#endif
 int         px_dly_time_v35(int type, int v);   /* presets saved before v35: delay TIME (20..1000 ms) -> today's knob */
 int         px_dly_value_for_ms(int type, float ms);   /* the TIME value nearest to a delay of ms (MIDI clock sync) */
 int         px_param_text(int blk, int type, int k, int v, char *buf8);
@@ -180,6 +186,10 @@ typedef struct {
 
     /* gate */
     float gate_env, gate_g, gate_thr, gate_rel;
+#ifdef PX_BLUES_V51
+    float gate_close;
+    uint8_t gate_open;
+#endif
     /* comp */
     float cmp_env, cmp_slow, cmp_att, cmp_rel, cmp_k, cmp_make, cmp_mix, cmp_sw, cmp_thr, cmp_rise, cmp_slowk;
 #ifdef PX_BLUES_LAB

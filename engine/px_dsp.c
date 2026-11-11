@@ -377,8 +377,13 @@ void px_preset_normalize(px_preset_t *p)
 }
 typedef struct { const char *name; uint8_t np; const char *const *pn; } tdef;
 
+#ifdef PX_BLUES_V51
+static const char *const PN_GATE[] = {"THRESH", "RELEASE", "PATCH OUTPUT", "HYSTERESIS"};
+static const tdef T_GATE[] = {{"NOISE GATE", 4, PN_GATE}};
+#else
 static const char *const PN_GATE[] = {"THRESH", "RELEASE", "PRESET LVL"};   /* (3rd: the preset's level, v36) */
 static const tdef T_GATE[] = {{"NOISE GATE", 3, PN_GATE}};
+#endif
 
 static const char *const PN_CMP[] = {"SUSTAIN", "ATTACK", "LEVEL", "MIX"};
 static const char *const PN_OPTO[] = {"COMPRESS", "LEVEL", "MIX"};
@@ -738,6 +743,17 @@ int px_param_text(int b, int t, int k, int v, char *buf)
     float x = (float)v * 0.01f;
     switch (b) {
     case PX_B_GATE:
+#ifdef PX_BLUES_V51
+        if (k == PX_GATE_HYST) {
+            int tenths = (v * 12 + 5) / 10, i = 0;
+            if (tenths >= 100) buf[i++] = '1';
+            buf[i++] = (char)('0' + tenths / 10 % 10);
+            buf[i++] = '.';
+            buf[i++] = (char)('0' + tenths % 10);
+            put_str(buf + i, " DB");
+            return 1;
+        }
+#endif
         if (k == PX_PATCH_LEVEL) {                     /* "+1.5 DB": 0.3 dB a step */
             int d = (v - 50) * 3, a = d < 0 ? -d : d, i = 0;
             buf[i++] = d < 0 ? '-' : '+';
@@ -797,6 +813,52 @@ int px_param_text(int b, int t, int k, int v, char *buf)
     return 0;
 }
 
+#ifdef PX_BLUES_V51
+int px_param_step(int b, int t, int k, int v, int detents, int fast)
+{
+    const int nam = b == PX_B_AMP && t == PX_AMP_NAM && k == 0;
+    const int ir = b == PX_B_CAB && t == PX_CAB_IR && k == 0;
+    const int dir = detents < 0 ? -1 : 1;
+    if (nam || ir) {
+        const int n = nam ? PX_NAM_N : PX_IR_N;
+        int slot = nam ? px_nam_model(v) : px_ir_slot(v);
+        for (; detents; detents -= dir) {
+            int next = slot + dir;
+            for (; next >= 0 && next < n; next += dir) {
+                char name[12];
+                if (nam ? px_nam_visible(next) && px_nam_name(next, name) : px_ir_name(next, name)) break;
+            }
+            if (next < 0 || next >= n) break;
+            slot = next;
+            v = nam ? px_nam_knob(slot) : px_ir_knob(slot);
+        }
+        return v;
+    }
+    /* These parameters actually select discrete DSP states. Rounded display
+     * values on continuous controls (e.g. Whammy and EQ gain) keep fine adjustment. */
+    const int choice = (b == PX_B_PITCH && t == PX_PIT_HARMONY && k == 0) ||
+        (b == PX_B_SFX && ((t == PX_SFX_CRUSH && k < 2) || (t == PX_SFX_SLICER && k == 2))) ||
+        (b == PX_B_MOD && (t == PX_MOD_DIMENSION || t == PX_MOD_ROTARY) && k == 0) ||
+        (b == PX_B_DELAY && t == PX_DLY_SPACE && k == 3);
+    if (choice) {
+        for (; detents; detents -= dir) {
+            char here[10] = {0}, there[10] = {0};
+            px_param_text(b, t, k, v, here);
+            int next = v + dir;
+            for (; next >= 0 && next <= 100; next += dir) {
+                px_param_text(b, t, k, next, there);
+                if (memcmp(here, there, sizeof here)) break;
+            }
+            if (next < 0 || next > 100) break;
+            v = next;
+        }
+        return v;
+    }
+    v += detents * (fast ? 5 : 1);
+    return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+#endif
+
 /* ============================================================= presets ===== */
 static void blk(px_preset_t *p, int b, int on, int type, int a, int c, int d, int e, int f)
 {
@@ -814,6 +876,11 @@ static void model_defaults(px_preset_t *p, int block)
     } else if (block == PX_B_COMP) {
         if (type == PX_CMP_STUDIO) p->p[block][3] = 100;
         if (type == PX_CMP_OPTO || type == PX_CMP_OPTO_T4) p->p[block][2] = 100;
+#ifdef PX_BLUES_V51
+    } else if (block == PX_B_MOD && type == PX_MOD_DIMENSION) {
+        p->p[block][0] = 63;                         /* mode 3 */
+        p->p[block][1] = 25;
+#endif
     }
 #else
     (void)p;
@@ -866,6 +933,39 @@ enum { M_TWIN, M_AC15, M_SUPER59, M_SHIRLCL, M_JCM900, M_SHIRLEY, M_JCM2000, M_M
 #include "px_blues_v49_bank.inc"
 #endif
 #endif
+#ifdef PX_BLUES_V51
+void px_blues_v51_defaults(px_preset_t *p)
+{
+    const unsigned drive = 1u << PX_B_DRIVE, delay = 1u << PX_B_DELAY;
+    px_stomp_set(p, (px_stomp_mask(p, 0) & ~delay) | drive, (px_stomp_mask(p, 1) & ~drive) | delay);
+    if (p->type[PX_B_MOD] == PX_MOD_DIMENSION) {
+        p->p[PX_B_MOD][0] = 63;
+        p->p[PX_B_MOD][1] = 25;
+    }
+    p->p[PX_B_GATE][PX_GATE_HYST] = PX_GATE_HYST_DEFAULT;
+
+    if (!memcmp(p->name, "LOVE STRUCK", sizeof "LOVE STRUCK")) {
+        uint8_t *level = &p->p[PX_B_GATE][PX_PATCH_LEVEL];
+        *level = *level > 10 ? *level - 10 : 0;      /* -3 dB */
+    }
+    if (!memcmp(p->name, "SLOW DANCE", sizeof "SLOW DANCE") && !p->on[PX_B_EQ]) {
+        blk(p, PX_B_EQ, 1, PX_EQ_PARAM, 50, 48, 33, 21, 50);  /* 803 Hz, -4.1 dB, Q 1.58 */
+        /* Put the EQ before modulation and ambience, leaving the other blocks in order. */
+        int from = 0, to = 0;
+        while (p->order[from] != PX_B_EQ) from++;
+        while (p->order[to] != PX_B_MOD) to++;
+        for (int i = from; i > to; i--) p->order[i] = p->order[i - 1];
+        if (from > to) p->order[to] = PX_B_EQ;
+    } else if (p->on[PX_B_EQ] && p->type[PX_B_EQ] == PX_EQ_5BAND) {
+        /* Keep the existing voicing, reducing just the band nearest the reported peak. */
+        int cut = !memcmp(p->name, "LIFE LEAD", sizeof "LIFE LEAD") ? 24 :
+                  !memcmp(p->name, "MARY LEAD", sizeof "MARY LEAD") ? 28 : 0;
+        uint8_t *mid = &p->p[PX_B_EQ][2];
+        *mid = *mid > cut ? *mid - cut : 0;
+    }
+}
+#endif
+
 void px_preset_factory(px_preset_t *p, int idx)
 {
     if (idx < 0 || idx >= NPRESETS) idx = 0;
@@ -880,6 +980,9 @@ void px_preset_factory(px_preset_t *p, int idx)
         delay[1] = 20;
         delay[2] = 12;
     }
+#endif
+#ifdef PX_BLUES_V51
+    px_blues_v51_defaults(p);
 #endif
     return;
 #endif
@@ -1042,6 +1145,9 @@ static void rc_dyn(px_engine *e)
     float sr = e->sr;
     const uint8_t *q = p->p[PX_B_GATE];
     e->gate_thr = db2lin(-80.0f + f01(q[0]) * 60.0f);
+#ifdef PX_BLUES_V51
+    e->gate_close = e->gate_thr * db2lin(-12.0f * f01(q[PX_GATE_HYST]));
+#endif
     e->gate_rel = expf(-1.0f / (0.001f * (5.0f + f01(q[1]) * 495.0f) * sr));
 
     q = p->p[PX_B_COMP];
@@ -2092,7 +2198,7 @@ static void px_recalc(px_engine *e)
                                         PX_MOD_COUNT, PX_DLY_COUNT, PX_REV_COUNT};
     for (int b = 0; b < PX_NBLK; b++)
         e->btr[b] = DB[b] ? powf(10.0f, DB[b][p->type[b] % NT[b]] * 0.05f) : 1.0f;
-    /* preset LEVEL (v36): -15..+15 dB, 0.3 dB a step, kept in the gate block's spare 5th setting */
+    /* Preset output trim is stored in the gate record for preset file compatibility. */
     e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
 }
 
@@ -3010,7 +3116,12 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             if (p->on[PX_B_GATE]) {
                 float a = px_abs(x);
                 e->gate_env = (a > e->gate_env) ? a : a + (e->gate_env - a) * 0.9995f;
+#ifdef PX_BLUES_V51
+                e->gate_open = e->gate_env > (e->gate_open ? e->gate_close : e->gate_thr);
+                float tg = (float)e->gate_open;
+#else
                 float tg = (e->gate_env > e->gate_thr) ? 1.0f : 0.0f;
+#endif
                 e->gate_g = (tg > e->gate_g) ? tg : tg + (e->gate_g - tg) * e->gate_rel;
                 if (e->gate_g < 1e-6f) e->gate_g = 0.0f;   /* closed: exact zero, never a denormal */
                 x *= e->gate_g;

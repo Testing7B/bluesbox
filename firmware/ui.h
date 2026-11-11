@@ -19,7 +19,7 @@
  * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = that block's page (press again = on/off);
  * FX = cycles DRV, SFX, PIT, CMP, GT, EQ. Hold PUSH = SAVE (into one of the 52 slots, in flash).
  * Double-click PUSH on PLAY = MOVE the selected block: KNOB moves it along the chain, PUSH drops it, HOME puts it back.
- * The preset LEVEL (v36) is the GT page's 3rd setting ("PRESET LVL").
+ * Patch output trim lives under Settings in BluesBox V51.
  */
 #pragma once
 
@@ -93,7 +93,21 @@ static struct {
     char status[12]; int status_red;
 } uc;
 static void ui_invalidate(void) { uc.full = 1; }
-static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
+static int ui_np(void)
+{
+    int n = px_nparams((int)ui_blk, PRESET.type[ui_blk]);
+#ifdef PX_BLUES_V51
+    if (ui_blk == PX_B_GATE) n--;  /* Patch output is edited from Settings. */
+#endif
+    return n;
+}
+static int ui_param(int row)
+{
+#ifdef PX_BLUES_V51
+    if (ui_blk == PX_B_GATE && row >= PX_PATCH_LEVEL) return row + 1;
+#endif
+    return row;
+}
 static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = on/off, 1 = type, 2.. = parameters */
 static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
 static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
@@ -329,9 +343,10 @@ static void draw_bar(int k)            /* value + bar: the only thing that moves
     uint32_t y = E_P0 + (uint32_t)k * E_ROW;
     int sel = (UI_PAGE && (int)ui_item == k + 2), ed = sel && ui_mode == M_EDIT;
     uint16_t bg = sel ? C_CARD : UI_BG;
-    uint32_t v = PRESET.p[ui_blk][k]; if (v > 100u) v = 100u;
+    int param = ui_param(k);
+    uint32_t v = PRESET.p[ui_blk][param]; if (v > 100u) v = 100u;
     char b[10];
-    if (!px_param_text((int)ui_blk, PRESET.type[ui_blk], k, (int)v, b)) num3(b, v);   /* "+5TH", "440 MS"... */
+    if (!px_param_text((int)ui_blk, PRESET.type[ui_blk], param, (int)v, b)) num3(b, v);   /* "+5TH", "440 MS"... */
     ft_box(140, y + 1u, 90, b, &FT_MD, ed ? UI_ACC : UI_TXT, bg, 2);
     uint32_t w = v * BAR_W / 100u;
     uint16_t fc = ed ? UI_ACC : BLK_COL[ui_blk];
@@ -348,7 +363,7 @@ static void draw_row(int k)            /* one full setting row */
     ui_rbox(4, y, 232, E_ROW - 1u, 5, bg, UI_BG);
     lcd_rect(0, y + E_ROW - 1u, 240, 1, UI_BG);
     if (sel) lcd_rect(4, y + 6u, 3, 14, UI_ACC);                 /* accent marker */
-    ft_box(BAR_X, y + 5u, 130, px_param_name((int)ui_blk, PRESET.type[ui_blk], k), &FT_SM, sel ? WHT : UI_DIM, bg, 0);
+    ft_box(BAR_X, y + 5u, 130, px_param_name((int)ui_blk, PRESET.type[ui_blk], ui_param(k)), &FT_SM, sel ? WHT : UI_DIM, bg, 0);
     draw_bar(k);
 }
 static void draw_item(int it)
@@ -375,7 +390,7 @@ static void draw_edit(int force)
         draw_item((int)ui_item);
     }
     if (uc.on != on) { draw_band(1); uc.on = on; }
-    for (int k = 0; k < np; k++) if (uc.val[k] != PRESET.p[ui_blk][k]) draw_bar(k);
+    for (int k = 0; k < np; k++) if (uc.val[k] != PRESET.p[ui_blk][ui_param(k)]) draw_bar(k);
 }
 
 /* ---- render: sends only what changed to the screen ---- */
@@ -477,7 +492,11 @@ static void ui_knob(int dd, int fast)
             }
             px_preset_select_type(&PRESET, (int)ui_blk, type);
         } else if (ui_item >= 2u) {
-            int k = (int)ui_item - 2, v = PRESET.p[ui_blk][k] + dd * (fast ? 5 : 1);
+            int k = ui_param((int)ui_item - 2);
+#ifdef PX_BLUES_V51
+            int v = px_param_step((int)ui_blk, PRESET.type[ui_blk], k, PRESET.p[ui_blk][k], dd, fast);
+#else
+            int v = PRESET.p[ui_blk][k] + dd * (fast ? 5 : 1);
             if (v < 0) v = 0;
             if (v > 100) v = 100;
 #ifdef PX_BLUES_V47
@@ -485,6 +504,7 @@ static void ui_knob(int dd, int fast)
                 int dir = dd < 0 ? -1 : 1;
                 while (!px_nam_visible(px_nam_model(v))) v += dir;
             }
+#endif
 #endif
             PRESET.p[ui_blk][k] = (uint8_t)v;
         }
@@ -813,7 +833,14 @@ static void tuner_draw(float hz)       /* hz <= 0: no note */
 
 #ifdef PX_BLUES_V48
 static void settings_persist(void);
-enum { SET_A = CFG_COUNT, SET_B, SET_MIDI, SET_COUNT };
+enum {
+#ifdef PX_BLUES_V51
+    SET_PATCH = CFG_COUNT, SET_A,
+#else
+    SET_A = CFG_COUNT,
+#endif
+    SET_B, SET_MIDI, SET_COUNT
+};
 static uint8_t set_row, set_edit, set_block;
 static uint16_t set_orig;
 #ifdef PX_BLUES_V49
@@ -938,6 +965,9 @@ static void settings_draw(void)
 #ifdef PX_BLUES_V49
         "OUTPUT EQ LOW", "OUTPUT EQ MID", "OUTPUT EQ HIGH",
 #endif
+#ifdef PX_BLUES_V51
+        "PATCH OUTPUT",
+#endif
         "ASSIGN GROUP A", "ASSIGN GROUP B", "MIDI"};
     const int groups = set_edit && (set_row == SET_A || set_row == SET_B);
     unsigned row = groups ? set_block : set_row;
@@ -963,6 +993,9 @@ static void settings_draw(void)
             uint32_t y = 40u + (i - first) * 35u;
             uint16_t bg = i == row ? C_CARD : UI_BG;
             if (i < CFG_COUNT) settings_value(i, v);
+#ifdef PX_BLUES_V51
+            else if (i == SET_PATCH) px_param_text(PX_B_GATE, 0, PX_PATCH_LEVEL, PRESET.p[PX_B_GATE][PX_PATCH_LEVEL], v);
+#endif
             else b_str(v, ">");
             ft_box(0, y, 136, labels[i], &FT_SM, UI_TXT, bg, 0);
             ft_box(136, y, 104, v, &FT_SM, i == row && set_edit ? UI_ACC : UI_TXT, bg, 2);
@@ -974,6 +1007,12 @@ static void settings_knob(int dd)
 {
     if (set_edit && (set_row == SET_A || set_row == SET_B))
         set_block = (uint8_t)((set_block + PX_NBLK + dd) % PX_NBLK);
+#ifdef PX_BLUES_V51
+    else if (set_edit && set_row == SET_PATCH) {
+        uint8_t *value = &PRESET.p[PX_B_GATE][PX_PATCH_LEVEL];
+        *value = (uint8_t)px_param_step(PX_B_GATE, 0, PX_PATCH_LEVEL, *value, dd, 0);
+    }
+#endif
     else if (set_edit) {
         int value = (int)cfg_read(cfg_audio, set_row), max = CFG_MAX[set_row];
 #ifdef PX_BLUES_V49

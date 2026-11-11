@@ -83,7 +83,7 @@ footer a,.note a{color:inherit}
   <section class="card" id="installCard">
     <h2><b>2</b><span data-t="s2"></span></h2>
     <p class="note"><span data-t="s2note"></span> <strong id="pkgver">…</strong></p>
-    <p class="note"><a href="?channel=blues-v50-public">Latest hosted BluesBox firmware · V50</a> · <a href="BluesBox-V50-Preset-Guide.pdf">Preset guide (PDF)</a> · <a href="?channel=v40">V40 legacy installer</a>.
+    <p class="note"><a href="?channel=blues-v51-public">Latest hosted BluesBox firmware · V51</a> · <a href="BluesBox-V50-Preset-Guide.pdf">Preset guide (PDF)</a> · <a href="?channel=v40">V40 legacy installer</a>.
       For the build with the local A2 amp and cab fits, use <strong>Install a local build</strong>.</p>
     <p class="note warnbox" data-t="s2warn"></p>
     <p class="note warnbox" id="bbwarn" hidden data-t="bbwarn"></p>
@@ -214,12 +214,13 @@ function setMsg(el, text, cls = "") { el.textContent = text; el.className = "msg
 const errText = (e) => (e && e.code && T.en["e_" + e.code] ? t("e_" + e.code) + (e.detail || "") : (e && e.message) || String(e));
 
 /* Default to BluesBox for BlackBox. The V40 legacy channel also supports Pocket X. */
-const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").replace(/[^a-z0-9-]/g, "") || "blues-v50-public";
+const DEFAULT_CHANNEL = "blues-v51-public";
+const CHANNEL = (new URLSearchParams(location.search).get("channel") || "").replace(/[^a-z0-9-]/g, "") || DEFAULT_CHANNEL;
 const FW = "firmware/" + (CHANNEL === "v40" ? "" : CHANNEL + "/");
 let access = null, up = null, manifest = null, lastDev = null, busy = false, official = null;
 let sawV21 = false;
 let bank = null, bankRevision = 0;
-const recoveryChannel = "firmware/blues-v50-public/";
+const recoveryChannel = `firmware/${DEFAULT_CHANNEL}/`;
 const recoveryPending = () => stored("bluesbox-v21-recovery", "") === "pending";
 const recoveryReady = () => official?.product === BLACKBOX_V21 && official.known &&
   bank && $("factory-confirm").checked;
@@ -232,8 +233,9 @@ const canInstall = (model) => localSelected()
 if (!navigator.requestMIDIAccess) { $("nomidi").hidden = false; $("connect").disabled = true; }
 $("testchan").hidden = CHANNEL === "v40";
 if (CHANNEL === "drive-lab") $("testchan").textContent = t("drivelab");
-if (CHANNEL === "blues-v50-public")
-  $("testchan").textContent = "BluesBox V50 for BlackBox. This hosted build uses the public amp and cab models.";
+const bluesRevision = CHANNEL.match(/^blues-v(50|51)-public$/)?.[1];
+if (bluesRevision)
+  $("testchan").textContent = `BluesBox V${bluesRevision} for BlackBox. This hosted build uses the public amp and cab models.`;
 
 async function loadManifest() {
   try {
