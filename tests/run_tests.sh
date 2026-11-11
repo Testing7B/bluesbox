@@ -48,6 +48,10 @@ for t in midisim midiio; do
   build/$t > build/$t.log || { grep FAIL build/$t.log; exit 1; }
   tail -1 build/$t.log
 done
+echo "== I2S audio callback order"
+$CC -O1 -Wall -Ifirmware tests/test_aorder.c -o build/test_aorder
+build/test_aorder
+
 echo "== LED map and the lights driver (LED_PROBE build, issue #8)"
 mkdir -p build/lp && $CC -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
 echo "== button lights in the normal firmware (px_lights.h, issue #8)"

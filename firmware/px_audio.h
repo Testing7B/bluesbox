@@ -343,10 +343,15 @@ static float tuner_estimate(void)      /* frequency in Hz, or 0 (silence / uncle
     return 11025.0f / tf;
 }
 
+#ifdef PX_BLUES_V50
+static void a_block(const uint8_t *data, int len)
+{
+#else
 static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar block received */
 {
     (void)priv;
     if (ch != 1u) return;
+#endif
 #if DSP_CPU1
     const uint32_t t_irq = fm1_ticks();
 #endif
@@ -457,12 +462,18 @@ static void output_eq(int32_t *samples, uint32_t frames)
         gain[0] = gain[1] = gain[2] = low[0] = low[1] = below_high[0] = below_high[1] = 0;
 }
 #endif
+#ifdef PX_BLUES_V50
+static void a_send(int32_t *d, uint32_t n)
+{
+    a_collect();
+#else
 static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output block to fill */
 {
     (void)priv; (void)ch;
     a_collect();                                       /* the previous block must be finished */
     int32_t *d = (int32_t *)data;
     uint32_t n = (uint32_t)len / 8u;
+#endif
     if (n > A_FR) n = A_FR;
     for (uint32_t i = 0; i < n; i++) d[2u * i] = d[2u * i + 1u] = a_res[i];
 #ifdef PX_BLUES_V46
@@ -472,6 +483,10 @@ static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output 
     output_eq(d, n);
 #endif
 }
+#ifdef PX_BLUES_V50
+#define A_ORDER_TICKS (A_BUDGET / 4u)
+#include "px_aorder.h"
+#endif
 #ifdef PX_BLUES_V47
 static volatile uint32_t a_irq_peak, a_irq_late;
 void fm1_alnk0_irq(void)

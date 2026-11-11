@@ -573,7 +573,9 @@ static void ir_changed(uint32_t s)   /* v38: a user IR was written or erased: th
 static void ed_diag_line(uint32_t i, char *out);
 #endif
 #ifdef PX_BLUES_V47
-#ifdef PX_BLUES_V48
+#if defined(PX_BLUES_V50)
+#define ED_STATS_COUNT 12u
+#elif defined(PX_BLUES_V48)
 #define ED_STATS_COUNT 11u
 #else
 #define ED_STATS_COUNT 7u
@@ -592,6 +594,9 @@ static void ed_audio_stats(uint32_t stats[ED_STATS_COUNT])
     stats[8] = a_wcut;
     stats[9] = a_input_clips;
     stats[10] = a_clip;
+#ifdef PX_BLUES_V50
+    stats[11] = a_swaps;
+#endif
 #endif
 }
 #define ED_AUDIO_STATS 1

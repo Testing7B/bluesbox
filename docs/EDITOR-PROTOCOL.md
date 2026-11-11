@@ -149,3 +149,6 @@ guitar soft-knee blocks. Values other than peak IRQ are cumulative counters.
 BluesBox reports protocol 5. Command 28 continues to return the BluesBox audio counters. Command 29 reads settings with no arguments or writes one with `[index, value]`. The response is `[status, input, hpf, guitar, usb, footswitch, mute, eqLow, eqMid, eqHigh]`. Status 0 means success, 1 invalid arguments, 2 the pedal Settings page is open, and 3 flash commit failed. The pedal verifies a changed setting before acknowledging the write.
 
 The first six indexes match the V48 pedal settings. Input gain codes 0–4 select 0 to −12 dB in 3 dB steps, and 5–8 select +3 to +12 dB. HPF codes 0–5 select off, then 40–120 Hz in 20 Hz steps. Guitar and USB level codes 0–7 select 0 to −21 dB in 3 dB steps. Footswitch codes 0 and 1 select Preset and Stomp. Mute codes 0, 1 and 2 select Guitar, Off and All. Each output EQ band uses code 0 for flat, 1–6 for −1 to −6 dB, and 7–12 for +1 to +6 dB. The EQ acts on both channels after mixing guitar and USB playback.
+
+
+V50 appends one five-byte counter to the BluesBox command 28 reply. `callbackReorders` counts occasions when the audio driver requested the output buffer before the input callback. This counter can rise in normal operation with no loss of audio.

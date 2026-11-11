@@ -871,6 +871,16 @@ void px_preset_factory(px_preset_t *p, int idx)
     if (idx < 0 || idx >= NPRESETS) idx = 0;
 #ifdef PX_BLUES_V49
     *p = blues_v49_bank[idx];
+#ifdef PX_BLUES_V50
+    if (p->on[PX_B_DELAY]) {
+        uint8_t *delay = p->p[PX_B_DELAY];
+        const int type = p->type[PX_B_DELAY];
+        if (idx >= 39)
+            delay[0] = (uint8_t)px_dly_value_for_ms(type, 0.5f * dly_ms(type, delay[0]));
+        delay[1] = 20;
+        delay[2] = 12;
+    }
+#endif
     return;
 #endif
     base_preset(p);

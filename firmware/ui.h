@@ -171,7 +171,7 @@ static void draw_hint(int force)
         int dirty = ui_dirty(), stomp = cfg_read(cfg_audio, CFG_STOMP);
         int key = 100 + ui_usb_play + 2 * dirty + 4 * stomp + 8 * ui_preset_focus;
         if (force || uc.hint != key) {
-            const char *hint = ui_preset_focus ? "PUSH: PRESETS" : stomp ? (ui_usb_play ? "STOMP A/B   USB" : "STOMP A/B") : ui_usb_play ? "USB PLAY" : "";
+            const char *hint = ui_preset_focus ? "PUSH: PRESETS" : stomp ? (ui_usb_play ? "STOMP A/B   USB" : "STOMP A/B") : ui_usb_play ? "PRESET UP/DN   USB" : "PRESET UP/DN";
             ft_box(0, F_Y + 3u, 174, hint, &FT_SM, ui_preset_focus ? UI_ACC : GRN, UI_PANEL, 1);
             ft_box(174, F_Y + 3u, 62, dirty ? "EDITED" : "", &FT_SM, UI_ACC, UI_PANEL, 2);
             lcd_rect(236, F_Y + 3u, 4, 15, UI_PANEL);

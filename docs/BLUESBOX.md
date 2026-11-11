@@ -1,6 +1,12 @@
 # BluesBox development notes
 
 
+## V50
+
+V50 uses the same output block whether the audio driver calls the input or output callback first. USB playback made the old order assumption fail periodically even when the computer was sending silence. The editor’s audio diagnostics add `callbackReorders`, which counts occasions when the output request came first. Credit to VinSpee and the OpenPocket contributors for the [callback-order fix](https://github.com/isod89/openpocket/blob/v42/docs/USB-AUDIO.md#the-order-of-the-audio-callbacks).
+
+The PLAY footer shows **PRESET UP/DN** or **STOMP A/B**. The editor lists All and Factory presets. Active factory delays use feedback 20 and mix 12. The custom song and USER slots use the nearest available delay time to half their previous setting. Factory reset loads these defaults. Saved overrides otherwise take priority.
+
 ## V49
 
 V49 bakes the 52-slot audition bank into the factory presets. Slots 40–47 are the four song pairs, and slots 48–52 are the five USER templates. Saved overrides still take priority. The fitted build retains the auditioned amp/cab types and the public build uses built-in substitutes. The SRV presets use Plate and favour Dimension for chorus, with signature rotary and vibe exceptions. The revised song presets include the timed repeat and voicing adjustments from the loopback sessions.
