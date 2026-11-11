@@ -1,6 +1,6 @@
 # Blues Lab presets
 
-For the current bank and controls, see the [BluesBox V48 Preset Guide](BluesBox-V48-Preset-Guide.pdf). The original V43 recipes below document the earlier comparison bank.
+For the current bank and controls, see the [BluesBox V48 Preset Guide](BluesBox-V48-Preset-Guide.pdf). Use the [preset audition workflow](BLUESBOX-PRESET-WORKFLOW.md) for revisions and new programs. The original V43 recipes below document the earlier comparison bank.
 
 The experimental build starts with 40 blues presets and keeps the 52-slot preset format. Slots 41–43 carry three V40 references. Slots 44–52 are comparisons. Existing saved presets take precedence over factory defaults. On a device with saved sounds, export them first and use the editor’s **Factory** button for the slots you want to audition.
 
