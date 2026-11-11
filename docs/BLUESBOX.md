@@ -1,5 +1,12 @@
 # BluesBox development notes
 
+## V51
+
+Dimension presets and newly selected Dimension blocks start at mode 3, mix 25. The encoder moves directly between distinct Dimension and Rotary modes, Harmony intervals, Slicer patterns, Bit Crusher steps, Space Echo head combinations, and available NAM or IR slots. Continuous controls retain their fine adjustment.
+
+In the factory bank, footswitch A is Drive and B is Delay when using Stomp mode. Their stored on/off states are preserved. The gate has independent opening and closing thresholds, with 0–12 dB adjustable hysteresis and 6 dB in the factory bank. Patch Output is now under Settings and on the web editor's Sound page. It still uses the same field in saved presets, and is saved with the preset.
+
+Love Struck's patch output is 3 dB lower. Slow Dance has a cut centered at 803 Hz. Life Lead and Mary Lead keep their existing EQ with less gain in the 1 kHz band, which also lowers the response around 800 Hz. User saves take precedence over the revised factory settings.
 
 ## V50
 

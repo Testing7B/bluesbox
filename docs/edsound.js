@@ -2,7 +2,7 @@
 // BluesBox web editor: the current sound. Its name and what can be done with it, the signal chain (the order, what is
 // on), and the block editor (type, settings). Every change plays at once on the pedal; a change made on the pedal shows here.
 
-import { app, $, h, icon, on, emit, blk, typeOf, choices, act, menu, slotName } from "./edcore.js";
+import { app, $, h, icon, on, emit, blk, typeOf, blockIndex, choices, act, menu, slotName } from "./edcore.js";
 import { save, saveAs, revert, exportOne, setCompare, comparing, duplicate, moveTo, restoreFactory } from "./edpresets.js";
 import { knobIndex, indexKnob, KINDS } from "./pxlib.js";
 import { t3kLink } from "./pxt3k.js";
@@ -205,6 +205,7 @@ function renderPage(fromPush) {
   if (box.dataset.sig !== sig) {
     box.textContent = "";
     T.params.forEach((param, k) => {
+      if (B.label === "GT" && param.name === "PATCH OUTPUT") return;
       const id = `p${k}`, opts = paramChoices(b, p.type[b], k, param);
       let ctl;
       if (opts && opts.length <= 4) {
@@ -235,6 +236,7 @@ function renderPage(fromPush) {
   }
   T.params.forEach((_, k) => {
     const c = $(`p${k}`), v = p.p[b][k];
+    if (!c) return;
     if (c.type === "range") { if (!(fromPush && (c.dataset.held || (document.activeElement === c && pendingParam)))) c.value = v; }
     else if (c.tagName === "SELECT") { const o = optionOf(paramChoices(b, p.type[b], k, T.params[k]), v); c.value = o.value; }
     showVal(k);
@@ -277,9 +279,27 @@ function renderNote() {
     text: kind === "nam" ? "Get or manage captures" : "Load or manage IRs" }));
 }
 
+function renderPatchOutput() {
+  const b = blockIndex("GT"), k = 2;
+  const param = b >= 0 && typeOf(app.st.preset, b).params[k];
+  const row = $("patch-output-row"), input = $("patch-output");
+  row.hidden = param?.name !== "PATCH OUTPUT";
+  if (row.hidden) return;
+  const v = app.st.preset.p[b][k];
+  if (!sendingParam || document.activeElement !== input) input.value = v;
+  input.disabled = comparing();
+  const label = param.texts[v];
+  $("patch-output-value").textContent = label;
+  input.setAttribute("aria-valuetext", label);
+}
+
 export function initSound() {
-  on("state", (o) => { if (!app.st) return; renderHeader(); if (!o.own) { renderTiles(); renderPage(o.push); } });
-  on("compare", () => { renderHeader(); renderTiles(); renderPage(); });
+  $("patch-output").oninput = (event) => {
+    sendParam(blockIndex("GT"), 2, Number(event.target.value));
+    renderPatchOutput();
+  };
+  on("state", (o) => { if (!app.st) return; renderHeader(); renderPatchOutput(); if (!o.own) { renderTiles(); renderPage(o.push); } });
+  on("compare", () => { renderHeader(); renderPatchOutput(); renderTiles(); renderPage(); });
   on("assets", () => { if (app.st && app.conn === "ready") { $("params").dataset.sig = ""; renderPage(); } });
   on("ping", renderShares);
   $("stomp-group").onchange = async () => {

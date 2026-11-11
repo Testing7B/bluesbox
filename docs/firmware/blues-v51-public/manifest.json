@@ -1,0 +1,12 @@
+{
+  "version": 51,
+  "packages": [
+    {
+      "model": "BlackBox",
+      "product": "BlackBox_951",
+      "file": "BlackBox_951.fwsc",
+      "size": 676410,
+      "sha256": "6b1f2ca35eb86c6976ff284c7b24758a5de8317e240235ba7c6cc5e9e48335ff"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 BluesBox is experimental guitar firmware for the **M-VAVE BlackBox**, forked from OpenPocket V40. It focuses on clean, edge-of-breakup and overdriven blues sounds inspired by Stevie Ray Vaughan, John Mayer and Albert King. The artist presets put compression after the cab, so your guitar's volume still controls how hard you drive the amp.
 
-**[V50 web updater](https://testing7b.github.io/bluesbox/?channel=blues-v50-public)** · **[Web editor](https://testing7b.github.io/bluesbox/editor.html)** · **[Preset guide (PDF)](https://testing7b.github.io/bluesbox/BluesBox-V50-Preset-Guide.pdf)** · **[Development notes](docs/BLUESBOX.md)**
+**[V51 web updater](https://testing7b.github.io/bluesbox/?channel=blues-v51-public)** · **[Web editor](https://testing7b.github.io/bluesbox/editor.html)** · **[Preset guide (PDF)](https://testing7b.github.io/bluesbox/BluesBox-V50-Preset-Guide.pdf)** · **[Development notes](docs/BLUESBOX.md)**
 
 ## What changed since V40
 
@@ -14,6 +14,7 @@ BluesBox is experimental guitar firmware for the **M-VAVE BlackBox**, forked fro
 | V48 | Larger cabinet label, encoder preset browsing, separate guitar and USB levels, input trim and high-pass filter, two assignable footswitch groups, dual-switch tuner, and a level and voicing pass across the factory bank. USB playback uses a buffered 2 kHz poll which yields to the guitar path while playback is idle. |
 | V49 | Revised factory bank, preset browser that stays open after loading, hold HOME for Settings, global output EQ, and a redesigned web editor with pedal settings and footswitch assignments. |
 | V50 | Fixes the repeating click heard during USB playback. Shows Preset or Stomp mode on PLAY, makes delays quieter and shorter in the song bank, and simplifies the editor’s preset filters. |
+| V51 | Dimension defaults to mode 3 and mix 25. Discrete controls change one setting per encoder detent. Drive and Delay default to footswitch groups A and B. The gate adds hysteresis and Patch Output moves to Settings. Love Struck is quieter, and Slow Dance, Life Lead and Mary Lead have less midrange. |
 
 ## Where to start
 
@@ -23,6 +24,8 @@ BluesBox is experimental guitar firmware for the **M-VAVE BlackBox**, forked fro
 - **P40–P47** hold paired sounds for *Life Without You*, *Reconsider Baby*, *I’ll Play the Blues for You*, and *Mary Had a Little Lamb*. **P48–P52** are USER1–USER5.
 
 On the pedal, turn to the preset number and press the encoder to browse. Press to load and stay in the list. Tap **HOME** to return to PLAY, hold **HOME** for Settings, or hold both footswitches for the tuner. The PLAY footer shows **PRESET UP/DN** or **STOMP A/B**. In the editor, open **MIDI → Pedal settings** for input gain, footswitch mode and output EQ. Use **Sound** to assign blocks to A or B and save the preset.
+
+In V51, set **Patch Output** under **Settings** on the pedal or above the block editor on the **Sound** page. Save the preset to keep the level change. **Gate → Hysteresis** sets how far the signal must fall below the opening threshold before the gate starts to close. The factory default is **6 dB**.
 
 The hosted firmware uses public amp and cab voices. The local build uses the fitted models and the Two-Rock capture. Choose **Install a local build** to use its firmware file and matching manifest. Chrome or Edge on a desktop is required for Web MIDI. The editor supports local NAM A2 Lite imports and TONE3000 browsing. Existing saved presets take precedence over factory sounds. Export them before resetting individual slots.
 
