@@ -19,7 +19,9 @@
 #define ED_H0 0x7Du
 #define ED_H1 0x4Fu
 #define ED_H2 0x50u
-#ifdef PX_BLUES_V48
+#if defined(PX_BLUES_V49)
+#define ED_PROTO 5u
+#elif defined(PX_BLUES_V48)
 #define ED_PROTO 4u
 #else
 #define ED_PROTO 3u                             /* 3: v38, cabinet IRs (IR_LIST .. IR_ERASE); 2: v37, NAM models */
@@ -30,7 +32,7 @@ typedef char ed_size_check[sizeof(px_preset_t) == ED_P_SIZE ? 1 : -1];
 enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_ORDER, ED_NAME, ED_PUT, ED_SELECT,
        ED_FOCUS, ED_LIST, ED_SLOT_GET, ED_SLOT_PUT, ED_COMMIT, ED_SAVE, ED_WATCH, ED_PING,
        ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE, ED_DIAG,
-       ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE, ED_STATS };   /* v38: 24..27 */
+       ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE, ED_STATS, ED_SETTINGS };   /* v38: 24..27 */
 
 static uint8_t ed_out[1024];
 static uint32_t ed_n;
@@ -293,6 +295,28 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         ir_changed(a[0]);                              /* a sound playing that slot reloads it */
         ed_b(a[0]); ed_b((uint32_t)rc);
         break;
+#ifdef PX_BLUES_V49
+    case ED_SETTINGS: {
+        unsigned status = 0;
+        if (n != 0u) {
+            if (n != 2u || a[0] >= CFG_COUNT || a[1] > CFG_MAX[a[0]]) status = 1;
+            else if (ui_mode == M_SETTINGS) status = 2;
+            else if (cfg_read(cfg_audio, a[0]) != a[1]) {
+                uint16_t old_audio = cfg_audio, old_eq = cfg_eq;
+                cfg_set(a[0], a[1]);
+                if (st_commit()) {
+                    cfg_audio = old_audio;
+                    cfg_eq = old_eq;
+                    status = 3;
+                }
+                ui_invalidate();
+            }
+        }
+        ed_b(status);
+        for (i = 0; i < CFG_COUNT; i++) ed_b(cfg_read(cfg_audio, i));
+        break;
+    }
+#endif
 #ifdef ED_AUDIO_STATS
     case ED_STATS: {
         uint32_t stats[ED_STATS_COUNT];

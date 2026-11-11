@@ -425,6 +425,38 @@ static void a_enc(void *priv, uint8_t *data, int len, uint8_t ch)     /* guitar 
 #ifdef PX_BLUES_V46
 static void px_usb_mix(int32_t *out, uint32_t frames);
 #endif
+#ifdef PX_BLUES_V49
+/* Global output EQ after the guitar/USB mix. Complementary first-order bands
+ * sum to unity, and the flat setting leaves the original DAC samples alone. */
+static void output_eq(int32_t *samples, uint32_t frames)
+{
+    static const float delta[] = {0.0f, -.108749f, -.205672f, -.292054f, -.369043f, -.437659f, -.498813f,
+                                  .122018f, .258925f, .412538f, .584893f, .778279f, .995262f};
+    static float low[2], below_high[2], gain[3];
+    uint16_t packed = cfg_eq;
+    if (!packed && gain[0] == 0 && gain[1] == 0 && gain[2] == 0) return;
+    float target[3];
+    for (unsigned b = 0; b < 3; ++b) {
+        unsigned v = (packed >> (4u * b)) & 15u;
+        target[b] = delta[v <= 12u ? v : 0u];
+    }
+    for (uint32_t i = 0; i < frames; ++i) {
+        for (unsigned b = 0; b < 3; ++b) gain[b] += (target[b] - gain[b]) * .0025f;
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            float x = (float)samples[2u * i + ch];
+            low[ch] += .03155f * (x - low[ch]);            /* about 225 Hz at 44.1 kHz */
+            below_high[ch] += .29047f * (x - below_high[ch]); /* about 2.4 kHz */
+            float y = x + gain[0] * low[ch] + gain[1] * (below_high[ch] - low[ch]) + gain[2] * (x - below_high[ch]);
+            if (y > 8388607.0f) y = 8388607.0f;
+            if (y < -8388608.0f) y = -8388608.0f;
+            samples[2u * i + ch] = (int32_t)y;
+        }
+    }
+    if (!packed && gain[0] < .00001f && gain[0] > -.00001f &&
+        gain[1] < .00001f && gain[1] > -.00001f && gain[2] < .00001f && gain[2] > -.00001f)
+        gain[0] = gain[1] = gain[2] = low[0] = low[1] = below_high[0] = below_high[1] = 0;
+}
+#endif
 static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output block to fill */
 {
     (void)priv; (void)ch;
@@ -435,6 +467,9 @@ static void a_dec(void *priv, uint8_t *data, int len, uint8_t ch)     /* output 
     for (uint32_t i = 0; i < n; i++) d[2u * i] = d[2u * i + 1u] = a_res[i];
 #ifdef PX_BLUES_V46
     px_usb_mix(d, n);
+#endif
+#ifdef PX_BLUES_V49
+    output_eq(d, n);
 #endif
 }
 #ifdef PX_BLUES_V47

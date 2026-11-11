@@ -1,24 +1,48 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
 
-enum { CFG_INPUT, CFG_HPF, CFG_GUITAR, CFG_USB, CFG_STOMP, CFG_MUTE, CFG_COUNT };
+enum { CFG_INPUT, CFG_HPF, CFG_GUITAR, CFG_USB, CFG_STOMP, CFG_MUTE,
+#ifdef PX_BLUES_V49
+       CFG_EQ_LOW, CFG_EQ_MID, CFG_EQ_HIGH,
+#endif
+       CFG_COUNT };
 enum { MUTE_GUITAR, MUTE_OFF, MUTE_ALL };
-static const uint8_t CFG_MAX[CFG_COUNT] = {8, 5, 7, 7, 1, 2};
+static const uint8_t CFG_MAX[CFG_COUNT] = {8, 5, 7, 7, 1, 2
+#ifdef PX_BLUES_V49
+    , 12, 12, 12
+#endif
+};
 static const uint8_t CFG_SHIFT[CFG_COUNT] = {0, 4, 7, 10, 13, 14};
 static const uint8_t CFG_WIDTH[CFG_COUNT] = {15, 7, 7, 7, 1, 3};
 static const float CFG_DB[] = {1.0f, 0.707946f, 0.501187f, 0.354813f, 0.251189f,
                                0.177828f, 0.125893f, 0.089125f};
 static const float CFG_HP_COEF[] = {0.0f, 0.005683f, 0.008512f, 0.011333f, 0.014146f, 0.016951f};
 static volatile uint16_t cfg_audio;
+#ifdef PX_BLUES_V49
+static volatile uint16_t cfg_eq;     /* three nibbles, 0 flat, 1..6 cut, 7..12 boost */
+#endif
 
 static unsigned cfg_read(uint16_t packed, unsigned row)
 {
+#ifdef PX_BLUES_V49
+    if (row >= CFG_EQ_LOW) {
+        unsigned value = (cfg_eq >> (4u * (row - CFG_EQ_LOW))) & 15u;
+        return value <= 12u ? value : 0;
+    }
+#endif
     unsigned value = (packed >> CFG_SHIFT[row]) & CFG_WIDTH[row];
     return value <= CFG_MAX[row] ? value : 0;
 }
 
 static void cfg_set(unsigned row, unsigned value)
 {
+#ifdef PX_BLUES_V49
+    if (row >= CFG_EQ_LOW) {
+        unsigned shift = 4u * (row - CFG_EQ_LOW);
+        cfg_eq = (uint16_t)((cfg_eq & ~(15u << shift)) | (value << shift));
+        return;
+    }
+#endif
     unsigned mask = CFG_WIDTH[row] << CFG_SHIFT[row];
     cfg_audio = (uint16_t)((cfg_audio & ~mask) | (value << CFG_SHIFT[row]));
 }

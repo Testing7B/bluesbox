@@ -887,8 +887,18 @@ static void app_main(void)
         /* HOME: short press = back to the chain, long press (0.7 s) = tuner */
         dbn_press(&bhome, (pa & PA_HOME) != 0);
         int home_now = bhome.stab != 0, p_home = 0, p_tuner = 0;
+#ifdef PX_BLUES_V49
+        int p_settings = 0;
+#endif
         if (home_now && !home_down) { home_down = 1; home_long = 0; home_t = now; }
-        if (home_now && home_down && !home_long && now - home_t >= 700u) { home_long = 1; p_tuner = 1; }
+        if (home_now && home_down && !home_long && now - home_t >= 700u) {
+            home_long = 1;
+#ifdef PX_BLUES_V49
+            p_settings = 1;
+#else
+            p_tuner = 1;
+#endif
+        }
         if (!home_now && home_down) { home_down = 0; if (!home_long) p_home = 1; }
 
         int p_cab = 0, p_dly = 0, p_rev = 0;
@@ -922,7 +932,11 @@ static void app_main(void)
         } else if (ui_mode == M_MIDI) {
             if (p_push) midi_push();
             else if (p_home) midi_close();
-        } else if (p_midi && ui_mode != M_TUNER && ui_mode != M_MOVE) {
+        } else if ((p_midi
+#ifdef PX_BLUES_V49
+                    || p_settings
+#endif
+                    ) && ui_mode != M_TUNER && ui_mode != M_MOVE) {
 #ifdef PX_BLUES_V48
             clk_pend = 0;
             settings_open();

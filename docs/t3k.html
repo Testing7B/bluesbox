@@ -17,7 +17,7 @@ p{max-width:34em;text-align:center}
 // (same origin only), which checks the state and finishes the sign-in. Nothing is kept here.
 (function () {
   var q = new URLSearchParams(location.search), d = { t3k: 1 };
-  ["code", "state", "tone_id", "error", "error_description"].forEach(function (k) { if (q.get(k)) d[k] = q.get(k); });
+  ["code", "state", "tone_id", "canceled", "error", "error_description"].forEach(function (k) { if (q.get(k)) d[k] = q.get(k); });
   if (window.opener && !window.opener.closed) {
     window.opener.postMessage(d, location.origin);
     setTimeout(function () { window.close(); }, 300);

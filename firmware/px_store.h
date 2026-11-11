@@ -150,6 +150,11 @@ static void st_load(void)
         if (!ota_fread(best + ST_CFG_OFF, &c, sizeof c) &&
             c.crc == (uint16_t)(ota_crc16((const uint8_t *)&c.value, sizeof c.value, 0) ^ 0x4258u))
             cfg_audio = c.value;
+#ifdef PX_BLUES_V49
+        if (!ota_fread(best + ST_CFG_OFF + sizeof c, &c, sizeof c) &&
+            c.crc == (uint16_t)(ota_crc16((const uint8_t *)&c.value, sizeof c.value, 0) ^ 0x4551u))
+            cfg_eq = c.value & 0x0fffu;
+#endif
 #endif
         st_cur = best;
         st_seq = bseq;
@@ -209,6 +214,11 @@ static int st_commit(void)
     c.value = cfg_audio;
     c.crc = (uint16_t)(ota_crc16((const uint8_t *)&c.value, sizeof c.value, 0) ^ 0x4258u);
     if (!rc && fl_write(base + ST_CFG_OFF, (const uint8_t *)&c, sizeof c)) rc = -3;
+#ifdef PX_BLUES_V49
+    st_cfg_t eq = {cfg_eq, 0};
+    eq.crc = (uint16_t)(ota_crc16((const uint8_t *)&eq.value, sizeof eq.value, 0) ^ 0x4551u);
+    if (!rc && fl_write(base + ST_CFG_OFF + sizeof c, (const uint8_t *)&eq, sizeof eq)) rc = -3;
+#endif
 #endif
     if (!rc) { memcpy(buf, &h, sizeof h); if (fl_write(base, buf, sizeof h)) rc = -4; }   /* header last */
     if (!rc) {                                    /* read back */
@@ -218,6 +228,10 @@ static int st_commit(void)
 #ifdef PX_BLUES_V48
         st_cfg_t readback;
         if (ota_fread(base + ST_CFG_OFF, &readback, sizeof readback) || memcmp(&readback, &c, sizeof c)) rc = -5;
+#ifdef PX_BLUES_V49
+        if (!rc && (ota_fread(base + ST_CFG_OFF + sizeof c, &readback, sizeof readback) ||
+                    memcmp(&readback, &eq, sizeof eq))) rc = -5;
+#endif
 #endif
         for (k = 0; !rc && k < ST_NSLOT; k++)
             if (ota_fread(st_slot_off(base, k), chk, ST_SLOT) || memcmp(chk, st_slot[k], ST_SLOT)) rc = -5;

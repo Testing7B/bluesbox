@@ -816,6 +816,17 @@ static void settings_persist(void);
 enum { SET_A = CFG_COUNT, SET_B, SET_MIDI, SET_COUNT };
 static uint8_t set_row, set_edit, set_block;
 static uint16_t set_orig;
+#ifdef PX_BLUES_V49
+static uint16_t set_eq_orig;
+#endif
+static int settings_changed(void)
+{
+    return cfg_audio != set_orig
+#ifdef PX_BLUES_V49
+        || cfg_eq != set_eq_orig
+#endif
+        ;
+}
 
 static void ui_menu(const char *title, const char *hint)
 {
@@ -872,7 +883,12 @@ static void browse_push(void)
         cur_preset = browse_slot;
         load_preset(cur_preset);
     }
+#ifdef PX_BLUES_V49
+    browse_confirm = 0;
+    ui_invalidate();
+#else
     ui_leave_menu();
+#endif
 }
 
 static void settings_open(void)
@@ -880,6 +896,9 @@ static void settings_open(void)
     ui_mode = M_SETTINGS;
     set_row = set_edit = set_block = 0;
     set_orig = cfg_audio;
+#ifdef PX_BLUES_V49
+    set_eq_orig = cfg_eq;
+#endif
     ui_menu("SETTINGS", "TURN   PUSH: EDIT   HOME: DONE");
 }
 
@@ -896,6 +915,14 @@ static void settings_value(unsigned row, char *out)
         else { num3(out, 20u + 20u * v); b_str(out, " HZ"); }
         return;
     }
+#ifdef PX_BLUES_V49
+    if (row >= CFG_EQ_LOW) {
+        if (v) *out++ = v > 6u ? '+' : '-';
+        num3(out, v > 6u ? v - 6u : v);
+        b_str(out, " DB");
+        return;
+    }
+#endif
     unsigned db = row == CFG_INPUT && v > 4u ? (v - 4u) * 3u : v * 3u;
     if (db) *out++ = row == CFG_INPUT && v > 4u ? '+' : '-';
     num3(out, db);
@@ -907,7 +934,11 @@ static void settings_draw(void)
     if (!uc.full) return;
     uc.full = 0;
     static const char *const labels[] = {"INPUT GAIN", "INPUT HPF", "GUITAR LEVEL", "USB LEVEL",
-        "FOOTSWITCHES", "TUNER MUTE", "ASSIGN GROUP A", "ASSIGN GROUP B", "MIDI"};
+        "FOOTSWITCHES", "TUNER MUTE",
+#ifdef PX_BLUES_V49
+        "OUTPUT EQ LOW", "OUTPUT EQ MID", "OUTPUT EQ HIGH",
+#endif
+        "ASSIGN GROUP A", "ASSIGN GROUP B", "MIDI"};
     const int groups = set_edit && (set_row == SET_A || set_row == SET_B);
     unsigned row = groups ? set_block : set_row;
     unsigned count = groups ? PX_NBLK : SET_COUNT;
@@ -945,6 +976,12 @@ static void settings_knob(int dd)
         set_block = (uint8_t)((set_block + PX_NBLK + dd) % PX_NBLK);
     else if (set_edit) {
         int value = (int)cfg_read(cfg_audio, set_row), max = CFG_MAX[set_row];
+#ifdef PX_BLUES_V49
+        if (set_row >= CFG_EQ_LOW) {
+            int db = (value > 6 ? value - 6 : -value) + dd;
+            if (db >= -6 && db <= 6) cfg_set(set_row, db > 0 ? (unsigned)(db + 6) : (unsigned)-db);
+        } else
+#endif
         if (set_row == CFG_INPUT) {
             int db = value > 4 ? value - 4 : -value;
             db += dd;
@@ -963,7 +1000,7 @@ static void settings_push(void)
         else { b ^= bit; a &= ~bit; }
         px_stomp_set(&PRESET, a, b);
     } else if (set_row == SET_MIDI) {
-        if (cfg_audio != set_orig) settings_persist();
+        if (settings_changed()) settings_persist();
         midi_open();
         return;
     } else {
@@ -976,7 +1013,7 @@ static void settings_push(void)
 static void settings_home(void)
 {
     if (set_edit) { set_edit = 0; ui_invalidate(); return; }
-    if (cfg_audio != set_orig) settings_persist();
+    if (settings_changed()) settings_persist();
     ui_leave_menu();
 }
 #endif

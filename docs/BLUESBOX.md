@@ -1,5 +1,11 @@
 # BluesBox development notes
 
+
+## V49
+
+V49 bakes the 52-slot audition bank into the factory presets. Slots 40–47 are the four song pairs, and slots 48–52 are the five USER templates. Saved overrides still take priority. The fitted build retains the auditioned amp/cab types and the public build uses built-in substitutes. The SRV presets use Plate and favour Dimension for chorus, with signature rotary and vibe exceptions. The revised song presets include the timed repeat and voicing adjustments from the loopback sessions.
+
+Hold HOME for Settings. In the preset list, press the encoder to load and keep browsing, then tap HOME to return to PLAY. The global low, mid and high output EQ acts on both guitar and USB playback. The editor adapts the [OpenPocket V42 web editor](https://github.com/isod89/openpocket/pull/23) and adds BluesBox pedal settings, per-preset stomp assignment, and the existing audio counters.
 BluesBox starts with three guitar tone references: Stevie Ray Vaughan's Fender breakup, John Mayer's clean-to-edge tones, and Albert King's bright, direct sound. The presets use shared amp and cab voices with individual gain, drive, and space settings. The main signal order is gate → drive → amp → cab → compressor → modulation → delay → reverb. Placing the compressor after the cab lets the guitar volume change the breakup before compression controls the output.
 
 ## Released experiment

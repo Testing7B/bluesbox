@@ -862,11 +862,18 @@ int px_preset_count(void) { return NPRESETS; }
 enum { M_TWIN, M_AC15, M_SUPER59, M_SHIRLCL, M_JCM900, M_SHIRLEY, M_JCM2000, M_MARK4, M_JVM, M_PROMOD, M_5150, M_6505 };
 #ifdef PX_BLUES_LAB
 #include "px_blues_presets.inc"
+#ifdef PX_BLUES_V49
+#include "px_blues_v49_bank.inc"
+#endif
 #endif
 void px_preset_factory(px_preset_t *p, int idx)
 {
-    base_preset(p);
     if (idx < 0 || idx >= NPRESETS) idx = 0;
+#ifdef PX_BLUES_V49
+    *p = blues_v49_bank[idx];
+    return;
+#endif
+    base_preset(p);
     p->on[PX_B_AMP] = p->on[PX_B_CAB] = 1;
 #ifdef PX_BLUES_LAB
 #ifdef PX_BLUES_V48

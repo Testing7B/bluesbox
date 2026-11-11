@@ -9,7 +9,7 @@ import { IR_BYTES, IR_CHUNK } from "./pxir.js";
 const H = [0x7D, 0x4F, 0x50];
 export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 6, ORDER: 7, NAME: 8, PUT: 9, SELECT: 10,
   FOCUS: 11, LIST: 12, SLOT_GET: 13, SLOT_PUT: 14, COMMIT: 15, SAVE: 16, WATCH: 17, PING: 18,
-  NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27 };
+  NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27, SETTINGS: 29 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
 const STOMP_TAG = 0x76;
@@ -64,6 +64,7 @@ export class Editor {
     this.access = access;
     this.timeout = opts.timeout || 1500;
     this.onState = null;          // (state) => {}: pushed by the pedal
+    this.onMidi = null;          // musical messages from the pedal
     this.onLost = null;           // () => {}: the pedal stopped answering
     this.link = null;
     this.queue = Promise.resolve();
@@ -75,6 +76,7 @@ export class Editor {
   // ---- transport ----
   _onMessage(data) {
     const d = data instanceof Uint8Array ? data : Uint8Array.from(data);
+    if (d.length && d[0] !== 0xF0) { this.onMidi?.(d); return; }
     if (d.length < 6 || d[0] !== 0xF0 || d[1] !== H[0] || d[2] !== H[1] || d[3] !== H[2] || d[d.length - 1] !== 0xF7) return;
     const cmd = d[4], args = d.slice(5, d.length - 1);
     if (this.waiting && this.waiting.cmd === cmd) {
@@ -200,7 +202,7 @@ export class Editor {
   async set(block, what, k, v) { const r = await this.request(C.SET, [block, what, k, v]); return r[3]; }
   setParam(block, k, v) { return this.set(block, 0, k, v); }
   setOn(block, on) { return this.set(block, 1, 0, on ? 1 : 0); }
-  get hasStomp() { return (this.info?.proto || 0) >= 4; }
+  get hasStomp() { return (this.info?.proto || 0) >= 4 && this.info.nblk === 11; }
   setStomp(block, group) { return this.set(block, 3, 0, group); }
   setType(block, t) { return this.set(block, 2, 0, t); }
   async order(order) { return (await this.request(C.ORDER, order))[0]; }
@@ -233,8 +235,18 @@ export class Editor {
   async commit() { return (await this.request(C.COMMIT, [], 4000))[0]; }
   async save(slot) { return (await this.request(C.SAVE, [slot], 4000))[1]; }
   async watch(on) { return (await this.request(C.WATCH, [on ? 1 : 0]))[0]; }
+  get hasSettings() { return this.hasStomp && this.info.proto >= 5; }
+  async settings(key, value) {
+    if (!this.hasSettings) throw fail("unsupported", "Install BluesBox V49 for pedal settings");
+    const args = key === undefined ? [] : [key, value];
+    const r = await this.request(C.SETTINGS, args, 4000);
+    if (r.length !== 10) throw fail("settings", "Unexpected pedal settings response");
+    if (r[0]) throw fail("settings", ["", "Invalid setting", "Exit Settings on the pedal first", "The pedal could not save the setting"][r[0]] || "Settings could not be saved");
+    return [...r.slice(1)];
+  }
   async audioStats() {
     const r = new Reader(await this.request(28));
+    if (![35, 55].includes(r.a.length)) throw fail("unsupported", "Audio counters are unavailable on this firmware");
     const keys = ["blocks", "late", "peakPct", "usbPackets", "usbUnderruns", "usbOverruns", "mixClips"];
     if (r.a.length >= 55) keys.push("dspLate", "wetCuts", "inputClips", "guitarKnee");
     return Object.fromEntries(keys.map(key => {
