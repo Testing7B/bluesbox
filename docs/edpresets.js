@@ -123,7 +123,7 @@ export function revert() {
 }
 
 // the 52 slots as a list to pick from; `what(slot)` says what happens to the one picked
-const slotItems = (skip) => app.slots.map((s) => ({ value: s.slot, n: slotName(s.slot), name: s.name, tag: s.saved ? "Yours" : "Factory", disabled: s.slot === skip, why: "This is the preset itself." }));
+const slotItems = (skip) => app.slots.map((s) => ({ value: s.slot, n: slotName(s.slot), name: s.name, tag: s.saved ? "Saved" : "Factory", disabled: s.slot === skip, why: "This is the preset itself." }));
 function replaces(slot, verb) {
   const s = app.slots[slot];
   if (s.saved) return { text: `${slotName(slot)} holds your preset ${s.name}. It is replaced; Undo brings it back.`, confirm: `Replace ${slotName(slot)} ${s.name}`, danger: true };
@@ -221,10 +221,10 @@ export async function importFile(f) {
       h("span", { class: s.saved ? "tag warn" : "tag", text: s.saved ? `replaces your ${s.name}` : `over factory ${s.name}` }));
   }));
   const body = h("div", {},
-    h("p", { text: `${f.name} holds ${plural(list.length, "preset")}: ${plural(mine.length, "preset")} of yours` +
+    h("p", { text: `${f.name} holds ${plural(list.length, "preset")}: ${plural(mine.length, "saved preset")}` +
       `${ok.length - mine.length ? ` and ${plural(ok.length - mine.length, "factory preset")} (those numbers go back to factory)` : ""}` +
       `${list.length - ok.length ? `; ${list.length - ok.length} without a number are left out` : ""}.` }),
-    lost.length ? h("p", { class: "warn", text: `${plural(lost.length, "preset")} of yours on the pedal ${lost.length === 1 ? "is" : "are"} replaced. Undo brings ${lost.length === 1 ? "it" : "them"} back.` }) : null,
+    lost.length ? h("p", { class: "warn", text: `${plural(lost.length, "saved preset")} on the pedal ${lost.length === 1 ? "is" : "are"} replaced. Undo brings ${lost.length === 1 ? "it" : "them"} back.` }) : null,
     rows);
   if (!(await confirmDialog({ title: "Import these presets?", body, confirm: `Import ${plural(ok.length, "preset")}`, danger: lost.length > 0 }))) return;
   await task("Importing", async (progress) => {
@@ -269,7 +269,7 @@ const haystack = (s) => {
   const e = app.bank[s.slot];
   return `${slotName(s.slot)} ${s.name} ${e ? `${summary(e)} ${e.preset.order.filter((b) => e.preset.on[b]).map((b) => `${blk(b).name} ${typeOf(e.preset, b).name}`).join(" ")}` : ""}`.toLowerCase();
 };
-const visible = () => app.slots.filter((s) => (filter === "all" || (filter === "user") === s.saved) && (!query || haystack(s).includes(query)));
+const visible = () => app.slots.filter((s) => (filter === "all" || !s.saved) && (!query || haystack(s).includes(query)));
 
 function rowMenu(slot, anchor) {
   const s = app.slots[slot];
@@ -296,7 +296,7 @@ export function renderList() {
       h("span", { class: "n", text: slotName(s.slot) }),
       h("span", { class: "nm", text: cur ? app.st.preset.name : s.name }),
       h("span", { class: "sum", text: cur && app.st.dirty ? "Edited, not saved" : e ? summary(cur ? { preset: app.st.preset } : e) : "" }),
-      s.saved && h("span", { class: "tag", text: "Yours" }),
+      s.saved && h("span", { class: "tag", text: "Saved" }),
       h("button", { type: "button", class: "more", tabIndex: -1, "aria-label": `Actions for ${slotName(s.slot)} ${s.name}`, "aria-haspopup": "menu",
         onclick: (ev) => { ev.stopPropagation(); rowMenu(s.slot, ev.currentTarget); } }, icon("more")));
     row.onclick = () => { active = s.slot; selectPreset(s.slot); };
@@ -304,12 +304,11 @@ export function renderList() {
   }
   const empty = $("listempty");
   empty.hidden = rows.length > 0;
-  if (!rows.length) empty.textContent = query ? `No preset matches "${$("psearch").value.trim()}".` : filter === "user" ? "No preset of yours yet. Change a sound and press Save: it shows up here." : "Every preset is one of yours.";
+  if (!rows.length) empty.textContent = query ? `No preset matches "${$("psearch").value.trim()}".` : "No factory presets are visible because every slot has a saved override.";
   if (active >= 0 && rows.some((s) => s.slot === active)) box.setAttribute("aria-activedescendant", `ps${active}`); else box.removeAttribute("aria-activedescendant");
   const mine = app.slots.filter((s) => s.saved).length;
   for (const b of $("pfilter").children) {
     b.setAttribute("aria-pressed", b.dataset.f === filter ? "true" : "false");
-    if (b.dataset.f === "user") b.textContent = `Yours ${mine}`;
     if (b.dataset.f === "factory") b.textContent = `Factory ${app.slots.length - mine}`;
   }
 }

@@ -1,0 +1,12 @@
+{
+  "version": 50,
+  "packages": [
+    {
+      "model": "BlackBox",
+      "product": "BlackBox_950",
+      "file": "BlackBox_950.fwsc",
+      "size": 676410,
+      "sha256": "df7ff2e9a10110d657ca0f768eb297b3402cca775f2c9f00d120fb70c565671d"
+    }
+  ]
+}

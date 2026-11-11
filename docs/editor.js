@@ -205,7 +205,7 @@ function renderConnPop() {
   if (!i) return;
   pop.append(h("h2", { text: i.identity.replace(/_9?\d+$/, "") }),
     h("dl", { class: "facts" }, h("dt", { text: "Firmware" }), h("dd", { text: `BluesBox ${i.version}` }), h("dt", { text: "Port" }), h("dd", { text: i.port }),
-      h("dt", { text: "Presets" }), h("dd", { text: `${i.nslot}, ${app.slots.filter((s) => s.saved).length} of yours` })),
+      h("dt", { text: "Presets" }), h("dd", { text: `${i.nslot}, ${app.slots.filter((s) => s.saved).length} saved` })),
     h("h3", { text: "Keys" }),
     h("dl", { class: "keys" }, h("dt", { text: "/" }), h("dd", { text: "search the presets" }), h("dt", { text: "[  ]" }), h("dd", { text: "previous, next preset" }),
       h("dt", { text: "Ctrl or ⌘ + S" }), h("dd", { text: "save" }), h("dt", { text: "F2" }), h("dd", { text: "rename the preset chosen in the list" })),
