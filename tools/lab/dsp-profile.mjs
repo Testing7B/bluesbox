@@ -84,7 +84,7 @@ export function profile(options = {}) {
     engine.volume(100);
     const times = [];
     const gain = MODES[scenario];
-    let nonfinite = 0, fullScale = 0, peak = 0, sumsq = 0;
+    let nonfinite = 0, limitedSamples = 0, peak = 0, sumsq = 0;
     let inPeak = 0, inputSumsq = 0;
     for (let b = -warmBlocks; b < blocks; b++) {
       const origin = (b + warmBlocks) * BLOCK;
@@ -105,7 +105,7 @@ export function profile(options = {}) {
         if (!Number.isFinite(y)) { nonfinite++; continue; }
         peak = Math.max(peak, Math.abs(y));
         sumsq += y * y;
-        if (Math.abs(y) > 1.0) fullScale++;
+        if (Math.abs(y) >= 0.999999) limitedSamples++;
       }
     }
     times.sort((a, b) => a - b);
@@ -119,7 +119,7 @@ export function profile(options = {}) {
       output_peak_dbfs: db(peak),
       output_rms_dbfs: db(Math.sqrt(sumsq / count)),
       nonfinite_samples: nonfinite,
-      above_fullscale_samples: fullScale,
+      at_or_near_fullscale_samples: limitedSamples,
       host_wall_ms: {
         p50: percentile(times, 0.50), p95: percentile(times, 0.95),
         p99: percentile(times, 0.99), p999, max: times.at(-1),
@@ -142,6 +142,7 @@ export function profile(options = {}) {
     input: label,
     host: { platform: process.platform, arch: process.arch, node: process.version },
     warning: "Host p999 timings depend on machine/JIT/OS load; they do not predict AC791N deadline use.",
+    output_limitation: "Audio wrapper clips the output to [-1,1]. At-or-near-fullscale counts are not proof of internal clipping; a pre-limiter engine probe is needed for that.",
     records,
   };
 }
@@ -168,9 +169,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, JSON.stringify(result, null, 2) + "\n");
     const bad = result.records.filter(r => r.nonfinite_samples);
-    const clips = result.records.filter(r => r.above_fullscale_samples);
+    const clips = result.records.filter(r => r.at_or_near_fullscale_samples);
     console.log("Wrote " + dest + " (" + result.records.length + " tested slot/scenario combinations)");
-    console.log("Non-finite paths: " + bad.length + "; paths above full-scale: " + clips.length);
+    console.log("Non-finite paths: " + bad.length + "; paths reaching full-scale: " + clips.length);
     console.log("These are host timings, NOT measured AC791N CPU load.");
     if (bad.length) process.exitCode = 1;
   } catch (error) {
