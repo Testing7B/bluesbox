@@ -8,6 +8,7 @@ on:
       - 'tools/lab/**'
       - 'tests/virtual-lab.test.mjs'
       - 'tests/lab/**'
+      - 'engine/px_gr_meter.h'
       - '.github/workflows/virtual-lab.yml'
 jobs:
   host-profile:
@@ -30,6 +31,11 @@ jobs:
           cc -std=c11 -O2 -fno-builtin -ffp-contract=off -Iengine tests/lab/raw-output.c engine/px_dsp.c firmware/px_math.c -lm -o build/lab/raw-output
           build/lab/raw-output 25 > build/lab/raw-output.csv
           head -n 5 build/lab/raw-output.csv
+      - name: Verify UI-rate gain reduction conversion and OFF fast path
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Iengine tests/lab/gr-meter.c -o build/lab/gr-meter
+          build/lab/gr-meter
+          if grep -E '\\blog10f[[:space:]]*\\(' engine/px_gr_meter.h; then echo 'Unexpected log10f in GR meter'; exit 1; fi
       - name: Retain test evidence
         if: always()
         uses: actions/upload-artifact@v4
