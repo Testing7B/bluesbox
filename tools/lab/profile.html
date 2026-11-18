@@ -1,0 +1,51 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BluesBox Virtual Lab — DSP Host Profiler</title>
+<style>body{font:15px/1.5 system-ui;background:#131821;color:#e0e7f0;max-width:1080px;margin:24px auto;padding:12px}
+section{background:#202a39;padding:18px;margin:14px 0;border-radius:10px}input,select{background:#334153;color:white;font:inherit;padding:5px;margin:6px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,th{padding:8px;border-bottom:1px solid #48566c;text-align:right}td:first-child,th:first-child{text-align:left}
+th{position:sticky;top:0;background:#202a39}.wrap{max-height:60vh;overflow:auto}.bad{color:#ef957e}p,small{color:#b2bdd0}code{color:#b9cef4}
+</style></head><body><h1>BluesBox Virtual Lab</h1>
+<p>Host DSP workload explorer. Results are computed by the source-locked WebAssembly engine on a desktop. <strong>They are not estimated AC791N CPU utilization.</strong></p>
+<section><label>JSON profile <input type="file" id="file" accept=".json,application/json"></label>
+<label>Scenario <select id="scenario"><option value="">All</option><option>quiet</option><option>nominal</option><option>hard</option></select></label>
+<label>Sort <select id="sort"><option value="host">Host p99.9 load</option><option value="peak">Output peak</option><option value="slot">Slot</option><option value="limited">Full-scale count</option></select></label>
+<p id="status">Select a profile. This page runs entirely offline.</p></section>
+<section><div id="summary"></div><div class="wrap"><table><thead><tr>
+<th>Slot</th><th>Scenario</th><th>Host p99.9 ms</th><th>Host p99.9 %</th><th>Output peak dBFS</th><th>At full scale</th><th>Non-finite</th>
+</tr></thead><tbody id="rows"></tbody></table></div></section>
+<section><h2>Evidence boundaries</h2><p>The output is clamped to full scale, so the full-scale counter cannot measure internal pre-clipping headroom. Target cycle budgets require firmware emulation on a BlackBox-compatible board model and calibration against physical pedal telemetry. The reported host percentages must never be used as device-certification evidence.</p></section>
+<script>
+let report=null;
+const $=s=>document.querySelector(s);
+const fmt=(v,n=2)=>Number.isFinite(v)?v.toFixed(n):"—";
+const cell=x=>{const c=document.createElement("td");c.textContent=x;return c};
+function render(){
+ if(!report)return;
+ const rows=report.records.filter(x=>!$("#scenario").value||x.scenario===$("#scenario").value);
+ const which=$("#sort").value;
+ rows.sort((a,b)=>which==="slot"?a.slot-b.slot:which==="peak"?(b.output_peak_dbfs??-1000)-(a.output_peak_dbfs??-1000):which==="limited"?b.at_or_near_fullscale_samples-a.at_or_near_fullscale_samples:b.host_p999_load_percent-a.host_p999_load_percent);
+ const warnings=rows.filter(x=>x.at_or_near_fullscale_samples>0).length;
+ const invalid=rows.filter(x=>x.nonfinite_samples>0).length;
+ $("#summary").textContent="Records: "+rows.length+" · full-scale paths: "+warnings+" · non-finite paths: "+invalid;
+ const fragment=document.createDocumentFragment();
+ for(const v of rows){
+  const tr=document.createElement("tr");
+  tr.append(cell(String(v.slot).padStart(2,"0")),cell(v.scenario),cell(fmt(v.host_wall_ms.p999,3)),cell(fmt(v.host_p999_load_percent,1)+"%"),cell(fmt(v.output_peak_dbfs)),cell(v.at_or_near_fullscale_samples),cell(v.nonfinite_samples));
+  if(v.nonfinite_samples)tr.className="bad";
+  fragment.append(tr);
+ }
+ $("#rows").replaceChildren(fragment);
+}
+$("#file").addEventListener("change",async e=>{
+ try{
+  const f=e.target.files?.[0];if(!f)return;
+  const data=JSON.parse(await f.text());
+  if(data.schema!=="bluesbox.host-dsp-profile.v1"||!Array.isArray(data.records))throw Error("Unsupported profile schema");
+  report=data;
+  $("#status").textContent="Loaded "+f.name+" · source hash "+data.engine_source_sha256.slice(0,12);
+  render();
+ }catch(err){report=null;$("#status").textContent=err.message;$("#rows").replaceChildren();}
+});
+$("#scenario").addEventListener("change",render);
+$("#sort").addEventListener("change",render);
+</script></body></html>
