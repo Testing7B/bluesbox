@@ -1,0 +1,32 @@
+name: Virtual Lab Stage A host tests
+on:
+  push:
+    branches:
+      - lab/virtual-lab-stage-a-20261118
+  pull_request:
+    paths:
+      - 'tools/lab/**'
+      - 'tests/virtual-lab.test.mjs'
+      - '.github/workflows/virtual-lab.yml'
+jobs:
+  host-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check compiler for simulated pedal
+        run: cc --version
+      - name: Run source-locked WASM DSP and cycle-budget tests
+        run: node --test tests/virtual-lab.test.mjs
+      - name: Profile 52 factory presets (synthetic quiet, nominal, hard)
+        run: node tools/lab/dsp-profile.mjs --preset all --seconds 0.1 --warmup 0 --out build/lab/dsp-profile.json
+      - name: Retain test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluesbox-host-profile
+          path: build/lab/dsp-profile.json
+          if-no-files-found: warn
