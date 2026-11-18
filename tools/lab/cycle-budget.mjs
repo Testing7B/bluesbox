@@ -38,11 +38,11 @@ export function evaluateCycles(trace, { clockHz, sampleRate, blockFrames, traceO
     if (b.cpu0_cycles > available || b.cpu1_cycles > available) predicted++;
   }
   const serialize = (values) => ({
-    max_cycles: Math.max(...values),
+    max_cycles: values.reduce((max, value) => value > max ? value : max, 0),
     p50_cycles: pct(values, 0.5),
     p99_cycles: pct(values, 0.99),
     p999_cycles: pct(values, 0.999),
-    max_percent_of_single_core_deadline: 100 * Math.max(...values) / available,
+    max_percent_of_single_core_deadline: 100 * values.reduce((max, value) => value > max ? value : max, 0) / available,
     p999_percent_of_single_core_deadline: 100 * pct(values, 0.999) / available,
   });
   return {
