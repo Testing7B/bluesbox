@@ -7,6 +7,7 @@ on:
     paths:
       - 'tools/lab/**'
       - 'tests/virtual-lab.test.mjs'
+      - 'tests/lab/**'
       - '.github/workflows/virtual-lab.yml'
 jobs:
   host-profile:
@@ -23,10 +24,18 @@ jobs:
         run: node --test tests/virtual-lab.test.mjs
       - name: Profile 52 factory presets (synthetic quiet, nominal, hard)
         run: node tools/lab/dsp-profile.mjs --preset all --seconds 0.1 --warmup 0 --out build/lab/dsp-profile.json
+      - name: Compile real C DSP engine and profile raw pre-limiter output
+        run: |
+          mkdir -p build/lab
+          cc -std=c11 -O2 -fno-builtin -ffp-contract=off -Iengine tests/lab/raw-output.c engine/px_dsp.c firmware/px_math.c -lm -o build/lab/raw-output
+          build/lab/raw-output 25 > build/lab/raw-output.csv
+          head -n 5 build/lab/raw-output.csv
       - name: Retain test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bluesbox-host-profile
-          path: build/lab/dsp-profile.json
+          path: |
+            build/lab/dsp-profile.json
+            build/lab/raw-output.csv
           if-no-files-found: warn
