@@ -64,6 +64,8 @@ cycle-profile converter do not substitute for a whole-firmware emulator.
 Requested behavior: on-device gain reduction in the area previously assigned to Bluetooth status,
 a persisted Settings on/off switch, and no \`log10f\` conversion or meter refresh when OFF.
 
+**Implemented portable component:** `engine/px_gr_meter.h` converts pre-makeup linear attenuation into integer 0–30 dB at UI rate without logarithms; when OFF, conversion is skipped. The C test verifies 0/6/20/30 dB and 10,000 disabled UI ticks. The component is not yet wired into BlackBox_978's compressor, PLAY display or persistent Settings. Those edits require inspecting the latest firmware source.
+
 Do **not** patch the historical V52 \`firmware/ui.h\` or \`px_settings.h\` as if it were
 BlackBox_978. The newer source added Ambience and DSPL LA-2A, and its actual UI storage/ABI
 must be inspected before assigning a settings bit. Safe acceptance tests:
