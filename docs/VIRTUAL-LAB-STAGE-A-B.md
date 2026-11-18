@@ -90,8 +90,11 @@ This is an explicitly **blocked firmware UI edit**, not a fabricated completed r
 - Implement GR UI and its global on/off setting on the **correct current firmware source**.
 
 **Qualification:** source-authored and GitHub Actions host tests configured. A GitHub Actions
-runner executed the source-locked WASM benchmark successfully against this historical repository
+runner executed the source-locked WASM benchmark and compiled the raw C audio engine successfully against this historical repository
 baseline (four tests passed and 156 slot/scenario records, zero non-finite paths, 37 paths
-reaching output full scale in the first short run). These are V52-era fixtures, not evidence that
+reaching post-limiter full scale). Raw C profile example: factory preset 01 hard fixture generated
+peak 1.17835474 before limiter and 134 above-full-scale samples in 25 blocks; its quiet and nominal
+fixtures reported no overrange. These are short V52-era synthetic fixtures, not evidence that
+the BlackBox_978 integrated DSPL source or firmware was tested. These are V52-era fixtures, not evidence that
 the BlackBox_978 integrated DSPL source or firmware was tested. No native JieLi build or actual
 BlackBox firmware emulation was performed. This branch is LAB only, with zero hardware claims.
