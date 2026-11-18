@@ -89,6 +89,9 @@ This is an explicitly **blocked firmware UI edit**, not a fabricated completed r
 - Compare emulated CPU cycles against known-good and failing physical presets.
 - Implement GR UI and its global on/off setting on the **correct current firmware source**.
 
-**Qualification:** source-authored and CI configured; no local Node/WASM or native JieLi command
-could be executed from the assistant's current runtime. A PR/CI result is required for actual
-test execution evidence. This branch is LAB only, with zero hardware claims.
+**Qualification:** source-authored and GitHub Actions host tests configured. A GitHub Actions
+runner executed the source-locked WASM benchmark successfully against this historical repository
+baseline (four tests passed and 156 slot/scenario records, zero non-finite paths, 37 paths
+reaching output full scale in the first short run). These are V52-era fixtures, not evidence that
+the BlackBox_978 integrated DSPL source or firmware was tested. No native JieLi build or actual
+BlackBox firmware emulation was performed. This branch is LAB only, with zero hardware claims.
